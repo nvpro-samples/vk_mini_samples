@@ -1,0 +1,10 @@
+**/spv/*
+**/autogen/*
+**/build/*
+**/_autogen/*
+**/extern/*
+_Build/*
+_Install/*
+bin_x64/*
+downloaded_resources/*
+/nvpro_core/

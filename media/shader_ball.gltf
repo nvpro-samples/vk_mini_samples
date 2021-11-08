@@ -1,0 +1,787 @@
+{
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8093,
+      "max": [
+        1.3013720512390137,
+        1.0,
+        1.2017070055007935
+      ],
+      "min": [
+        -1.0,
+        -1.045469045639038,
+        -1.2017070055007935
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 8093,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 8093,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5125,
+      "count": 28350,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "copyright": "NVIDIA Corporation",
+    "generator": "Iray glTF plugin",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 97116,
+      "byteStride": 12
+    },
+    {
+      "buffer": 0,
+      "byteLength": 97116,
+      "byteOffset": 97116,
+      "byteStride": 12
+    },
+    {
+      "buffer": 0,
+      "byteLength": 64744,
+      "byteOffset": 194232,
+      "byteStride": 8
+    },
+    {
+      "buffer": 0,
+      "byteLength": 113400,
+      "byteOffset": 258976
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 372376,
+      "uri": "shader_ball.bin"
+    }
+  ],
+  "cameras": [
+    {
+      "extensions": {
+        "NV_attributes_iray": {
+          "attributes": [
+            {
+              "name": "mip_burn_highlights",
+              "type": "Float32",
+              "value": 0.699999988079071
+            },
+            {
+              "name": "mip_lens_focus",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "mip_lens_radius",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "mip_crush_blacks",
+              "type": "Float32",
+              "value": 0.5
+            },
+            {
+              "name": "mip_f_number",
+              "type": "Float32",
+              "value": 2.0
+            },
+            {
+              "name": "mip_saturation",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "mip_cm2_factor",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "mip_vignetting",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "mip_burn_highlights_per_component",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "mip_gamma",
+              "type": "Float32",
+              "value": 2.200000047683716
+            },
+            {
+              "name": "mip_whitepoint",
+              "type": "Color",
+              "value": [
+                1.0,
+                1.0,
+                1.0,
+                0.02716049551963806
+              ]
+            },
+            {
+              "name": "mip_film_iso",
+              "type": "Float32",
+              "value": 100.0
+            },
+            {
+              "name": "mip_lens_thickness",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "tm_tonemapper",
+              "type": "String",
+              "value": "mia_exposure_photographic"
+            },
+            {
+              "name": "mip_camera_shutter",
+              "type": "Float32",
+              "value": 0.30778610706329346
+            }
+          ]
+        }
+      },
+      "extras": {
+        "resolution": [
+          640,
+          480
+        ]
+      },
+      "name": "default",
+      "perspective": {
+        "aspectRatio": 1.3333333730697632,
+        "yfov": 0.7362615466117859,
+        "zfar": 10000.0,
+        "znear": 0.10000000149011612
+      },
+      "type": "perspective"
+    }
+  ],
+  "extensions": {
+    "NV_materials_mdl": {
+      "modules": [
+        "::base",
+        "::gltf_support"
+      ],
+      "shaders": [
+        {
+          "arguments": [
+            {
+              "name": "texture",
+              "value": 0
+            }
+          ],
+          "definition": "::base::environment_spherical(texture_2d)",
+          "name": "env_shd_8"
+        },
+        {
+          "arguments": [
+            {
+              "name": "roughness_factor",
+              "value": 0.5
+            }
+          ],
+          "definition": "::gltf_support::gltf_material(color,texture_2d,int,float,float,texture_2d,int,texture_2d,int,int,float,float,texture_2d,int,float,texture_2d,int,texture_2d,int,int,color,texture_2d,int,texture_2d,float,int,::gltf_support::gltf_alpha_mode,float,float)",
+          "name": "blinn2SG"
+        }
+      ]
+    }
+  },
+  "extensionsUsed": [
+    "NV_materials_mdl",
+    "KHR_lights_punctual",
+    "NV_attributes_iray"
+  ],
+  "images": [
+    {
+      "name": "sample3.hdr",
+      "uri": "shader_ballAssets\\sample3.hdr"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "extensions": {
+        "NV_materials_mdl": {
+          "mdl_shader": 1
+        }
+      },
+      "name": "blinn2SG",
+      "pbrMetallicRoughness": {
+        "roughnessFactor": 0.6
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "polySurfaceShape11",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "camera": 0,
+      "extensions": {
+        "NV_attributes_iray": {
+          "attributes": [
+            {
+              "name": "iview:up",
+              "type": "Float32<3>",
+              "value": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            },
+            {
+              "name": "iview:roll",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "iview:fkey",
+              "type": "Sint32",
+              "value": -1
+            },
+            {
+              "name": "iview:interest",
+              "type": "Float32<3>",
+              "value": [
+                -0.12095838040113449,
+                -0.08095555752515793,
+                0.13380166888237
+              ]
+            },
+            {
+              "name": "iview:position",
+              "type": "Float32<3>",
+              "value": [
+                -5.412760257720947,
+                3.007869243621826,
+                -2.9272520542144775
+              ]
+            },
+            {
+              "name": "iview:fov",
+              "type": "Float32",
+              "value": 54.432228088378906
+            }
+          ]
+        }
+      },
+      "matrix": [
+        -0.5007145417658573,
+        1.3190265968514163e-07,
+        0.8656126938498631,
+        0.0,
+        0.39035914223452695,
+        0.892542810433716,
+        0.22580404539530088,
+        0.0,
+        -0.7725953983820218,
+        0.45096394842012943,
+        -0.44690939069551067,
+        -0.0,
+        -5.4127602684444795,
+        3.0078693000514987,
+        -2.9272519782591875,
+        1.0
+      ],
+      "name": "persp"
+    },
+    {
+      "extensions": {
+        "NV_attributes_iray": {
+          "attributes": [
+            {
+              "name": "caustic",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "caustic_cast",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "caustic_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "globillum",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "globillum_cast",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "globillum_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "label",
+              "type": "Sint32",
+              "value": 6740987
+            }
+          ]
+        }
+      },
+      "mesh": 0,
+      "name": "polySurface11"
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "extensions": {
+        "NV_attributes_iray": {
+          "attributes": [
+            {
+              "name": "transparency_cast",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "transparency_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "reflection_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "refraction_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "shadow_cast",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "shadow_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "finalgather_recv",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "face_front",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "face_back",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "label",
+              "type": "Sint32",
+              "value": 8
+            },
+            {
+              "name": "samples",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "samples_adaptivity",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "filter",
+              "type": "Sint32",
+              "value": 2
+            },
+            {
+              "name": "radius",
+              "type": "Float32",
+              "value": 1.5
+            },
+            {
+              "name": "fg_mode",
+              "type": "Sint32",
+              "value": 0
+            },
+            {
+              "name": "ca_mode",
+              "type": "Sint32",
+              "value": 0
+            },
+            {
+              "name": "gi_mode",
+              "type": "Sint32",
+              "value": 0
+            },
+            {
+              "name": "progressive_rendering_converged_pixel_ratio",
+              "type": "Float32",
+              "value": 0.9998999834060669
+            },
+            {
+              "name": "iview::inline_width",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "iray_bloom_filtering_radius",
+              "type": "Float32",
+              "value": 0.009999999776482582
+            },
+            {
+              "name": "iview::magnifier_size",
+              "type": "Sint32",
+              "value": 300
+            },
+            {
+              "name": "environment_dome_depth",
+              "type": "Float32",
+              "value": 1000.0
+            },
+            {
+              "name": "environment_dome_ground_shadow_intensity",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "progressive_rendering_filtering",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "progressive_rendering_quality_enabled",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "environment_function_intensity",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "environment_dome_height",
+              "type": "Float32",
+              "value": 1000.0
+            },
+            {
+              "name": "iview:sunsky:latitude",
+              "type": "Float32",
+              "value": 37.31999969482422
+            },
+            {
+              "name": "iview::outline_width",
+              "type": "Float32",
+              "value": 2.0
+            },
+            {
+              "name": "iview::zoom_factor",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "iview:sunsky:active",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "iray_optix_prime",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "iray_architectural_sampler",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "iview:sunsky:dst",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "progressive_rendering_max_samples",
+              "type": "Sint32",
+              "value": 999999
+            },
+            {
+              "call": 0,
+              "name": "environment_function",
+              "type": "Ref"
+            },
+            {
+              "name": "iview::offset",
+              "type": "Float32",
+              "value": 10.0
+            },
+            {
+              "name": "iray_bloom_filtering_threshold",
+              "type": "Float32",
+              "value": 0.8999999761581421
+            },
+            {
+              "name": "environment_dome_ground",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "iray_instancing",
+              "type": "String",
+              "value": "off"
+            },
+            {
+              "name": "iray_caustic_sampler",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "iray_firefly_filter",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "iview:sunsky:date",
+              "type": "String",
+              "value": "Thu Feb 12 2015"
+            },
+            {
+              "name": "iview::overview",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "iview:sunsky:timezone",
+              "type": "String",
+              "value": "America/Los_Angeles"
+            },
+            {
+              "name": "iview:sunsky:longitude",
+              "type": "Float32",
+              "value": -122.02999877929688
+            },
+            {
+              "name": "iray_degrain_filtering",
+              "type": "Sint32",
+              "value": 0
+            },
+            {
+              "name": "IVP_color",
+              "type": "Color",
+              "value": [
+                1.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "environment_dome_width",
+              "type": "Float32",
+              "value": 1000.0
+            },
+            {
+              "name": "iray_restricted_realism_mode",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "iray_bloom_filtering_brightness_scale",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "irradiance_min",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "environment_dome_mode",
+              "type": "String",
+              "value": "infinite"
+            },
+            {
+              "name": "iview:sunsky:time",
+              "type": "String",
+              "value": "12:00:00"
+            },
+            {
+              "name": "environment_dome_ground_texturescale",
+              "type": "Float32",
+              "value": -5.0
+            },
+            {
+              "name": "iray_max_path_length",
+              "type": "Sint32",
+              "value": 23
+            },
+            {
+              "name": "environment_dome_rotation_angle",
+              "type": "Float32",
+              "value": 0.0
+            },
+            {
+              "name": "environment_dome_position",
+              "type": "Float32<3>",
+              "value": [
+                0.0,
+                -1.0499999523162842,
+                0.0
+              ]
+            },
+            {
+              "name": "progressive_samples_per_motion_sample",
+              "type": "Sint32",
+              "value": 0
+            },
+            {
+              "name": "progressive_rendering_quality",
+              "type": "Float32",
+              "value": 1.0
+            },
+            {
+              "name": "environment_lighting_blur",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "iray_bloom_filtering",
+              "type": "Boolean",
+              "value": false
+            },
+            {
+              "name": "irradiance_max",
+              "type": "Float32",
+              "value": 120000.0
+            },
+            {
+              "name": "iray_degrain_filtering_blur_difference",
+              "type": "Float32",
+              "value": 0.05000000074505806
+            },
+            {
+              "name": "environment_dome_radius",
+              "type": "Float32",
+              "value": 1000.0
+            },
+            {
+              "name": "iray_black_pixel_filtering_max_frame",
+              "type": "Sint32",
+              "value": 16
+            },
+            {
+              "name": "irradiance_auto",
+              "type": "Boolean",
+              "value": true
+            },
+            {
+              "name": "progressive_rendering_min_samples",
+              "type": "Sint32",
+              "value": 1
+            },
+            {
+              "name": "iray_degrain_filtering_radius",
+              "type": "Sint32",
+              "value": 3
+            },
+            {
+              "name": "progressive_rendering_max_time",
+              "type": "Sint32",
+              "value": 999999
+            },
+            {
+              "name": "environment_dome_ground_position",
+              "type": "Float32<3>",
+              "value": [
+                0.0,
+                -1.0499999523162842,
+                0.0
+              ]
+            },
+            {
+              "name": "environment_dome_rotation_axis",
+              "type": "Float32<3>",
+              "value": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            },
+            {
+              "name": "iview::inline_color",
+              "type": "Color",
+              "value": [
+                1.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "iview::outline_color",
+              "type": "Color",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            }
+          ]
+        }
+      },
+      "nodes": [
+        0,
+        1
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "extras": {
+        "gamma": 0.0
+      },
+      "name": "tex",
+      "source": 0
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+cmake_minimum_required(VERSION 3.9.6 FATAL_ERROR)
+project(vk_mini_samples LANGUAGES C CXX)
+
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set(CMAKE_CXX_STANDARD 17)
+
+#--------------------------------------------------------------------------------------------------
+# look for nvpro_core 1) as a sub-folder 2) at some other locations
+# this cannot be put anywhere else since we still didn't find setup.cmake yet
+if(NOT BASE_DIRECTORY)
+  find_path(BASE_DIRECTORY
+    NAMES nvpro_core/cmake/setup.cmake
+    PATHS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../.. 
+    REQUIRED
+    DOC "Directory containing nvpro_core"
+    )
+endif()
+
+## Various functions and macros REQUIRED
+if(EXISTS ${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
+  include(${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
+  include(${BASE_DIRECTORY}/nvpro_core/cmake/utilities.cmake)
+else()
+  message(FATAL_ERROR "could not find base directory, please set BASE_DIRECTORY to folder containing nvpro_core")
+endif()
+
+set(SAMPLES_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
+if(MSVC)
+    add_definitions(/wd26812)  # 'enum class' over 'enum'
+    add_definitions(/wd26451)  # Arithmetic overflow, casting 4 byte value to 8 byte value
+endif()
+
+#--------------------------------------------------------------------------------------------------
+# Package shared by all projects
+_add_package_VulkanSDK()
+_add_package_ImGUI()
+_add_nvpro_core_lib()
+
+message(STATUS "COPY ${CMAKE_CURRENT_SOURCE_DIR}/media  to  ${OUTPUT_PATH}")
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION ${OUTPUT_PATH})
+
+set(NSIGHT_AFTERMATH_SDK $ENV{NSIGHT_AFTERMATH_SDK} CACHE PATH "Path to the Aftermath SDK")
+
+#--------------------------------------------------------------------------------------------------
+# Sub examples
+add_subdirectory(base_sample) 
+add_subdirectory(inherited) 
+add_subdirectory(msaa) 
+add_subdirectory(debug_printf) 
+add_subdirectory(optix_denoiser) 
+add_subdirectory(hdr_sampling) 
+add_subdirectory(aftermath) 
+
+
+#--------------------------------------------------------------------------------------------------
+# Install - copying the media directory
+install(DIRECTORY "media" 
+        CONFIGURATIONS Release 
+        DESTINATION "bin_${ARCH}")
+install(DIRECTORY "media" 
+        CONFIGURATIONS Debug 
+        DESTINATION "bin_${ARCH}_debug")
