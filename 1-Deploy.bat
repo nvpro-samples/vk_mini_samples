@@ -9,12 +9,18 @@ for %%a in (0,1,2) do (
     if exist !nc[%%a]! (
         echo Found nvpro-sample at: !nc[%%a]!
         set found=1
+        set nvpro_core_path=!nc[%%a]!
     )
 )
 
 if not %found% == 1 (
     echo Cloning nvpro-sample
     git clone https://github.com/nvpro-samples/nvpro_core.git --recurse-submodules --shallow-submodules
+) else (
+    echo Updating %nvpro_core_path%
+    pushd %nvpro_core_path%
+    git submodule update --init --recursive
+    popd
 )
 
 @REM Updating current 
