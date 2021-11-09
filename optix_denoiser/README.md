@@ -13,6 +13,12 @@ This project needs two external SDK. Follow the default installation and re-run 
 * [Cuda 10.x](https://developer.nvidia.com/cuda-downloads)
 
 
+## Rendering 
+
+The ray tracer will release two new G-Buffers, albedo and normal. When entering the OptiX world, images are copied into buffers because OptiX denoising only works on linear images and in Vulkan they are tiled optimized. Once denoised, the OptiX image/buffer is copied back into Vulkan before being displayed.
+
+![img](docs/Denoiser-renderLoop.png)
+
 
 ## External Memory
 

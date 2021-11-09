@@ -58,5 +58,5 @@ Note: This example is a modification of the [ray_tracing_gltf](https://github.co
 ## Chapters
 
 * [Scene Geometry](docs/scene_geometry.md)
-* Rendering Loop
+* [Rendering Loop](docs/render_loop.md)
 * Resource Allocator
