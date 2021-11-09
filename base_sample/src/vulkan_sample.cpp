@@ -110,6 +110,9 @@ void VulkanSample::loadScene(const std::string& filename)
   m_gltfScene.importMaterials(tmodel);
   m_gltfScene.importDrawableNodes(tmodel, nvh::GltfAttributes::Normal | nvh::GltfAttributes::Texcoord_0 | nvh::GltfAttributes::Tangent);
 
+
+  CameraManip.setClipPlanes(nvmath::vec2f(0.001f * m_gltfScene.m_dimensions.radius, 10.0f * m_gltfScene.m_dimensions.radius));
+
   // Create the buffers, copy vertices, indices and materials
   nvvk::CommandPool cmdPool(m_device, m_graphicsQueueIndex);
   VkCommandBuffer   cmdBuf = cmdPool.createCommandBuffer();
@@ -271,13 +274,11 @@ void VulkanSample::updateUniformBuffer(VkCommandBuffer cmdBuf)
 
   // Prepare new UBO contents on host.
   const float aspectRatio = m_size.width / static_cast<float>(m_size.height);
-
-  constexpr float zNear = 0.1f;
-  constexpr float zFar  = 10000.0f;
+  auto&       clip        = CameraManip.getClipPlanes();
 
   FrameInfo hostUBO{};
   hostUBO.view       = CameraManip.getMatrix();
-  hostUBO.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, zNear, zFar);
+  hostUBO.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
   hostUBO.viewInv    = nvmath::invert(hostUBO.view);
   hostUBO.projInv    = nvmath::invert(hostUBO.proj);
   hostUBO.light[0]   = m_lights[0];
@@ -919,15 +920,9 @@ void VulkanSample::createRtPipeline()
   group.type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
   group.generalShader    = VK_SHADER_UNUSED_KHR;
   group.closestHitShader = eClosestHit;
-  group.anyHitShader     = VK_SHADER_UNUSED_KHR;
-  shaderGroups.push_back(group);
-
-  // closest hit shader
-  group.type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-  group.generalShader    = VK_SHADER_UNUSED_KHR;
-  group.closestHitShader = VK_SHADER_UNUSED_KHR;
   group.anyHitShader     = eAnyHit;
   shaderGroups.push_back(group);
+
 
   // Push constant: we want to be able to update constants used by the shaders
   VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(RtxPushConstant)};

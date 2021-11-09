@@ -53,8 +53,7 @@ void main()
   vec3       direction   = vec3(pc.mvp * vec4(d.x, d.y, 1.0, 1.0));
 
   // Getting axis
-  vec3 tangent;
-  vec3 bitangent;
+  vec3 tangent, bitangent;
   vec3 normal = normalize(vec3(direction.x, -direction.y, direction.z));  // Flipping Y
   createCoordinateSystem(normal, tangent, bitangent);
 

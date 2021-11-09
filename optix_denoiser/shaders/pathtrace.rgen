@@ -29,6 +29,7 @@
 
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
+layout(location = 1) rayPayloadEXT GbufferPayload payloadGbuf;
 
 layout(set = 0, binding = eTlas)      uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = eOutImage)  uniform image2D image;
@@ -71,8 +72,6 @@ vec3 samplePixel(inout uint seed)
   payload.hitT         = INFINITE;
   payload.rayOrigin    = origin.xyz;
   payload.rayDirection = direction.xyz;
-  payload.packAlbedo   = 0;
-  payload.packNormal   = 0;
 
   vec3 weightAccum  = vec3(1.0, 1.0, 1.0);
   vec3 contribAccum = vec3(0.0, 0.0, 0.0);
@@ -94,12 +93,6 @@ vec3 samplePixel(inout uint seed)
     // Accumulating results
     contribAccum += payload.contrib * weightAccum;
     weightAccum *= payload.weight;
-
-    if(depth == 0)
-    {  // For G-Buffers
-      gUnpackedAlbedo = unpackUnorm4x8(payload.packAlbedo);
-      gUnpackedNormal = decompress_unit_vec(payload.packNormal);
-    }
 
     // Stopping recursion
     if(payload.hitT == INFINITE)
@@ -123,6 +116,47 @@ vec3 samplePixel(inout uint seed)
   return contribAccum;
 }
 
+//-----------------------------------------------------------------------
+// Trace a single ray in the middle of the pixel to retrieve the
+// Albedo and normal. Also, forcing all objects to be opaque
+//-----------------------------------------------------------------------
+void traceAlbedo()
+{
+  const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5f, 0.5f);
+  const vec2 inUV        = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+  const vec2 d           = inUV * 2.0 - 1.0;
+
+  const vec4  origin    = frameInfo.viewInv * vec4(0.0, 0.0, 0.0, 1.0);
+  const vec4  target    = frameInfo.projInv * vec4(d.x, d.y, 0.01, 1.0);
+  const vec4  direction = frameInfo.viewInv * vec4(normalize(target.xyz), 0.0);
+  const uint  rayFlags  = gl_RayFlagsOpaqueEXT;
+  const float tMin      = 0.001;
+  const float tMax      = INFINITE;
+
+  payloadGbuf.packAlbedo = 0;
+  payloadGbuf.packNormal = 0;
+
+  traceRayEXT(topLevelAS,     // acceleration structure
+              rayFlags,       // rayFlags
+              0xFF,           // cullMask
+              1,              // sbtRecordOffset --- Using the Gbuffer.rchit
+              0,              // sbtRecordStride
+              1,              // missIndex --- Using the Gbuffer.rmiss
+              origin.xyz,     // ray origin
+              tMin,           // ray min range
+              direction.xyz,  // ray direction
+              tMax,           // ray max range
+              1               // payload --- Using the GbufferPayload
+  );
+
+  gUnpackedAlbedo = unpackUnorm4x8(payloadGbuf.packAlbedo);
+  gUnpackedNormal = decompress_unit_vec(payloadGbuf.packNormal);
+}
+
+
+//-----------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------
 void main()
 {
   // Initialize the random number
@@ -138,10 +172,12 @@ void main()
 
   // Saving result
   if(pc.frame == 0)
-  {  // First frame, replace the value in the buffer
+  {
+    // First frame, replace the value in the buffer
     imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(contribAccum, 1.f));
 
     // G-Buffers
+    traceAlbedo();
     imageStore(gAlbedo, ivec2(gl_LaunchIDEXT.xy), gUnpackedAlbedo);
     gUnpackedNormal = (gUnpackedNormal * vec3(0.5)) + vec3(0.5);  // converting to [0..1]
     imageStore(gNormal, ivec2(gl_LaunchIDEXT.xy), vec4(gUnpackedNormal, 0));

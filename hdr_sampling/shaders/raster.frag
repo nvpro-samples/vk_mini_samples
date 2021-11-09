@@ -111,8 +111,7 @@ void main()
   hit.tangent   = normalize(i_tangent.xyz);
   hit.bitangent = cross(hit.nrm, hit.tangent) * i_tangent.w;
 
-  uint         seed    = 0;
-  MaterialEval matEval = evaluateMaterial(mat, hit.nrm, hit.tangent, hit.bitangent, hit.uv, seed);
+  MaterialEval matEval = evaluateMaterial(mat, hit.nrm, hit.tangent, hit.bitangent, hit.uv);
 
   vec3 toEye = normalize(-i_viewDir);
 

@@ -37,6 +37,8 @@
 #include "_autogen/pathtrace.rgen.h"
 #include "_autogen/pathtrace.rmiss.h"
 #include "_autogen/post.frag.h"
+#include "_autogen/gbuffers.rchit.h"
+#include "_autogen/gbuffers.rmiss.h"
 #include <filesystem>
 
 //--------------------------------------------------------------------------------------------------
@@ -916,8 +918,10 @@ void VulkanSample::createRtPipeline()
   {
     eRaygen,
     eMiss,
+    eMissGbuf,
     eClosestHit,
     eAnyHit,
+    eClosestHitGbuf,
     eShaderGroupCount
   };
   std::array<VkPipelineShaderStageCreateInfo, eShaderGroupCount> stages{};
@@ -940,6 +944,16 @@ void VulkanSample::createRtPipeline()
   stage.stage     = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
   stages[eAnyHit] = stage;
 
+  // Miss G-Buffers
+  stage.module      = nvvk::createShaderModule(m_device, gbuffers_rmiss, sizeof(gbuffers_rmiss));
+  stage.stage       = VK_SHADER_STAGE_MISS_BIT_KHR;
+  stages[eMissGbuf] = stage;
+  // Hit Group - Closest Hit
+  stage.module            = nvvk::createShaderModule(m_device, gbuffers_rchit, sizeof(gbuffers_rchit));
+  stage.stage             = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+  stages[eClosestHitGbuf] = stage;
+
+
   // Shader groups
   VkRayTracingShaderGroupCreateInfoKHR group{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
   group.anyHitShader       = VK_SHADER_UNUSED_KHR;
@@ -958,18 +972,23 @@ void VulkanSample::createRtPipeline()
   group.generalShader = eMiss;
   shaderGroups.push_back(group);
 
+  // Miss - G-Buf
+  group.type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+  group.generalShader = eMissGbuf;
+  shaderGroups.push_back(group);
+
   // closest hit shader
   group.type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
   group.generalShader    = VK_SHADER_UNUSED_KHR;
   group.closestHitShader = eClosestHit;
-  group.anyHitShader     = VK_SHADER_UNUSED_KHR;
+  group.anyHitShader     = eAnyHit;
   shaderGroups.push_back(group);
 
   // any hit shader
   group.type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
   group.generalShader    = VK_SHADER_UNUSED_KHR;
-  group.closestHitShader = VK_SHADER_UNUSED_KHR;
-  group.anyHitShader     = eAnyHit;
+  group.closestHitShader = eClosestHitGbuf;
+  group.anyHitShader     = VK_SHADER_UNUSED_KHR;
   shaderGroups.push_back(group);
 
   // Push constant: we want to be able to update constants used by the shaders

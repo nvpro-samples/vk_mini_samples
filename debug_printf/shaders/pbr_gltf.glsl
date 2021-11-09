@@ -186,7 +186,7 @@ MaterialEval evaluateMaterial(in GltfShadeMaterial material, in vec3 normal, in 
   }
 
   // Clamping results
-  res.roughness = clamp(res.roughness, c_MinReflectance, 1.f);  // 0.04 or 0.001 ?
+  res.roughness = clamp(res.roughness, 0.001, 1.f);
   res.metallic  = clamp(res.metallic, 0.f, 1.f);
 
   // Emissive term

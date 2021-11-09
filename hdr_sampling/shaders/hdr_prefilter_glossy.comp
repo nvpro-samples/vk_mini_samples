@@ -44,41 +44,25 @@ layout(set = 1, binding = eImpSamples,  scalar)	buffer _EnvAccel { EnvAccel envS
 layout(set = 1, binding = eHdr) uniform sampler2D hdrTexture;
 
 layout(push_constant) uniform HdrPushBlock_  { HdrPushBlock pc; };
-// clang-format on
+  // clang-format on
 
-const float M_PI        = 3.14159265358979323846;   // pi
-const float M_TWO_PI    = 6.28318530717958648;      // 2*pi
-const float M_PI_2      = 1.57079632679489661923;   // pi/2
-const float M_PI_4      = 0.785398163397448309616;  // pi/4
-const float M_1_OVER_PI = 0.318309886183790671538;  // 1/pi
-const float M_2_OVER_PI = 0.636619772367581343076;  // 2/pi
-
+#include "sampling.glsl"
 #include "hdr_env_sampling.glsl"
+//#include "pbr_gltf.glsl"
 
-//layout(push_constant) uniform PushConsts
-//{
-//  layout(offset = 0) mat4   mvp;
-//  layout(offset = 64) float roughness;
-//  layout(offset = 68) uint  numSamples;
-//}
-//consts;
-
-
-const float PI          = 3.14159265359;
-const float ONE_OVER_PI = 0.3183099;
 
 vec2 get_spherical_uv(vec3 v)
 {
   float gamma = asin(v.y);
   float theta = atan(v.z, v.x);
 
-  return vec2(theta * ONE_OVER_PI * 0.5, gamma * ONE_OVER_PI) + 0.5;
+  return vec2(theta * M_1_OVER_PI * 0.5, gamma * M_1_OVER_PI) + 0.5;
 }
 
 // Importance sample a GGX microfacet distribution.
 vec3 ggx_sample(vec2 xi, float alpha)
 {
-  float phi       = 2.0 * PI * xi.x;
+  float phi       = 2.0 * M_PI * xi.x;
   float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (alpha * alpha - 1.0) * xi.y));
   float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
@@ -92,31 +76,9 @@ float ggx_eval(float alpha, float nh)
   float nh2  = nh * nh;
   float tan2 = (1.0f - nh2) / nh2;
   float f    = a2 + tan2;
-  return a2 / (f * f * PI * nh2 * nh);
+  return a2 / (f * f * M_PI * nh2 * nh);
 }
 
-// Simple pseudo-random numbers.
-uint rnd_next(uint state)
-{
-  // xorshift32
-  state ^= state << 13;
-  state ^= state >> 17;
-  state ^= state << 5;
-  return state;
-}
-float rnd_val(uint state)
-{
-
-  return float(state) * 2.3283064365386963e-10;
-}
-int hash(int seed, int i)
-{
-  return (i ^ seed) * 1075385539;
-}
-int rnd_init(ivec3 pos)
-{
-  return hash(hash(hash(0, pos.x), pos.y), pos.z);
-}
 
 struct Envmap_sample_value
 {
@@ -133,14 +95,15 @@ void main()
   const vec2 d           = inUV * 2.0 - 1.0;
   vec3       direction   = vec3(pc.mvp * vec4(d.x, d.y, 1.0, 1.0));
 
-  vec3 normal = normalize(direction.xyz);
-  vec3 tangent = normalize(abs(normal.x) > abs(normal.z) ? vec3(-normal.y, normal.x, 0.0) : vec3(0.0, -normal.z, normal.y));
-  vec3 bitangent = cross(normal, tangent);
+  vec3 tangent, bitangent;
+  vec3 normal = normalize(vec3(direction.x, -direction.y, direction.z));  // Flipping Y
+  createCoordinateSystem(normal, tangent, bitangent);
 
   float alpha    = pc.roughness * pc.roughness;
   uint  nsamples = alpha > 0.0f ? 512u : 1u;
 
-  uint state = uint(rnd_init(ivec3(normal * 1e4f)));
+
+  uint state = xxhash32(uvec3(gl_GlobalInvocationID.xy, pc.roughness * 10));
 
   // The integrals are additionally weighted by the cosine and normalized using the average cosine of
   // the importance sampled BRDF directions (as in the Unreal publication).
@@ -153,8 +116,7 @@ void main()
     // Importance sample BRDF.
     {
       float xi0 = (float(i) + 0.5f) * inv_nsamples;
-      state     = rnd_next(state);
-      float xi1 = rnd_val(state);
+      float xi1 = rand(state);
 
       vec3 h0 = alpha > 0.0f ? ggx_sample(vec2(xi0, xi1), alpha) : vec3(0.0f, 0.0f, 1.0f);
       vec3 h  = tangent * h0.x + bitangent * h0.y + normal * h0.z;
@@ -164,7 +126,7 @@ void main()
       float cos_theta = dot(normal, direction);
       if(cos_theta > 0.0)
       {
-        vec2  uv = get_spherical_uv(direction);
+        vec2  uv = getSphericalUv(direction);
         float w  = 1.0f;
         if(alpha > 0.0f)
         {
@@ -181,15 +143,10 @@ void main()
     // Importance sample environment.
     if(alpha > 0.0f)
     {
-      state     = rnd_next(state);
-      float xi2 = rnd_val(state);
-      state     = rnd_next(state);
-      float xi3 = rnd_val(state);
-      state     = rnd_next(state);
-      float xi4 = rnd_val(state);
+      vec3 randVal = vec3(rand(state), rand(state), rand(state));
 
       Envmap_sample_value val;
-      vec4                radPdf = environmentSample(hdrTexture, vec3(xi2, xi3, xi4), val.dir);
+      vec4                radPdf = environmentSample(hdrTexture, randVal, val.dir);
       val.pdf                    = radPdf.a;
       val.value                  = radPdf.rgb / val.pdf;
 

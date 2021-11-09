@@ -66,7 +66,6 @@ struct MaterialEval
   vec3  tangent;
   vec3  bitangent;
   vec3  emissive;
-  bool  transparent;
 };
 
 // sRGB to linear approximation, see http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
@@ -113,7 +112,7 @@ float solveMetallic(vec3 diffuse, vec3 specular, float oneMinusSpecularStrength)
 //-----------------------------------------------------------------------
 // From the incoming material return the material for evaluating PBR
 //-----------------------------------------------------------------------
-MaterialEval evaluateMaterial(in GltfShadeMaterial material, in vec3 normal, in vec3 tangent, in vec3 bitangent, in vec2 uv, inout uint seed)
+MaterialEval evaluateMaterial(in GltfShadeMaterial material, in vec3 normal, in vec3 tangent, in vec3 bitangent, in vec2 uv)
 {
   // Metallic and Roughness material properties are packed together. In glTF, these factors can be specified by fixed scalar values or from a metallic-roughness map
   MaterialEval res;
@@ -186,7 +185,7 @@ MaterialEval evaluateMaterial(in GltfShadeMaterial material, in vec3 normal, in 
   }
 
   // Clamping results
-  res.roughness = clamp(res.roughness, c_MinReflectance, 1.f);  // 0.04 or 0.001 ?
+  res.roughness = clamp(res.roughness, 0.001, 1.f);
   res.metallic  = clamp(res.metallic, 0.f, 1.f);
 
   // Emissive term
@@ -194,11 +193,10 @@ MaterialEval evaluateMaterial(in GltfShadeMaterial material, in vec3 normal, in 
   if(material.emissiveTexture > -1)
     emissive *= vec3(srgbToLinear(texture(texturesMap[material.emissiveTexture], uv)));
 
-  res.emissive    = emissive;
-  res.normal      = normal;
-  res.tangent     = tangent;
-  res.bitangent   = bitangent;
-  res.transparent = (rand(seed) > res.albedo.a);
+  res.emissive  = emissive;
+  res.normal    = normal;
+  res.tangent   = tangent;
+  res.bitangent = bitangent;
   return res;
 }
 
@@ -401,11 +399,6 @@ vec3 bsdfSample(in MaterialEval state, in vec3 V, inout uint seed)
 {
   vec3  N           = state.normal;
   float probability = rand(seed);
-  // Going through for transparent object
-  if(state.transparent)
-  {
-    return -V;
-  }
 
   float diffuseRatio = 0.5 * (1.0 - state.metallic);
   float r1           = rand(seed);
@@ -437,13 +430,6 @@ vec3 pbrSample(in MaterialEval state, vec3 V, inout vec3 L, inout float pdf, ino
 
   vec3  N     = state.normal;
   float dotNL = dot(N, L);
-
-  // Deal with transparency
-  if(state.transparent)
-  {
-    pdf = abs(dotNL);
-    return vec3(state.albedo);
-  }
 
   // Early out
   pdf = 0;

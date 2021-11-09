@@ -28,8 +28,13 @@ struct HitPayload
   vec3  weight;
   vec3  rayOrigin;
   vec3  rayDirection;
-  uint  packAlbedo;
-  uint  packNormal;
+};
+
+
+struct GbufferPayload
+{
+  uint packAlbedo;
+  uint packNormal;
 };
 
 

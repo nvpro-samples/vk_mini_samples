@@ -228,7 +228,7 @@ vec3 shading(in MaterialEval matEval, in HitState hit)
     // Shadow ray - stop at the first intersection, don't invoke the closest hit shader (fails for transparent objects)
     uint rayflag = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
     payload.hitT = 0;
-    traceRayEXT(topLevelAS, rayflag, 0xFF, 1, 0, 0, payload.rayOrigin, 0.001, vcontrib.lightDir, vcontrib.lightDist, 0);
+    traceRayEXT(topLevelAS, rayflag, 0xFF, 0, 0, 0, payload.rayOrigin, 0.001, vcontrib.lightDir, vcontrib.lightDist, 0);
     // If hitting nothing, add light contribution
     if(payload.hitT == INFINITE)
       radiance += vcontrib.radiance;
@@ -253,12 +253,10 @@ void main()
 
   // Material of the object and evaluated material (includes textures)
   GltfShadeMaterial mat     = materials.m[matIndex];
-  MaterialEval      matEval = evaluateMaterial(mat, hit.nrm, hit.tangent, hit.bitangent, hit.uv, payload.seed);
+  MaterialEval      matEval = evaluateMaterial(mat, hit.nrm, hit.tangent, hit.bitangent, hit.uv);
 
-  payload.hitT       = gl_HitTEXT;
-  payload.contrib    = shading(matEval, hit);
-  payload.packAlbedo = packUnorm4x8(matEval.albedo);
-  payload.packNormal = compress_unit_vec(matEval.normal);
+  payload.hitT    = gl_HitTEXT;
+  payload.contrib = shading(matEval, hit);
 
   // -- Debug --
   //  payload.contrib = hit.nrm * .5 + .5;
