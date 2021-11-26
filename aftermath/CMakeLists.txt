@@ -31,6 +31,52 @@ macro(copy_dll dlls)
         COMMAND ${CMAKE_COMMAND} -E copy ${dlls} $<TARGET_FILE_DIR:${PROJNAME}>)
 endmacro()
 
+#####################################################################################
+# nSight Aftermath
+macro(_add_package_Aftermath)
+    if (NOT DEFINED $ENV{NSIGHT_AFTERMATH_SDK})
+      if(UNIX)
+        set(AFTERMATH_URL "https://developer.nvidia.com/rdp/assets/nsight-aftermath-sdk-2021_1-linux-package")
+        set(AFTERMATH_FILE "${DOWNLOAD_TARGET_DIR}/aftermath.tgz")
+      else()
+        set(AFTERMATH_URL "https://developer.nvidia.com/rdp/assets/nsight-aftermath-sdk-2021_1-windows-package")
+        set(AFTERMATH_FILE "${DOWNLOAD_TARGET_DIR}/aftermath.zip")
+      endif()
+
+      set(AFTERMATH_DIR "${DOWNLOAD_TARGET_DIR}/aftermath")
+
+      if (NOT EXISTS ${AFTERMATH_DIR})
+        if (NOT EXISTS ${AFTERMATH_FILE})
+          message(STATUS "Downloading Aftermath SDK...")
+          file(DOWNLOAD ${AFTERMATH_URL}
+              ${AFTERMATH_FILE}
+              SHOW_PROGRESS
+              STATUS STAT
+              LOG  log)
+    #     message(STATUS "Status: ${STAT}
+    #                    Log: ${log}")
+        endif()
+        file(MAKE_DIRECTORY ${AFTERMATH_DIR})
+        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${AFTERMATH_FILE}
+                        WORKING_DIRECTORY ${AFTERMATH_DIR})
+      endif()
+      set(NSIGHT_AFTERMATH_SDK ${AFTERMATH_DIR})
+    else()
+      set(NSIGHT_AFTERMATH_SDK  $ENV{NSIGHT_AFTERMATH_SDK} CACHE STRING "Path to the Aftermath SDK")
+    endif()
+
+    find_package(NsightAftermath)
+
+    if(NsightAftermath_FOUND)
+        add_definitions(-DNVVK_SUPPORTS_AFTERMATH)
+        include_directories(${NsightAftermath_INCLUDE_DIRS})
+        LIST(APPEND LIBRARIES_OPTIMIZED ${NsightAftermath_LIBRARIES})
+        LIST(APPEND LIBRARIES_DEBUG ${NsightAftermath_LIBRARIES})
+    endif(NsightAftermath_FOUND)
+
+endmacro(_add_package_Aftermath)
+
+
 #--------------------------------------------------------------------------------------------------
 # GLSL to SPIR-V custom build
 set(SAMPLES_AFTERMATH_DEPENDENCIES OFF CACHE BOOL "Create dependencies on GLSL files")
@@ -61,24 +107,56 @@ source_group("Source Files"     FILES ${SOURCE_FILES})
 #--------------------------------------------------------------------------------------------------
 # Aftermath
 #
-set(NSIGHT_AFTERMATH_SDK $ENV{NSIGHT_AFTERMATH_SDK} CACHE STRING "Path to the Aftermath SDK")
+if (NOT DEFINED $ENV{NSIGHT_AFTERMATH_SDK})
+    set(DOWNLOAD_TARGET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern")
 
-string(ASCII 27 Esc)
-  set(ColourReset "${Esc}[m")
-  set(ColourBold  "${Esc}[1m")
-  set(Red         "${Esc}[31m")
+    if (NOT DEFINED $ENV{NSIGHT_AFTERMATH_SDK})
+        # Version of the SDK to download
+        if(UNIX)
+            set(AFTERMATH_URL "https://developer.nvidia.com/rdp/assets/nsight-aftermath-sdk-2021_1-linux-package")
+            set(AFTERMATH_FILE "${DOWNLOAD_TARGET_DIR}/aftermath.tgz")
+        else()
+            set(AFTERMATH_URL "https://developer.nvidia.com/rdp/assets/nsight-aftermath-sdk-2021_1-windows-package")
+            set(AFTERMATH_FILE "${DOWNLOAD_TARGET_DIR}/aftermath.zip")
+        endif()
 
-find_package(NsightAftermath)
-if(NsightAftermath_FOUND)
-    list(APPEND PLATFORM_LIBRARIES NsightAftermath::NsightAftermath)
-    include_directories(${NsightAftermath_INCLUDE_DIRS})
-    string(REPLACE ".lib" ".dll" NsightAftermath_DLL ${NsightAftermath_LIBRARY})
-    copy_dll(${NsightAftermath_DLL})
-else()
-message("\n\n============= ERROR =============")
-message("Path to the Aftermath SDK is missing.")
-message("Please follow steps in aftermath/README.md")
-message("============= ERROR =============\n\n")
+        set(AFTERMATH_DIR "${DOWNLOAD_TARGET_DIR}/aftermath")
+
+        # Download Aftermath SDK
+        if (NOT EXISTS ${AFTERMATH_DIR})
+            if (NOT EXISTS ${AFTERMATH_FILE})
+              message(STATUS "Downloading Aftermath SDK...")
+              file(DOWNLOAD ${AFTERMATH_URL}
+                  ${AFTERMATH_FILE}
+                  SHOW_PROGRESS
+                  STATUS STAT
+                  LOG  log)
+            endif()
+            file(MAKE_DIRECTORY ${AFTERMATH_DIR})
+            # Unzip package
+            execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${AFTERMATH_FILE} WORKING_DIRECTORY ${AFTERMATH_DIR})
+        endif()
+        set(NSIGHT_AFTERMATH_SDK ${AFTERMATH_DIR} CACHE PATH "Path to the Aftermath SDK")
+    else()
+      set(NSIGHT_AFTERMATH_SDK  $ENV{NSIGHT_AFTERMATH_SDK} CACHE PATH "Path to the Aftermath SDK")
+    endif()
+
+    find_package(NsightAftermath)
+
+    if(NsightAftermath_FOUND)
+        add_definitions(-DNVVK_SUPPORTS_AFTERMATH)
+        # list(APPEND PLATFORM_LIBRARIES NsightAftermath::NsightAftermath)
+        list(APPEND LIBRARIES_OPTIMIZED ${NsightAftermath_LIBRARIES})
+        list(APPEND LIBRARIES_DEBUG ${NsightAftermath_LIBRARIES})
+        include_directories(${NsightAftermath_INCLUDE_DIRS})
+        string(REPLACE ".lib" ".dll" NsightAftermath_DLL ${NsightAftermath_LIBRARY})
+        copy_dll(${NsightAftermath_DLL})
+    else()
+        message("\n\n============= ERROR =============")
+        message("Path to the Aftermath SDK is missing.")
+        message("Please follow steps in aftermath/README.md")
+        message("============= ERROR =============\n\n")
+    endif()
 endif()
 
 #--------------------------------------------------------------------------------------------------

@@ -129,9 +129,11 @@ int main(int argc, char** argv)
   // #Aftermath
   // Set up device creation info for Aftermath feature flag configuration.
   VkDeviceDiagnosticsConfigCreateInfoNV aftermathInfo{VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV};
-  aftermathInfo.flags = VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
-                        /*| VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV*/
-                        | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV;
+  aftermathInfo.flags =
+      VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV  // Additional information about the resource related to a GPU virtual address
+      | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV  // Automatic checkpoints for all draw calls (ADD OVERHEAD)
+      | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV;  // instructs the shader compiler to generate debug information (ADD OVERHEAD)
+
   // Enable NV_device_diagnostic_checkpoints extension to be able to use Aftermath event markers.
   contextInfo.addDeviceExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
   // Enable NV_device_diagnostics_config extension to configure Aftermath features.
@@ -149,6 +151,7 @@ int main(int argc, char** argv)
   assert(!compatibleDevices.empty());
   // Use a compatible device
   vkctx.initDevice(compatibleDevices[0], contextInfo);
+
 
   // Create example
   VulkanSample vkSample;

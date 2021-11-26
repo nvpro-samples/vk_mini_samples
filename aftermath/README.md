@@ -9,31 +9,27 @@ We will make it crash when switching to raster rendering. :smiley:
 
 ## SDK sources
 
-This project requires to download the [Aftermath SDK](https://developer.nvidia.com/nsight-aftermath).
+This project is downloading the Aftermath SDK from https://developer.nvidia.com/nsight-aftermath, and extracting its content
+under `external/aftermath`. 
 
-Extract its content and copy the location of the SDK.
 
 ### Setting the NSIGHT_AFTERMATH_SDK variable
 
-When running CMake the first time, you probally have seen this error:
+If the above didn't work or you want to use a different version. Download, extract the SDK content and copy the location of the SDK.
 
-```
-NSIGHT_AFTERMATH_SDK environment variable not set to a valid location (value: )
-```
-
-To fix this, in the CMake-gui, open the  `Ungrouped Entries` and fill the `NSIGHT_AFTERMATH_SDK` variable with the path of where the SDK was extracted.
+In the CMake-gui, open the  `Ungrouped Entries` and fill the `NSIGHT_AFTERMATH_SDK` variable with the path of where the SDK was extracted.
 
 Example:
 ![](docs/cmake-gui.png)
 
-Now, rerun CMake and the the error should go away. 
+Now, rerun CMake and the new SDK should be used.
 
 ## SDK Callbacks
 
 Nsight Aftermath requires callback when there is a crash, to simplify the operation, a simple self-contain class can do the job. You can find this class locally under:
 
-* [NsightAftermathGpuCrashTracker.cpp](NsightAftermathGpuCrashTracker.cpp)
-* [NsightAftermathGpuCrashTracker.h](NsightAftermathGpuCrashTracker.h)
+* [nsight_aftermath_gpu_crash_tracker.cpp](src/nsight_aftermath_gpu_crash_tracker.cpp)
+* [nsight_aftermath_gpu_crash_tracker.h](src/nsight_aftermath_gpu_crash_tracker.h)
 
 ## Enabling Nsight Aftermath
 
@@ -51,9 +47,10 @@ Then add the following extensions at the end of the other ones.
   // #Aftermath
   // Set up device creation info for Aftermath feature flag configuration.
   VkDeviceDiagnosticsConfigCreateInfoNV aftermathInfo{VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV};
-  aftermathInfo.flags = VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
-                        | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV
-                        | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV;
+  aftermathInfo.flags =
+      VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV  // Additional information about the resource related to a GPU virtual address
+      | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV  // Automatic checkpoints for all draw calls (ADD OVERHEAD)
+      | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV;  // instructs the shader compiler to generate debug information (ADD OVERHEAD)
   // Enable NV_device_diagnostic_checkpoints extension to be able to use Aftermath event markers.
   contextInfo.addDeviceExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
   // Enable NV_device_diagnostics_config extension to configure Aftermath features.
@@ -67,7 +64,10 @@ Immediately following and before the creation of the Vulkan context, we initiali
   GpuCrashTracker m_gpuTracker;
   m_gpuTracker.Initialize();
 ```` 
+  
+:warning: **Note**: At the time of writting those lines the `aftermathInfo.flags` will not be taken into concideration and all supported feature will be turned on. This is handled like this for all extensions by the `nvvk::Context`.
 
+:warning: **Note**: Turning on Aftermath might impact the time of shader creation and will add overhead to the application.
 
 ## Testing
 
