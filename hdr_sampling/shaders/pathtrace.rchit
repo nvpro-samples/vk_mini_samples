@@ -68,6 +68,34 @@ struct HitState
 };
 
 
+//--------------------------------------------------------------
+// Fixing partially issue with shadow terminator
+//--------------------------------------------------------------
+vec3 adjustShadingNormalToRayDir(in vec3 normal, in vec3 geoNormal)
+{
+  const float SHADOW_TERMINATOR_THRESHOLD = 0.03;
+  const float FLT_MIN                     = 1.175494351e-38;
+
+  vec3 rayDir = gl_WorldRayDirectionEXT;
+
+  float dotGnD = -dot(geoNormal, rayDir);  // flip the geometry normal if necessary
+  geoNormal    = (dotGnD < 0.f) ? -geoNormal : geoNormal;
+  dotGnD       = dot(geoNormal, rayDir);
+  float dotND  = dot(normal, rayDir);
+  float dotNGn = dot(normal, geoNormal);
+
+  if(dotND > dotGnD && (dotND >= -SHADOW_TERMINATOR_THRESHOLD || dotNGn * (dotND + dotND) >= (dotGnD - SHADOW_TERMINATOR_THRESHOLD)))
+  {
+    vec3  grazingRefl = rayDir - normal * ((dotGnD - SHADOW_TERMINATOR_THRESHOLD) / dotNGn);
+    vec3  n           = grazingRefl - rayDir * length(grazingRefl);
+    float nLen        = length(n);
+    return (((nLen * nLen) <= FLT_MIN) || (dotNGn <= 0.f)) ? geoNormal : n / nLen;
+  }
+
+  return normal;
+}
+
+
 //-----------------------------------------------------------------------
 //-----------------------------------------------------------------------
 HitState GetHitState(PrimMeshInfo pinfo)
@@ -102,8 +130,8 @@ HitState GetHitState(PrimMeshInfo pinfo)
   const vec3 nrm2        = v2.normal.xyz;
   const vec3 normal      = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
   const vec3 worldNormal = normalize(vec3(normal * gl_WorldToObjectEXT));
-  const vec3 geomNormal  = normalize(cross(pos1 - pos0, pos2 - pos0));
-  hit.nrm                = dot(worldNormal, gl_WorldRayDirectionEXT) <= 0.0 ? worldNormal : -worldNormal;  // Front-face
+  const vec3 geoNormal   = normalize(cross(pos1 - pos0, pos2 - pos0));
+  hit.nrm                = adjustShadingNormalToRayDir(worldNormal, geoNormal);
 
   // TexCoord
   const vec2 uv0 = vec2(v0.position.w, v0.normal.w);

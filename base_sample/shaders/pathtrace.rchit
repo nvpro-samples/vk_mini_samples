@@ -99,7 +99,7 @@ HitState GetHitState(PrimMeshInfo pinfo)
   const vec3 normal      = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
   const vec3 worldNormal = normalize(vec3(normal * gl_WorldToObjectEXT));
   const vec3 geomNormal  = normalize(cross(pos1 - pos0, pos2 - pos0));
-  hit.nrm                = dot(worldNormal, gl_WorldRayDirectionEXT) <= 0.0 ? worldNormal : -worldNormal;  // Front-face
+  hit.nrm                = worldNormal;
 
   // TexCoord
   const vec2 uv0 = vec2(v0.position.w, v0.normal.w);
