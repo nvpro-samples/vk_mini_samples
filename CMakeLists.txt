@@ -40,8 +40,6 @@ _add_nvpro_core_lib()
 message(STATUS "COPY ${CMAKE_CURRENT_SOURCE_DIR}/media  to  ${OUTPUT_PATH}")
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION ${OUTPUT_PATH})
 
-set(NSIGHT_AFTERMATH_SDK $ENV{NSIGHT_AFTERMATH_SDK} CACHE PATH "Path to the Aftermath SDK")
-
 #--------------------------------------------------------------------------------------------------
 # Sub examples
 add_subdirectory(base_sample) 
