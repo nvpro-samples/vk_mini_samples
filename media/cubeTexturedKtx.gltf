@@ -1,0 +1,162 @@
+{
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "min": [
+        -0.5,
+        -0.5,
+        -0.5
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5125,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "copyright": "NVIDIA Corporation",
+    "generator": "Iray glTF plugin",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteStride": 12
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 288,
+      "byteStride": 12
+    },
+    {
+      "buffer": 0,
+      "byteLength": 192,
+      "byteOffset": 576,
+      "byteStride": 8
+    },
+    {
+      "buffer": 0,
+      "byteLength": 144,
+      "byteOffset": 768
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 912,
+      "uri": "cubeTextured.bin"
+    }
+  ],
+  "cameras": [
+    {
+      "name": "default",
+      "perspective": {
+        "aspectRatio": 1.3333333730697632,
+        "yfov": 0.7417964935302734,
+        "zfar": 1000.0,
+        "znear": 0.1
+      },
+      "type": "perspective"
+    }
+  ],
+  "images": [
+    {
+      "name": "img_1",
+      "uri": "NVIDIA_logo2.ktx2"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "cube_instance_material",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "cube",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "camera": 0,
+      "matrix": [
+        0.7349284364472454,
+        -0.0,
+        -0.6781446698907297,
+        -0.0,
+        -0.3874752425954602,
+        0.8206887657283436,
+        -0.41992009499769933,
+        -0.0,
+        0.5565457121178783,
+        0.5713754893301669,
+        0.6031475114065514,
+        0.0,
+        1.730909784565274,
+        1.7770317938104678,
+        1.8758457864260285,
+        1.0
+      ],
+      "name": "CamInst"
+    },
+    {
+      "mesh": 0,
+      "name": "cube_instance"
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "name": "tex_2",
+      "source": 0
+    }
+  ]
+}
