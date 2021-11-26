@@ -102,10 +102,10 @@ void VulkanSample::loadScene(const std::string& filename)
   LOGI("- Loading file:\n\t %s\n", filename.c_str());
   if(!tcontext.LoadASCIIFromFile(&tmodel, &error, &warn, filename))
   {
+    LOGW(warn.c_str());
+    LOGE(error.c_str());
     assert(!"Error while loading scene");
   }
-  LOGW(warn.c_str());
-  LOGE(error.c_str());
 
   m_gltfScene.importMaterials(tmodel);
   m_gltfScene.importDrawableNodes(tmodel, nvh::GltfAttributes::Normal | nvh::GltfAttributes::Texcoord_0 | nvh::GltfAttributes::Tangent);
@@ -129,7 +129,7 @@ void VulkanSample::loadScene(const std::string& filename)
   sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_instInfoBuffer.buffer);
   m_sceneDesc               = m_alloc.createBuffer(cmdBuf, sizeof(SceneDescription), &sceneDesc,
                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-  NAME_VK(m_sceneDesc.buffer);
+  NAME2_VK(m_sceneDesc.buffer, "Scene Description");
 
   cmdPool.submitAndWait(cmdBuf);
   m_alloc.finalizeAndReleaseStaging();
@@ -178,7 +178,7 @@ void VulkanSample::createVertexBuffer(VkCommandBuffer cmdBuf)
         vertex.emplace_back(v);
       }
       v_buffer = m_alloc.createBuffer(cmdBuf, vertex, usageFlag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      NAME_IDX_VK(v_buffer.buffer, primIdx);
+      primMesh.name.empty() ? NAME_IDX_VK(v_buffer.buffer, primIdx) : NAME2_VK(v_buffer.buffer, "v_" + primMesh.name);
     }
     else
     {
@@ -193,7 +193,7 @@ void VulkanSample::createVertexBuffer(VkCommandBuffer cmdBuf)
       indices[idx] = m_gltfScene.m_indices[idx + primMesh.firstIndex];
     }
     auto i_buffer = m_alloc.createBuffer(cmdBuf, indices, usageFlag | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    NAME_IDX_VK(i_buffer.buffer, primIdx);
+    primMesh.name.empty() ? NAME_IDX_VK(i_buffer.buffer, primIdx) : NAME2_VK(i_buffer.buffer, "i_" + primMesh.name);
     m_indices.emplace_back(i_buffer);
 
     // Primitive information, material Id and addresses of buffers
@@ -208,7 +208,7 @@ void VulkanSample::createVertexBuffer(VkCommandBuffer cmdBuf)
 
   // Creating the buffer of all primitive information
   m_primInfo = m_alloc.createBuffer(cmdBuf, primInfo, usageFlag);
-  NAME_VK(m_primInfo.buffer);
+  NAME2_VK(m_primInfo.buffer, "PrimMesh Info");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -242,7 +242,7 @@ void VulkanSample::createMaterialBuffer(VkCommandBuffer cmdBuf)
   }
   m_materialBuffer = m_alloc.createBuffer(cmdBuf, shadeMaterials,
                                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-  NAME_VK(m_materialBuffer.buffer);
+  NAME2_VK(m_materialBuffer.buffer, "Materials");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -260,7 +260,7 @@ void VulkanSample::createInstanceInfoBuffer(VkCommandBuffer cmdBuf)
   }
   m_instInfoBuffer =
       m_alloc.createBuffer(cmdBuf, instInfo, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-  NAME_VK(m_instInfoBuffer.buffer);
+  NAME2_VK(m_instInfoBuffer.buffer, "Instance Info");
 }
 
 
@@ -345,7 +345,7 @@ void VulkanSample::createGraphicPipeline()
       {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},   // Tangents
   });
   p.pipeline = gpb.createPipeline();
-  m_debug.setObjectName(p.pipeline, "Graphics");
+  NAME2_VK(p.pipeline, "Graphics");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -356,7 +356,7 @@ void VulkanSample::createUniformBuffer()
 {
   m_frameInfo = m_alloc.createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  NAME_VK(m_frameInfo.buffer);
+  NAME2_VK(m_frameInfo.buffer, "FrameInfo");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -373,18 +373,17 @@ void VulkanSample::createTextureImages(VkCommandBuffer cmdBuf, tinygltf::Model& 
   VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
 
   // Make dummy image(1,1), needed as we cannot have an empty array
-  auto addDefaultImage = [this, cmdBuf]() {
-    std::array<uint8_t, 4> white           = {255, 255, 255, 255};
-    VkImageCreateInfo      imageCreateInfo = nvvk::makeImage2DCreateInfo(VkExtent2D{1, 1});
-    nvvk::Image            image           = m_alloc.createImage(cmdBuf, 4, white.data(), imageCreateInfo);
+  auto addDefaultImage = [this, cmdBuf](const std::array<uint8_t, 4>& color) {
+    VkImageCreateInfo imageCreateInfo = nvvk::makeImage2DCreateInfo(VkExtent2D{1, 1});
+    nvvk::Image       image           = m_alloc.createImage(cmdBuf, 4, color.data(), imageCreateInfo);
     m_images.emplace_back(image, imageCreateInfo);
-    m_debug.setObjectName(m_images.back().first.image, "dummy");
+    NAME2_VK(m_images.back().first.image, "Dummy");
   };
 
   // Make dummy texture/image(1,1), needed as we cannot have an empty array
   auto addDefaultTexture = [&]() {
     if(m_images.empty())
-      addDefaultImage();
+      addDefaultImage({255, 255, 255, 255});
 
     std::pair<nvvk::Image, VkImageCreateInfo>& image  = m_images[0];
     VkImageViewCreateInfo                      ivInfo = nvvk::makeImageViewCreateInfo(image.first.image, image.second);
@@ -398,17 +397,15 @@ void VulkanSample::createTextureImages(VkCommandBuffer cmdBuf, tinygltf::Model& 
   }
 
   // First - create the images
-  m_images.reserve(gltfModel.images.size());
-  for(size_t i = 0; i < gltfModel.images.size(); i++)
+  for(const tinygltf::Image& gltfimage : gltfModel.images)
   {
-    auto&        gltfimage  = gltfModel.images[i];
-    void*        buffer     = gltfimage.image.data();
+    const void*  buffer     = gltfimage.image.data();
     VkDeviceSize bufferSize = gltfimage.image.size();
     auto         imgSize    = VkExtent2D{(uint32_t)gltfimage.width, (uint32_t)gltfimage.height};
 
     if(bufferSize == 0 || gltfimage.width == -1 || gltfimage.height == -1)
     {
-      addDefaultImage();  // Image not present or incorrectly loaded (image.empty)
+      addDefaultImage({255, 0, 255, 255});  // Image not present or incorrectly loaded (image.empty)
       continue;
     }
 
@@ -416,7 +413,7 @@ void VulkanSample::createTextureImages(VkCommandBuffer cmdBuf, tinygltf::Model& 
     nvvk::Image       image           = m_alloc.createImage(cmdBuf, bufferSize, buffer, imageCreateInfo);
     nvvk::cmdGenerateMipmaps(cmdBuf, image.image, format, imgSize, imageCreateInfo.mipLevels);
     m_images.emplace_back(image, imageCreateInfo);
-    NAME_IDX_VK(image.image, i);
+    NAME2_VK(image.image, gltfimage.name.empty() ? std::filesystem::path(gltfimage.uri).filename().string() : gltfimage.name);
   }
 
   // Creating the textures using the above images
@@ -608,7 +605,7 @@ void VulkanSample::createOffscreenRender()
         m_size, colorFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
 
     nvvk::Image image = m_alloc.createImage(colorCreateInfo);
-    NAME_VK(image.image);
+    NAME2_VK(image.image, "Offscreen Color");
 
     VkImageViewCreateInfo ivInfo = nvvk::makeImageViewCreateInfo(image.image, colorCreateInfo);
     VkSamplerCreateInfo   sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -620,7 +617,7 @@ void VulkanSample::createOffscreenRender()
   auto depthCreateInfo = nvvk::makeImage2DCreateInfo(m_size, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
   {
     nvvk::Image image = m_alloc.createImage(depthCreateInfo);
-    NAME_VK(image.image);
+    NAME2_VK(image.image, "Offscreen Depth");
 
     VkImageViewCreateInfo depthStencilView{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     depthStencilView.viewType         = VK_IMAGE_VIEW_TYPE_2D;
@@ -645,7 +642,7 @@ void VulkanSample::createOffscreenRender()
   // Creating a renderpass for the offscreen
   m_offscreenRenderPass = nvvk::createRenderPass(m_device, {colorFormat}, depthFormat, 1, true, true,
                                                  VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
-  NAME_VK(m_offscreenRenderPass);
+  NAME2_VK(m_offscreenRenderPass, "Offscreen");
 
   // Creating the frame buffer for offscreen
   std::vector<VkImageView> attachments = {m_offscreenColor.descriptor.imageView, m_offscreenDepth.descriptor.imageView};
@@ -658,7 +655,7 @@ void VulkanSample::createOffscreenRender()
   info.height          = m_size.height;
   info.layers          = 1;
   vkCreateFramebuffer(m_device, &info, nullptr, &m_offscreenFramebuffer);
-  NAME_VK(m_offscreenFramebuffer);
+  NAME2_VK(m_offscreenFramebuffer, "Offscreen");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -696,7 +693,7 @@ void VulkanSample::createPostPipeline()
   pipelineGenerator.rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
   p.pipeline = pipelineGenerator.createPipeline();
-  m_debug.setObjectName(p.pipeline, "post");
+  NAME2_VK(p.pipeline, "Post");
 }
 
 
@@ -885,18 +882,22 @@ void VulkanSample::createRtPipeline()
   stage.module    = nvvk::createShaderModule(m_device, pathtrace_rgen, sizeof(pathtrace_rgen));
   stage.stage     = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
   stages[eRaygen] = stage;
+  NAME2_VK(stage.module, "Raygen");
   // Miss
   stage.module  = nvvk::createShaderModule(m_device, pathtrace_rmiss, sizeof(pathtrace_rmiss));
   stage.stage   = VK_SHADER_STAGE_MISS_BIT_KHR;
   stages[eMiss] = stage;
+  NAME2_VK(stage.module, "Miss");
   // Hit Group - Closest Hit
   stage.module        = nvvk::createShaderModule(m_device, pathtrace_rchit, sizeof(pathtrace_rchit));
   stage.stage         = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
   stages[eClosestHit] = stage;
+  NAME2_VK(stage.module, "Closest Hit");
   // AnyHit
   stage.module    = nvvk::createShaderModule(m_device, pathtrace_rahit, sizeof(pathtrace_rahit));
   stage.stage     = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
   stages[eAnyHit] = stage;
+  NAME2_VK(stage.module, "AnyHit");
 
   // Shader groups
   VkRayTracingShaderGroupCreateInfoKHR group{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
@@ -1155,12 +1156,12 @@ void VulkanSample::renderUI()
   }
   ImGui::PopItemWidth();
   ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-  ImGuiH::Control::Info("", "", "(M) Toggle Render Mode", ImGuiH::Control::Flags::Disabled);
-  ImGuiH::Control::Info("", "", "(F) Frame All", ImGuiH::Control::Flags::Disabled);
-  ImGuiH::Control::Info("", "", "(R) Restart rendering", ImGuiH::Control::Flags::Disabled);
-  ImGuiH::Control::Info("", "", "(SPACE) Set Eye position", ImGuiH::Control::Flags::Disabled);
-  ImGuiH::Control::Info("", "", "(F10) Toggle Pane", ImGuiH::Control::Flags::Disabled);
-  ImGuiH::Control::Info("", "", "(ESC) Quit", ImGuiH::Control::Flags::Disabled);
+  ImGui::TextDisabled("(M) Toggle Render Mode");
+  ImGui::TextDisabled("(F) Frame All");
+  ImGui::TextDisabled("(R) Restart rendering");
+  ImGui::TextDisabled("(SPACE) Set Eye position");
+  ImGui::TextDisabled("(F10) Toggle Pane");
+  ImGui::TextDisabled("(ESC) Quit");
   ImGuiH::Panel::End();
 
   if(changed)
