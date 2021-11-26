@@ -51,12 +51,15 @@ void VulkanSample::create(const nvvk::AppBaseVkCreateInfo& info)
   m_debug.setup(m_device);
   m_picker.setup(m_device, m_physicalDevice, info.queueIndices[0], &m_alloc);
   m_hdrEnv.setup(m_device, m_physicalDevice, info.queueIndices[0], &m_alloc);
+
+#ifdef NVP_SUPPORTS_OPTIX7
   m_denoiser.setup(m_device, m_physicalDevice, info.queueIndices[0]);
 
   OptixDenoiserOptions dOptions;
   dOptions.guideAlbedo = true;
   dOptions.guideNormal = true;
   m_denoiser.initOptiX(dOptions, OPTIX_PIXEL_FORMAT_FLOAT4, true);
+#endif  // NVP_SUPPORTS_OPTIX7
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -94,6 +97,7 @@ void VulkanSample::createScene(const std::string& filename)
     LOGI(" - %6.2fms: Post\n", sw_.elapsed());
   }
 
+#ifdef NVP_SUPPORTS_OPTIX7
   {  // Denoiser
     nvh::Stopwatch sw_;
     m_denoiser.allocateBuffers(m_size);
@@ -101,6 +105,7 @@ void VulkanSample::createScene(const std::string& filename)
     m_denoiser.createCopyPipeline();
     LOGI(" - %6.2fms: Denoiser\n", sw_.elapsed());
   }
+#endif  // NVP_SUPPORTS_OPTIX7
 
   LOGI("TOTAL: %7.2fms\n\n", sw.elapsed());
 }
@@ -160,7 +165,7 @@ void VulkanSample::loadScene(const std::string& filename)
   sceneDesc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_primInfo.buffer);
   sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_instInfoBuffer.buffer);
   m_sceneDesc               = m_alloc.createBuffer(cmdBuf, sizeof(SceneDescription), &sceneDesc,
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
   NAME_VK(m_sceneDesc.buffer);
 
   cmdPool.submitAndWait(cmdBuf);
@@ -515,9 +520,12 @@ void VulkanSample::freeResources()
   m_alloc.destroy(m_gNormal);
   m_alloc.destroy(m_gDenoised);
 
-  m_denoiser.destroy();
   for(auto& p : m_postDstPool)  // All in flight pool
     vkDestroyDescriptorPool(m_device, p, nullptr);
+
+#ifdef NVP_SUPPORTS_OPTIX7
+  m_denoiser.destroy();
+#endif  // NVP_SUPPORTS_OPTIX7
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -526,9 +534,6 @@ void VulkanSample::freeResources()
 void VulkanSample::destroy()
 {
   freeResources();
-
-  m_denoiser.destroy();
-
 
   m_hdrEnv.destroy();
   m_alloc.deinit();
@@ -605,7 +610,9 @@ void VulkanSample::onResize(int /*w*/, int /*h*/)
   createOffscreenRender();
   updatePostDescriptorSet(m_offscreenColor.descriptor);
   updateRtDescriptorSet();
+#ifdef NVP_SUPPORTS_OPTIX7
   m_denoiser.allocateBuffers(m_size);
+#endif  // NVP_SUPPORTS_OPTIX7
   resetFrame();
 }
 
@@ -1353,7 +1360,9 @@ void VulkanSample::copyImagesToCuda(const VkCommandBuffer& cmdBuf)
 {
   if(needToDenoise())
   {
+#ifdef NVP_SUPPORTS_OPTIX7
     m_denoiser.imageToBuffer(cmdBuf, {m_offscreenColor, m_gAlbedo, m_gNormal});
+#endif  // NVP_SUPPORTS_OPTIX7
   }
 }
 
@@ -1362,7 +1371,9 @@ void VulkanSample::copyCudaImagesToVulkan(const VkCommandBuffer& cmdBuf)
 {
   if(needToDenoise())
   {
+#ifdef NVP_SUPPORTS_OPTIX7
     m_denoiser.bufferToImage(cmdBuf, &m_gDenoised);
+#endif  // NVP_SUPPORTS_OPTIX7
   }
 }
 
@@ -1371,7 +1382,9 @@ void VulkanSample::denoise()
 {
   if(needToDenoise())
   {
+#ifdef NVP_SUPPORTS_OPTIX7
     m_denoiser.denoiseImageBuffer(m_fenceValue);
+#endif  // NVP_SUPPORTS_OPTIX7
   }
 }
 
@@ -1422,18 +1435,22 @@ void VulkanSample::submitWithTLSemaphore(const VkCommandBuffer& cmdBuf)
   waitSemaphore.semaphore = m_swapChain.getActiveReadSemaphore();
   waitSemaphore.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
 
+#ifdef NVP_SUPPORTS_OPTIX7
   VkSemaphoreSubmitInfoKHR signalSemaphore{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO_KHR};
   signalSemaphore.semaphore = m_denoiser.getTLSemaphore();
   signalSemaphore.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
   signalSemaphore.value     = m_fenceValue;
+#endif  // NVP_SUPPORTS_OPTIX7
 
   VkSubmitInfo2KHR submits{VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR};
-  submits.commandBufferInfoCount   = 1;
-  submits.pCommandBufferInfos      = &cmdBufInfo;
-  submits.waitSemaphoreInfoCount   = 1;
-  submits.pWaitSemaphoreInfos      = &waitSemaphore;
+  submits.commandBufferInfoCount = 1;
+  submits.pCommandBufferInfos    = &cmdBufInfo;
+  submits.waitSemaphoreInfoCount = 1;
+  submits.pWaitSemaphoreInfos    = &waitSemaphore;
+#ifdef NVP_SUPPORTS_OPTIX7
   submits.signalSemaphoreInfoCount = 1;
   submits.pSignalSemaphoreInfos    = &signalSemaphore;
+#endif  // _DEBUG
 
   vkQueueSubmit2KHR(m_queue, 1, &submits, {});
 }
@@ -1450,20 +1467,24 @@ void VulkanSample::submitFrame(const VkCommandBuffer& cmdBuf)
   VkCommandBufferSubmitInfoKHR cmdBufInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO_KHR};
   cmdBufInfo.commandBuffer = cmdBuf;
 
+#ifdef NVP_SUPPORTS_OPTIX7
   VkSemaphoreSubmitInfoKHR waitSemaphore{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO_KHR};
   waitSemaphore.semaphore = m_denoiser.getTLSemaphore();
   waitSemaphore.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
   waitSemaphore.value     = m_fenceValue;
+#endif  // NVP_SUPPORTS_OPTIX7
 
   VkSemaphoreSubmitInfoKHR signalSemaphore{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO_KHR};
   signalSemaphore.semaphore = m_swapChain.getActiveWrittenSemaphore();
   signalSemaphore.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
 
   VkSubmitInfo2KHR submits{VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR};
-  submits.commandBufferInfoCount   = 1;
-  submits.pCommandBufferInfos      = &cmdBufInfo;
-  submits.waitSemaphoreInfoCount   = 1;
-  submits.pWaitSemaphoreInfos      = &waitSemaphore;
+  submits.commandBufferInfoCount = 1;
+  submits.pCommandBufferInfos    = &cmdBufInfo;
+#ifdef NVP_SUPPORTS_OPTIX7
+  submits.waitSemaphoreInfoCount = 1;
+  submits.pWaitSemaphoreInfos    = &waitSemaphore;
+#endif  // NVP_SUPPORTS_OPTIX7
   submits.signalSemaphoreInfoCount = 1;
   submits.pSignalSemaphoreInfos    = &signalSemaphore;
 

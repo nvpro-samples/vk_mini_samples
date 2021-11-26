@@ -17,6 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifdef NVP_SUPPORTS_OPTIX7
+
 
 #include <sstream>
 
@@ -494,7 +496,7 @@ void DenoiserOptix::createSemaphore()
 #ifdef WIN32
   auto handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
 #else
-  auto handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+  auto handleType                = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
 #endif
 
   VkSemaphoreTypeCreateInfo timelineCreateInfo{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
@@ -695,3 +697,6 @@ void DenoiserOptix::copyBufferToImage(const VkCommandBuffer& cmd, const nvvk::Te
   auto grid = getGridSize(m_imageSize);
   vkCmdDispatch(cmd, grid.width, grid.height, 1);
 }
+
+
+#endif  // !NVP_SUPPORTS_OPTIX7

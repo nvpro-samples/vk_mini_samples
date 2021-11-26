@@ -203,7 +203,10 @@ private:
 
 
   //////////////////////////////////////////////////////////////////////////
+#ifdef NVP_SUPPORTS_OPTIX7
   DenoiserOptix m_denoiser;
+#endif  // NVP_SUPPORTS_OPTIX7
+
   nvvk::Texture m_gDenoised;
 
   // Timeline semaphores

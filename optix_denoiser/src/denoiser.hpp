@@ -20,6 +20,9 @@
 
 #pragma once
 
+#ifdef NVP_SUPPORTS_OPTIX7
+
+
 #include <array>
 #include <iomanip>   // cerr
 #include <iostream>  // setw
@@ -207,3 +210,5 @@ private:
   };
   std::array<vkPipelines, 2> m_pipelines;
 };
+
+#endif  // !NVP_SUPPORTS_OPTIX7
