@@ -27,7 +27,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "imgui.h"
 
-#include "vulkan_sample.hpp"
+#include "inherited.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/cameramanipulator.hpp"
 #include "nvh/fileoperations.hpp"
@@ -139,8 +139,7 @@ int main(int argc, char** argv)
 
 
   // Create example
-  VulkanSample vkSample;
-  vkSample.m_renderMode = VulkanSample::eRaster;
+  InheritedSample vkSample;
 
   // Window need to be opened to get the surface on which to draw
   const VkSurfaceKHR surface = vkSample.getVkSurface(vkctx.m_instance, window);
@@ -202,27 +201,7 @@ int main(int argc, char** argv)
 
     // Offscreen Rendering Scene
     {
-      if(vkSample.m_renderMode == VulkanSample::eRayTracer)
-      {
-        // Ray tracing don't need any rendering pass
-        vkSample.raytrace(cmdBuf);
-      }
-      else
-      {
-        vkSample.fourViews(cmdBuf);
-        //// Raster
-        //VkRenderPassBeginInfo offscreenRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        //offscreenRenderPassBeginInfo.clearValueCount = 2;
-        //offscreenRenderPassBeginInfo.pClearValues    = clearValues.data();
-        //offscreenRenderPassBeginInfo.renderPass      = vkSample.m_offscreenRenderPass;
-        //offscreenRenderPassBeginInfo.framebuffer     = vkSample.m_offscreenFramebuffer;
-        //offscreenRenderPassBeginInfo.renderArea      = {{0, 0}, vkSample.getSize()};
-
-        //vkSample.setViewport(cmdBuf);
-        //vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-        //vkSample.rasterize(cmdBuf);
-        //vkCmdEndRenderPass(cmdBuf);
-      }
+      vkSample.fourViews(cmdBuf);
     }
 
     // 2nd rendering pass: tone mapper, UI
@@ -256,7 +235,6 @@ int main(int argc, char** argv)
   // Cleanup
   vkDeviceWaitIdle(vkSample.getDevice());
 
-  vkSample.destroyResources();
   vkSample.destroy();
   vkAxis.deinit();
   vkctx.deinit();

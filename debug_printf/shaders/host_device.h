@@ -53,7 +53,7 @@ START_BINDING(RtxBindings)
 END_BINDING();
 
 START_BINDING(PostBindings)
-  eImage = 0
+  ePostImage = 0
 END_BINDING();
 // clang-format on
 

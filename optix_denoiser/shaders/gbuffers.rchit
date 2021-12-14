@@ -26,8 +26,8 @@
 #extension GL_EXT_buffer_reference2 : require
 
 #include "host_device.h"
-#include "raycommon.glsl"
-#include "sampling.glsl"
+#include "ray_common.glsl"
+#include "common/shaders/sampling.glsl"
 
 hitAttributeEXT vec2 attribs;
 
@@ -45,7 +45,7 @@ layout(set = 1, binding = eTextures)  uniform sampler2D texturesMap[]; // all te
 // clang-format on
 
 
-#include "pbr_gltf.glsl"
+#include "common/shaders/pbr_gltf.glsl"
 #include "compress.glsl"
 
 //-----------------------------------------------------------------------

@@ -27,7 +27,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "imgui.h"
 
-#include "vulkan_sample.hpp"
+#include "hdr_sample.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/cameramanipulator.hpp"
 #include "nvh/fileoperations.hpp"
@@ -138,7 +138,7 @@ int main(int argc, char** argv)
   vkctx.initDevice(compatibleDevices[0], contextInfo);
 
   // Create example
-  VulkanSample vkSample;
+  HdrSample vkSample;
 
   // Window need to be opened to get the surface on which to draw
   const VkSurfaceKHR surface = vkSample.getVkSurface(vkctx.m_instance, window);

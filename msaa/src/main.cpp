@@ -27,7 +27,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "imgui.h"
 
-#include "vulkan_sample.hpp"
+#include "msaa.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/cameramanipulator.hpp"
 #include "nvh/fileoperations.hpp"
@@ -133,7 +133,7 @@ int main(int argc, char** argv)
   vkctx.initDevice(compatibleDevices[0], contextInfo);
 
   // Create example
-  VulkanSample vkSample;
+  MsaaSample vkSample;
 
   // Window need to be opened to get the surface on which to draw
   const VkSurfaceKHR surface = vkSample.getVkSurface(vkctx.m_instance, window);
@@ -195,36 +195,29 @@ int main(int argc, char** argv)
 
     // Offscreen Rendering Scene
     {
-      if(vkSample.m_renderMode == VulkanSample::eRayTracer)
+
+      // Raster
+      VkRenderPassBeginInfo offscreenRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+      offscreenRenderPassBeginInfo.clearValueCount = 2;
+      offscreenRenderPassBeginInfo.pClearValues    = clearValues.data();
+      offscreenRenderPassBeginInfo.renderPass      = vkSample.offscreenRenderPass();
+      offscreenRenderPassBeginInfo.framebuffer     = vkSample.offscreenFramebuffer();
+      offscreenRenderPassBeginInfo.renderArea      = {{0, 0}, vkSample.getSize()};
+      if(vkSample.msaaSamples() == VK_SAMPLE_COUNT_1_BIT)
       {
-        // Ray tracing don't need any rendering pass
-        vkSample.raytrace(cmdBuf);
+        offscreenRenderPassBeginInfo.renderPass  = vkSample.offscreenRenderPass();
+        offscreenRenderPassBeginInfo.framebuffer = vkSample.offscreenFramebuffer();
       }
       else
       {
-        // Raster
-        VkRenderPassBeginInfo offscreenRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        offscreenRenderPassBeginInfo.clearValueCount = 2;
-        offscreenRenderPassBeginInfo.pClearValues    = clearValues.data();
-        offscreenRenderPassBeginInfo.renderPass      = vkSample.offscreenRenderPass();
-        offscreenRenderPassBeginInfo.framebuffer     = vkSample.offscreenFramebuffer();
-        offscreenRenderPassBeginInfo.renderArea      = {{0, 0}, vkSample.getSize()};
-        if(vkSample.msaaSamples() == VK_SAMPLE_COUNT_1_BIT)
-        {
-          offscreenRenderPassBeginInfo.renderPass  = vkSample.offscreenRenderPass();
-          offscreenRenderPassBeginInfo.framebuffer = vkSample.offscreenFramebuffer();
-        }
-        else
-        {
-          // #MSAA
-          offscreenRenderPassBeginInfo.renderPass  = vkSample.msaaRenderPass();
-          offscreenRenderPassBeginInfo.framebuffer = vkSample.msaaFramebuffer();
-        }
-
-        vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-        vkSample.rasterize(cmdBuf);
-        vkCmdEndRenderPass(cmdBuf);
+        // #MSAA
+        offscreenRenderPassBeginInfo.renderPass  = vkSample.msaaRenderPass();
+        offscreenRenderPassBeginInfo.framebuffer = vkSample.msaaFramebuffer();
       }
+
+      vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+      vkSample.rasterize(cmdBuf);
+      vkCmdEndRenderPass(cmdBuf);
     }
 
     // 2nd rendering pass: tone mapper, UI
@@ -258,7 +251,6 @@ int main(int argc, char** argv)
   // Cleanup
   vkDeviceWaitIdle(vkSample.getDevice());
 
-  vkSample.destroyResources();
   vkSample.destroy();
   vkAxis.deinit();
   vkctx.deinit();

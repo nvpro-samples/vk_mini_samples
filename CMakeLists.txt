@@ -49,6 +49,7 @@ add_subdirectory(debug_printf)
 add_subdirectory(optix_denoiser) 
 add_subdirectory(hdr_sampling) 
 add_subdirectory(aftermath) 
+add_subdirectory(ktx_textures) 
 
 
 #--------------------------------------------------------------------------------------------------

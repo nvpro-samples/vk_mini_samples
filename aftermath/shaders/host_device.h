@@ -17,11 +17,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifndef HOST_DEVICE_H
+#define HOST_DEVICE_H
+
+#define GRID_SIZE 16  // Grid size used by compute shaders
+
 // clang-format off
 #ifdef __cplusplus // GLSL Type
+using vec2 = nvmath::vec2f;
 using vec3 = nvmath::vec3f;
 using vec4 = nvmath::vec4f;
 using mat4 = nvmath::mat4f;
+using uint = uint32_t;
 #endif
 
 #ifdef __cplusplus // Descriptor binding helper for C++ and GLSL
@@ -32,6 +39,7 @@ using mat4 = nvmath::mat4f;
  #define END_BINDING() 
 #endif
 
+#define NB_LIGHTS 2
 
 START_BINDING(SceneBindings)
   eFrameInfo = 0,
@@ -43,14 +51,35 @@ START_BINDING(RtxBindings)
   eTlas     = 0,
   eOutImage = 1
 END_BINDING();
+
+START_BINDING(PostBindings)
+  ePostImage = 0
+END_BINDING();
 // clang-format on
 
-
-struct ShadingMaterial
+struct GltfShadeMaterial
 {
   vec4 pbrBaseColorFactor;
   vec3 emissiveFactor;
   int  pbrBaseColorTexture;
+
+  int   normalTexture;
+  float normalTextureScale;
+  int   shadingModel;
+  float pbrRoughnessFactor;
+
+  float pbrMetallicFactor;
+  int   pbrMetallicRoughnessTexture;
+  int   khrSpecularGlossinessTexture;
+  int   khrDiffuseTexture;
+
+  vec4  khrDiffuseFactor;
+  vec3  khrSpecularFactor;
+  float khrGlossinessFactor;
+
+  int   emissiveTexture;
+  int   alphaMode;
+  float alphaCutoff;
 };
 
 struct PrimMeshInfo
@@ -75,6 +104,16 @@ struct Light
   int   type;
 };
 
+// Tonemapper used in post.frag
+struct Tonemapper
+{
+  float exposure;
+  float brightness;
+  float contrast;
+  float saturation;
+  float vignette;
+};
+
 struct FrameInfo
 {
   mat4  view;
@@ -82,7 +121,7 @@ struct FrameInfo
   mat4  viewInv;
   mat4  projInv;
   vec4  clearColor;
-  Light light[1];
+  Light light[NB_LIGHTS];
 };
 
 struct InstanceInfo
@@ -99,11 +138,17 @@ struct RasterPushConstant
 
 struct RtxPushConstant
 {
-  int frame;
+  int   frame;
+  float maxLuminance;
+  uint  maxDepth;
+  uint  maxSamples;
 };
 
 struct Vertex
 {
   vec4 position;  // w == texcood.u
   vec4 normal;    // w == texcood.v
+  vec4 tangent;
 };
+
+#endif  // HOST_DEVICE_H

@@ -27,7 +27,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "imgui.h"
 
-#include "vulkan_sample.hpp"
+#include "aftermath_sample.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/cameramanipulator.hpp"
 #include "nvh/fileoperations.hpp"
@@ -154,7 +154,7 @@ int main(int argc, char** argv)
 
 
   // Create example
-  VulkanSample vkSample;
+  AftermathSample vkSample;
 
   // Window need to be opened to get the surface on which to draw
   const VkSurfaceKHR surface = vkSample.getVkSurface(vkctx.m_instance, window);
@@ -216,7 +216,7 @@ int main(int argc, char** argv)
 
     // Offscreen Rendering Scene
     {
-      if(vkSample.m_renderMode == VulkanSample::eRayTracer)
+      if(vkSample.m_renderMode == VulkanSample::RenderMode::eRayTracer)
       {
         // Ray tracing don't need any rendering pass
         vkSample.raytrace(cmdBuf);
@@ -268,7 +268,6 @@ int main(int argc, char** argv)
   // Cleanup
   vkDeviceWaitIdle(vkSample.getDevice());
 
-  vkSample.destroyResources();
   vkSample.destroy();
   vkAxis.deinit();
   vkctx.deinit();

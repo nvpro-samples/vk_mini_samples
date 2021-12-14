@@ -23,8 +23,8 @@
 #extension GL_EXT_shader_image_load_formatted : enable  // The folowing extension allow to pass images as function parameters
 
 #include "host_device.h"
-#include "raycommon.glsl"
-#include "sampling.glsl"
+#include "ray_common.glsl"
+#include "common/shaders/sampling.glsl"
 #include "compress.glsl"
 
 // clang-format off

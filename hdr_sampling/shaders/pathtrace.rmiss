@@ -23,8 +23,8 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 #include "host_device.h"
-#include "sampling.glsl"
-#include "raycommon.glsl"
+#include "common/shaders/sampling.glsl"
+#include "common/shaders/ray_common.glsl"
 
 
 // clang-format off
@@ -35,7 +35,7 @@ layout(set = 2, binding = eHdr) uniform sampler2D hdrTexture;
 
 void main()
 {
-
+  // Adding HDR lookup
   vec2 uv  = getSphericalUv(gl_WorldRayDirectionEXT);  // See sampling.glsl
   vec3 env = texture(hdrTexture, uv).rgb;
 

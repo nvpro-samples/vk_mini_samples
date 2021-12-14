@@ -27,8 +27,8 @@
 
 
 #include "host_device.h"
-#include "raycommon.glsl"
-#include "sampling.glsl"
+#include "ray_common.glsl"
+#include "common/shaders/sampling.glsl"
 
 
 // clang-format off
@@ -43,7 +43,7 @@ layout(set = 1, binding = eSceneDesc) readonly buffer SceneDesc_ { SceneDescript
 layout(set = 1, binding = eTextures)  uniform sampler2D texturesMap[]; // all textures
 // clang-format on
 
-#include "pbr_gltf.glsl"
+#include "common/shaders/pbr_gltf.glsl"
 
 hitAttributeEXT vec2 attribs;
 

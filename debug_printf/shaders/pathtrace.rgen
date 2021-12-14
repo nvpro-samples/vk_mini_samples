@@ -23,8 +23,8 @@
 #extension GL_EXT_debug_printf : enable
 
 #include "host_device.h"
-#include "raycommon.glsl"
-#include "sampling.glsl"
+#include "common/shaders/ray_common.glsl"
+#include "common/shaders/sampling.glsl"
 
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
@@ -127,7 +127,7 @@ vec3 samplePixel(inout uint seed)
 void main()
 {
   // Initialize the random number
-  uint seed = tea(gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x, pc.frame * pc.maxSamples);
+  uint seed = xxhash32(uvec3(gl_LaunchIDEXT.xy, pc.frame));
 
   // Sampling n times the pixel
   vec3 contribAccum = vec3(0.0, 0.0, 0.0);

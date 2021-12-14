@@ -158,8 +158,8 @@ private:
   // For synchronizing with Vulkan
   struct Semaphore
   {
-    VkSemaphore             vk;  // Vulkan
-    cudaExternalSemaphore_t cu;  // Cuda version
+    VkSemaphore             vk{};  // Vulkan
+    cudaExternalSemaphore_t cu{};  // Cuda version
 #ifdef WIN32
     HANDLE handle{INVALID_HANDLE_VALUE};
 #else

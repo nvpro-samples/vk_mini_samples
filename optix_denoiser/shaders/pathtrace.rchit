@@ -28,9 +28,9 @@
 
 #include "host_device.h"
 
-#include "raycommon.glsl"
-#include "sampling.glsl"
-#include "compress.glsl"
+#include "ray_common.glsl"
+#include "common/shaders/sampling.glsl"
+
 
 hitAttributeEXT vec2 attribs;
 
@@ -53,76 +53,11 @@ layout(set = 2, binding = eHdr) uniform sampler2D hdrTexture;
 // clang-format on
 
 
-#include "pbr_gltf.glsl"
-#include "hdr_env_sampling.glsl"
+#include "common/shaders/pbr_gltf.glsl"
+#include "common/shaders/hdr_env_sampling.glsl"
+#include "common/shaders/get_hit.glsl"
 
-//-----------------------------------------------------------------------
-// Hit state information
-struct HitState
-{
-  vec3 pos;
-  vec3 nrm;
-  vec2 uv;
-  vec3 tangent;
-  vec3 bitangent;
-};
-
-
-//-----------------------------------------------------------------------
-//-----------------------------------------------------------------------
-HitState GetHitState(PrimMeshInfo pinfo)
-{
-  HitState hit;
-
-  // Vextex and indices of the primitive
-  Vertices vertices = Vertices(pinfo.vertexAddress);
-  Indices  indices  = Indices(pinfo.indexAddress);
-
-  // Barycentric coordinate on the triangle
-  const vec3 barycentrics = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
-
-  // Getting the 3 indices of the triangle (local)
-  uvec3 triangleIndex = indices.i[gl_PrimitiveID];
-
-  // All vertex attributes of the triangle.
-  Vertex v0 = vertices.v[triangleIndex.x];
-  Vertex v1 = vertices.v[triangleIndex.y];
-  Vertex v2 = vertices.v[triangleIndex.z];
-
-  // Position
-  const vec3 pos0     = v0.position.xyz;
-  const vec3 pos1     = v1.position.xyz;
-  const vec3 pos2     = v2.position.xyz;
-  const vec3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
-  hit.pos             = vec3(gl_ObjectToWorldEXT * vec4(position, 1.0));
-
-  // Normal
-  const vec3 nrm0        = v0.normal.xyz;
-  const vec3 nrm1        = v1.normal.xyz;
-  const vec3 nrm2        = v2.normal.xyz;
-  const vec3 normal      = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
-  const vec3 worldNormal = normalize(vec3(normal * gl_WorldToObjectEXT));
-  const vec3 geomNormal  = normalize(cross(pos1 - pos0, pos2 - pos0));
-  hit.nrm                = worldNormal;
-
-  // TexCoord
-  const vec2 uv0 = vec2(v0.position.w, v0.normal.w);
-  const vec2 uv1 = vec2(v1.position.w, v1.normal.w);
-  const vec2 uv2 = vec2(v2.position.w, v2.normal.w);
-  hit.uv         = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
-
-  // Tangent - Bitangent
-  const vec4 tng0    = vec4(v0.tangent);
-  const vec4 tng1    = vec4(v1.tangent);
-  const vec4 tng2    = vec4(v2.tangent);
-  vec3       tangent = normalize(tng0.xyz * barycentrics.x + tng1.xyz * barycentrics.y + tng2.xyz * barycentrics.z);
-  vec3       world_tangent  = normalize(vec3(tangent * gl_WorldToObjectEXT));
-  vec3       world_binormal = cross(worldNormal, world_tangent) * tng0.w;
-  hit.tangent               = world_tangent;
-  hit.bitangent             = world_binormal;
-
-  return hit;
-}
+// --vvvv-- Adding HDR sampling --vvvv-- 
 
 //-----------------------------------------------------------------------
 // Use for light/env contribution
@@ -159,7 +94,7 @@ VisibilityContribution DirectLight(MaterialEval matEval, HitState hit)
     isLight      = true;
   }
   else
-  {
+  { // <------ Adding HDR sampling
     vec3 randVal     = vec3(rand(payload.seed), rand(payload.seed), rand(payload.seed));
     vec4 radiancePdf = environmentSample(hdrTexture, randVal, lightDir);
     lightContrib     = radiancePdf.xyz * frameInfo.clearColor.xyz;
@@ -172,7 +107,7 @@ VisibilityContribution DirectLight(MaterialEval matEval, HitState hit)
     float pdf       = 0;
     vec3  brdf      = pbrEval(matEval, -gl_WorldRayDirectionEXT, lightDir, pdf);
     float misWeight = isLight ? 1.0 : max(0.0, powerHeuristic(lightPdf, pdf));
-    vec3  radiance  = misWeight * brdf * dotNL * lightContrib / lightPdf;
+    vec3  radiance  = misWeight * brdf * lightContrib / lightPdf;
 
     contrib.visible   = true;
     contrib.lightDir  = lightDir;
@@ -183,59 +118,8 @@ VisibilityContribution DirectLight(MaterialEval matEval, HitState hit)
   return contrib;
 }
 
-void StopRay()
-{
-  payload.hitT = INFINITE;
-}
 
-
-//-----------------------------------------------------------------------
-//-----------------------------------------------------------------------
-vec3 shading(in MaterialEval matEval, in HitState hit)
-{
-  vec3 radiance = matEval.emissive;  // Emissive material
-
-  if(radiance.x > 0 || radiance.y > 0 || radiance.z > 0)
-  {  // Stop on emmissive material
-    StopRay();
-    return radiance;
-  }
-
-  // Sampling for the next ray
-  vec3  rayDirection;
-  float pdf  = 0;
-  vec3  brdf = pbrSample(matEval, -gl_WorldRayDirectionEXT, rayDirection, pdf, payload.seed);
-
-  if(pdf > 0.0)
-  {
-    payload.weight = brdf * abs(dot(hit.nrm, rayDirection)) / pdf;
-  }
-  else
-  {
-    StopRay();
-    return radiance;
-  }
-
-  // Next ray
-  payload.rayDirection = rayDirection;
-  payload.rayOrigin    = offsetRay(hit.pos, dot(rayDirection, hit.nrm) > 0 ? hit.nrm : -hit.nrm);
-
-  // Light and environment contribution at hit position
-  VisibilityContribution vcontrib = DirectLight(matEval, hit);
-
-  if(vcontrib.visible)
-  {
-    // Shadow ray - stop at the first intersection, don't invoke the closest hit shader (fails for transparent objects)
-    uint rayflag = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
-    payload.hitT = 0;
-    traceRayEXT(topLevelAS, rayflag, 0xFF, 0, 0, 0, payload.rayOrigin, 0.001, vcontrib.lightDir, vcontrib.lightDist, 0);
-    // If hitting nothing, add light contribution
-    if(payload.hitT == INFINITE)
-      radiance += vcontrib.radiance;
-    payload.hitT = gl_HitTEXT;
-  }
-  return radiance;
-}
+#include "common/shaders/shading.glsl"
 
 //-----------------------------------------------------------------------
 //-----------------------------------------------------------------------
@@ -256,7 +140,14 @@ void main()
   MaterialEval      matEval = evaluateMaterial(mat, hit.nrm, hit.tangent, hit.bitangent, hit.uv);
 
   payload.hitT    = gl_HitTEXT;
-  payload.contrib = shading(matEval, hit);
+  //payload.contrib = shading(matEval, hit);
+    ShadingResult result;
+  shading(matEval, hit, result);
+
+  payload.weight       = result.weight;
+  payload.contrib      = result.radiance;
+  payload.rayOrigin    = result.rayOrigin;
+  payload.rayDirection = result.rayDirection;
 
   // -- Debug --
   //  payload.contrib = hit.nrm * .5 + .5;

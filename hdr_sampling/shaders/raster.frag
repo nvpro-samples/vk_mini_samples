@@ -26,8 +26,8 @@
 #extension GL_EXT_buffer_reference2 : require
 
 #include "host_device.h"
-#include "raycommon.glsl"
-#include "sampling.glsl"
+#include "common/shaders/ray_common.glsl"
+#include "common/shaders/sampling.glsl"
 
 
 // clang-format off
@@ -47,13 +47,13 @@ layout(set = 0, binding = eFrameInfo) uniform FrameInfo_ { FrameInfo frameInfo; 
 layout(set = 0, binding = eSceneDesc) readonly buffer SceneDesc_ { SceneDescription sceneDesc; } ;
 layout(set = 0, binding = eTextures) uniform sampler2D[] texturesMap;
 
-layout(set = 1, binding = 0) uniform sampler2D   hdrBrdfLut; // lookup table
-layout(set = 1, binding = 1) uniform samplerCube hdrDiffuse; // 
-layout(set = 1, binding = 2) uniform samplerCube hdrGlossy;  //
+layout(set = 1, binding = 0) uniform sampler2D   u_GGXLUT; // lookup table
+layout(set = 1, binding = 1) uniform samplerCube u_LambertianEnvSampler; // 
+layout(set = 1, binding = 2) uniform samplerCube u_GGXEnvSampler;  //
 // clang-format on
 
 
-#include "pbr_gltf.glsl"
+#include "common/shaders/pbr_gltf.glsl"
 
 layout(push_constant) uniform RasterPushConstant_
 {
@@ -77,26 +77,37 @@ vec3 getIBLContribution(MaterialEval state, vec3 v)
   const vec3 n     = state.normal;
   float      NdotV = clamp(dot(n, v), 0.0, 1.0);
 
-  float lod        = clamp(state.roughness * float(10.0), 0.0, float(10.0));
+  int   mip        = textureQueryLevels(u_GGXEnvSampler);
+  float lod        = clamp(state.roughness * float(mip), 0.0, float(10.0));
   vec3  reflection = normalize(reflect(-v, n));
 
-  // retrieve a scale and bias to F0. See [1], Figure 3
   vec2 brdfSamplePoint = clamp(vec2(NdotV, state.roughness), vec2(0.0, 0.0), vec2(1.0, 1.0));
-  vec2 brdf            = texture(hdrBrdfLut, brdfSamplePoint).rg;
+  vec2 brdf            = texture(u_GGXLUT, brdfSamplePoint).rg;
 
-  vec3 irradiance    = texture(hdrDiffuse, n).rgb * frameInfo.clearColor.rgb;
-  vec3 specularLight = textureLod(hdrGlossy, reflection, lod).rgb;
+  vec3 irradiance    = texture(u_LambertianEnvSampler, n).rgb * frameInfo.clearColor.rgb;
+  vec3 specularLight = textureLod(u_GGXEnvSampler, reflection, lod).rgb;
 
 
-  vec3 specularColor = mix(vec3(c_MinReflectance), vec3(state.albedo), float(state.metallic));
-  vec3 diffuseColor  = lambertian(state.albedo.rgb, state.metallic);
+  // see https://bruop.github.io/ibl/#single_scattering_results at Single Scattering Results
+  // Roughness dependent fresnel, from Fdez-Aguera
+  vec3 Fr     = max(vec3(1.0 - state.roughness), state.f0) - state.f0;
+  vec3 k_S    = state.f0 + Fr * pow(1.0 - NdotV, 5.0);
+  vec3 FssEss = k_S * brdf.x + brdf.y;
 
-  vec3 diffuse  = irradiance * diffuseColor.xyz;
-  vec3 specular = specularLight * (specularColor * brdf.x + brdf.y);
+  // Multiple scattering, from Fdez-Aguera
+  float Ems    = (1.0 - (brdf.x + brdf.y));
+  vec3  F_avg  = (state.f0 + (1.0 - state.f0) / 21.0);
+  vec3  FmsEms = Ems * FssEss * F_avg / (1.0 - F_avg * Ems);
+  vec3  k_D    = state.albedo.rgb * (1.0 - FssEss + FmsEms);
 
-  return (diffuse + specular) / M_PI;
+  float diffuseRatio = 1.0 - state.metallic;
+
+  vec3 specular = specularLight * FssEss * (1 - diffuseRatio);
+  vec3 diffuse  = (FmsEms + k_D) * irradiance * diffuseRatio;
+
+
+  return (diffuse / M_PI + specular);
 }
-
 
 void main()
 {
@@ -117,6 +128,7 @@ void main()
 
   // Result
   vec3 result = vec3(0);  //(matEval.albedo.xyz * frameInfo.clearColor.xyz);  // ambient
+
   result += getIBLContribution(matEval, toEye);
 
   result += matEval.emissive;  // emissive
@@ -127,11 +139,10 @@ void main()
     Light light = frameInfo.light[i];
     vec3  lightDir;
     vec3  lightContrib = lightContribution(light, hit.pos, hit.nrm, lightDir);
-    float dotNL        = dot(lightDir, hit.nrm);
 
     float pdf      = 0;
     vec3  brdf     = pbrEval(matEval, toEye, lightDir, pdf);
-    vec3  radiance = brdf * dotNL * lightContrib;
+    vec3  radiance = brdf * lightContrib;
     result += radiance;
   }
 

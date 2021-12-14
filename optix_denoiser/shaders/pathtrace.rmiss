@@ -23,8 +23,8 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 #include "host_device.h"
-#include "sampling.glsl"
-#include "raycommon.glsl"
+#include "common/shaders/sampling.glsl"
+#include "ray_common.glsl"
 
 
 // clang-format off

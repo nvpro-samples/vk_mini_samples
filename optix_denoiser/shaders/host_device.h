@@ -55,9 +55,9 @@ START_BINDING(RtxBindings)
 END_BINDING();
 
 START_BINDING(PostBindings)
-  eImage  = 0,
-  eAlbedo = 0,
-  eNormal = 0
+  ePostImage  = 0,
+  eAlbedo     = 0,
+  eNormal     = 0
 END_BINDING();
 START_BINDING(EnvBindings)
   eHdr        = 0,

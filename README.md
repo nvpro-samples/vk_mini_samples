@@ -2,7 +2,7 @@
 
 This repository holds many samples, showing various aspect of Vulkan, debugging tips and usage of other Nvidia tools.
 
-Most of the samples have for starting point, the [base_sample](base_sample) sample. They are applying a few modifications to that base sample to illustrate the modifications required to enable the feature or what need to be demonstrate.
+Most of the samples have for starting point, the [base_sample](base_sample) sample. They are applying a few modifications to that base sample, by deriving from it, to illustrate the modifications required to enable the feature or what need to be demonstrate.
 
 Each sample have its own documentation written in [Markdown](https://github.github.com/gfm/) describing what was modified and where to get more information.
 
