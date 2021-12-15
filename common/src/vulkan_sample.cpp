@@ -131,7 +131,7 @@ void VulkanSample::loadScene(const std::string& filename)
   sceneDesc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_primInfo.buffer);
   sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_instInfoBuffer.buffer);
   m_sceneDesc               = m_alloc.createBuffer(cmdBuf, sizeof(SceneDescription), &sceneDesc,
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
   NAME2_VK(m_sceneDesc.buffer, "Scene Description");
 
   cmdPool.submitAndWait(cmdBuf);
@@ -1096,6 +1096,8 @@ void VulkanSample::titleBar()
              m_size.height, static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
     if(m_renderMode == RenderMode::eRayTracer)
       snprintf(buf.data(), buf.size(), "%s | #%d", buf.data(), m_pcRay.frame);
+    if(m_vsync)
+      snprintf(buf.data(), buf.size(), "%s | (vsync)", buf.data());
     glfwSetWindowTitle(m_window, buf.data());
     dirtyTimer = 0;
   }
@@ -1112,8 +1114,12 @@ void VulkanSample::renderUI()
   bool changed{false};
 
   ImGuiH::Panel::Begin();
-  float widgetWidth = std::min(std::max(ImGui::GetWindowWidth() - 150.0f, 100.0f), 300.0f);
-  ImGui::PushItemWidth(widgetWidth);
+
+  if(ImGui::Button("Load glTF"))
+  {  // Loading file dialog
+    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load glTF", ".gltf");
+    onFileDrop(filename.c_str());
+  }
 
   if(ImGui::CollapsingHeader("Render Mode", ImGuiTreeNodeFlags_DefaultOpen))
   {
@@ -1122,12 +1128,7 @@ void VulkanSample::renderUI()
     changed |= ImGui::RadioButton("Ray Tracing", (int*)&m_renderMode, (int)RenderMode::eRayTracer);
     if(m_renderMode == RenderMode::eRayTracer && ImGui::TreeNode("Ray Tracing"))
     {
-      changed |= ImGui::SliderFloat("Max Luminance", &m_pcRay.maxLuminance, 0.01f, 20.f);
-      changed |= ImGui::SliderInt("Depth", (int*)&m_pcRay.maxDepth, 1, 15);
-      changed |= ImGui::SliderInt("Samples", (int*)&m_pcRay.maxSamples, 1, 20);
-      ImGui::SliderInt("Max frames", &m_maxFrames, 1, 50000);
-      if(m_maxFrames < m_pcRay.frame)
-        changed = true;
+      changed = uiRaytrace(changed);
       ImGui::TreePop();
     }
   }
@@ -1139,46 +1140,72 @@ void VulkanSample::renderUI()
 
   if(ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen))
   {
-    changed |= ImGui::ColorEdit3("Color", &m_clearColor.float32[0], ImGuiColorEditFlags_Float);
-    if(ImGui::TreeNode("Tonemapper"))
-    {
-      ImGui::SliderFloat("Exposure", &m_tonemapper.exposure, 0.001f, 5.0f);
-      ImGui::SliderFloat("Brightness", &m_tonemapper.brightness, 0.0f, 2.0f);
-      ImGui::SliderFloat("Contrast", &m_tonemapper.contrast, 0.0f, 2.0f);
-      ImGui::SliderFloat("Saturation", &m_tonemapper.saturation, 0.0f, 2.0f);
-      ImGui::SliderFloat("Vignette", &m_tonemapper.vignette, 0.0f, 1.0f);
-      ImGui::TreePop();
-    }
-
-    uint32_t i = 0;
-    for(auto& light : m_lights)
-    {
-      if(ImGui::TreeNode((void*)(intptr_t)i, "Light %d", i))
-      {
-        changed |= ImGui::RadioButton("Point", &light.type, 0);
-        ImGui::SameLine();
-        changed |= ImGui::RadioButton("Infinite", &light.type, 1);
-        changed |= ImGui::DragFloat3("Position", &light.position.x, 0.1f);
-        changed |= ImGui::DragFloat("Intensity", &light.intensity, 1.f, 0.0f, 1000.f, nullptr,
-                                    ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat);
-        changed |= ImGui::ColorEdit3("Color", reinterpret_cast<float*>(&light.color));
-        ImGui::TreePop();
-      }
-      i++;
-    }
+    uiEnvironment(changed);
   }
-  ImGui::PopItemWidth();
-  ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-  ImGui::TextDisabled("(M) Toggle Render Mode");
-  ImGui::TextDisabled("(F) Frame All");
-  ImGui::TextDisabled("(R) Restart rendering");
-  ImGui::TextDisabled("(SPACE) Set Eye position");
-  ImGui::TextDisabled("(F10) Toggle Pane");
-  ImGui::TextDisabled("(ESC) Quit");
+
+  uiInfo();
+
   ImGuiH::Panel::End();
 
   if(changed)
     resetFrame();
+}
+
+void VulkanSample::uiInfo()
+{
+  ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+  ImGui::Text("> Help <");
+  ImGuiH::tooltip(
+      "(M) Toggle Render Mode\n(F) Frame All\n(R) Restart rendering\n(SPACE/DBL click) Set Eye position\n"
+      "(F10) Toggle Pane\n(V) V-Sync\n(ESC) Quit",
+      false);
+}
+
+bool VulkanSample::uiRaytrace(bool& changed)
+{
+  ImGui::PushItemWidth(-80);
+  changed |= ImGui::SliderFloat("Firefly Cutout", &m_pcRay.maxLuminance, 0.01f, 20.f);
+  changed |= ImGui::SliderInt("Depth", (int*)&m_pcRay.maxDepth, 1, 15);
+  changed |= ImGui::SliderInt("Samples", (int*)&m_pcRay.maxSamples, 1, 20);
+  ImGui::SliderInt("Max frames", &m_maxFrames, 1, 50000);
+  if(m_maxFrames < m_pcRay.frame)
+    changed = true;
+  ImGui::PopItemWidth();
+  return changed;
+}
+
+void VulkanSample::uiEnvironment(bool& changed)
+{
+  changed |= ImGui::ColorEdit3("Color", &m_clearColor.float32[0], ImGuiColorEditFlags_Float);
+  if(ImGui::TreeNode("Tonemapper"))
+  {
+    ImGui::SameLine();
+    if(ImGui::SmallButton("reset"))
+      m_tonemapper = {1, 1, 1, 1, 0};
+    ImGui::SliderFloat("Exposure", &m_tonemapper.exposure, 0.001f, 5.0f);
+    ImGui::SliderFloat("Brightness", &m_tonemapper.brightness, 0.0f, 2.0f);
+    ImGui::SliderFloat("Contrast", &m_tonemapper.contrast, 0.0f, 2.0f);
+    ImGui::SliderFloat("Saturation", &m_tonemapper.saturation, 0.0f, 2.0f);
+    ImGui::SliderFloat("Vignette", &m_tonemapper.vignette, 0.0f, 1.0f);
+    ImGui::TreePop();
+  }
+
+  uint32_t i = 0;
+  for(auto& light : m_lights)
+  {
+    if(ImGui::TreeNode((void*)(intptr_t)i, "Light %d", i))
+    {
+      changed |= ImGui::RadioButton("Point", &light.type, 0);
+      ImGui::SameLine();
+      changed |= ImGui::RadioButton("Infinite", &light.type, 1);
+      changed |= ImGui::DragFloat3("Position", &light.position.x, 0.1f);
+      changed |= ImGui::DragFloat("Intensity", &light.intensity, 1.f, 0.0f, 1000.f, nullptr,
+                                  ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat);
+      changed |= ImGui::ColorEdit3("Color", reinterpret_cast<float*>(&light.color));
+      ImGui::TreePop();
+    }
+    i++;
+  }
 }
 
 //--------------------------------------------------------------------------------------------------

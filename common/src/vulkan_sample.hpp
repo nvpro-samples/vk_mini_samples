@@ -36,6 +36,9 @@
 class VulkanSample : public nvvk::AppBaseVk
 {
 public:
+  VulkanSample()          = default;
+  virtual ~VulkanSample() = default;
+
   // Keep the handles of Vulkan, initialize resource manager
   void create(const nvvk::AppBaseVkCreateInfo& info) override;
   // Load the scene, create resources and pipelines
@@ -86,6 +89,9 @@ protected:
   virtual bool updateFrame();
   virtual void resetFrame();
   virtual void screenPicking();
+  virtual void uiInfo();
+  virtual bool uiRaytrace(bool& changed);
+  virtual void uiEnvironment(bool& changed);
 
   void onResize(int w = 0, int h = 0) override;
   void onMouseButton(int button, int action, int mods) override;
