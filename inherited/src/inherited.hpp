@@ -33,7 +33,7 @@ class InheritedSample : public VulkanSample
 {
 public:
   void create(const nvvk::AppBaseVkCreateInfo& info) override;
-  void createScene(const std::string& filename);
+  void createScene(const std::string& filename) override;
   void rasterize(VkCommandBuffer cmdBuff) override;
   void onResize(int /*w*/, int /*h*/) override;
   void renderUI() override;
