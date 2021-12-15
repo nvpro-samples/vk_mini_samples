@@ -480,3 +480,51 @@ void HdrSample::onFileDrop(const char* filename)
 
   resetFrame();
 }
+
+
+//--------------------------------------------------------------------------------------------------
+// Override: adding HDR button
+//
+void HdrSample::renderUI()
+{
+  if(showGui() == false)
+    return;
+  bool changed{false};
+
+  ImGuiH::Panel::Begin();
+  if(ImGui::Button("Load glTF"))
+  {  // Loading file dialog
+    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load glTF", ".gltf");
+    onFileDrop(filename.c_str());
+  }
+  ImGui::SameLine();
+  if(ImGui::Button("Load HDR"))
+  {  // #HDR Loading file dialog
+    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load HDR", ".hdr");
+    onFileDrop(filename.c_str());
+  }
+
+  if(ImGui::CollapsingHeader("Render Mode"))
+  {
+    changed |= ImGui::RadioButton("Raster", (int*)&m_renderMode, (int)RenderMode::eRaster);
+    ImGui::SameLine();
+    changed |= ImGui::RadioButton("Ray Tracing", (int*)&m_renderMode, (int)RenderMode::eRayTracer);
+    if(m_renderMode == RenderMode::eRayTracer && ImGui::TreeNode("Ray Tracing"))
+    {
+      changed = uiRaytrace(changed);
+      ImGui::TreePop();
+    }
+  }
+
+  if(ImGui::CollapsingHeader("Camera"))
+    ImGuiH::CameraWidget();
+
+  if(ImGui::CollapsingHeader("Environment"))
+    uiEnvironment(changed);
+
+  uiInfo();
+
+  ImGuiH::Panel::End();
+  if(changed)
+    resetFrame();
+}

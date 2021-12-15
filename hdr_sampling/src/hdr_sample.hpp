@@ -44,6 +44,7 @@ public:
   void createRtPipeline() override;
   void raytrace(VkCommandBuffer cmdBuf) override;
   void onFileDrop(const char* filename) override;
+  void renderUI() override;
   void create(const nvvk::AppBaseVkCreateInfo& info) override;
   void createScene(const std::string& filename) override;
 
