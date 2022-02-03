@@ -81,7 +81,7 @@ void InheritedSample::rasterize(VkCommandBuffer cmdBuf)
   LABEL_SCOPE_VK(cmdBuf);
 
   // Recording the commands to draw the scene if not done yet
-  if(m_recordedCmdBuffer == VK_NULL_HANDLE)
+  if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
   {
     nvh::Stopwatch sw;
     // Create the command buffer to record the drawing commands
@@ -89,7 +89,7 @@ void InheritedSample::rasterize(VkCommandBuffer cmdBuf)
     allocInfo.commandPool        = m_cmdPool;
     allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
     allocInfo.commandBufferCount = 1;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &m_recordedCmdBuffer);
+    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
 
 
     // #inherit
@@ -106,18 +106,18 @@ void InheritedSample::rasterize(VkCommandBuffer cmdBuf)
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
     beginInfo.pInheritanceInfo = &inheritInfo;
-    vkBeginCommandBuffer(m_recordedCmdBuffer, &beginInfo);
+    vkBeginCommandBuffer(m_recordedCmdBuffer[0], &beginInfo);
 
 
     // Dynamic Viewport
     if(m_inheritedViewport.inheritedViewportScissor2D == VK_FALSE)
-      setViewport(m_recordedCmdBuffer);
+      setViewport(m_recordedCmdBuffer[0]);
 
 
     // Drawing all instances
     auto& p = m_pContainer[eGraphic];
-    vkCmdBindPipeline(m_recordedCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
-    vkCmdBindDescriptorSets(m_recordedCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
+    vkCmdBindPipeline(m_recordedCmdBuffer[0], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
+    vkCmdBindDescriptorSets(m_recordedCmdBuffer[0], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
 
     uint32_t     nodeId{0};
     VkDeviceSize offsets{0};
@@ -127,19 +127,19 @@ void InheritedSample::rasterize(VkCommandBuffer cmdBuf)
       // Push constant information
       m_pcRaster.materialId = primitive.materialIndex;
       m_pcRaster.instanceId = nodeId++;
-      vkCmdPushConstants(m_recordedCmdBuffer, p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+      vkCmdPushConstants(m_recordedCmdBuffer[0], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                          0, sizeof(RasterPushConstant), &m_pcRaster);
 
-      vkCmdBindVertexBuffers(m_recordedCmdBuffer, 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-      vkCmdBindIndexBuffer(m_recordedCmdBuffer, m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-      vkCmdDrawIndexed(m_recordedCmdBuffer, primitive.indexCount, 1, 0, 0, 0);
+      vkCmdBindVertexBuffers(m_recordedCmdBuffer[0], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+      vkCmdBindIndexBuffer(m_recordedCmdBuffer[0], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdDrawIndexed(m_recordedCmdBuffer[0], primitive.indexCount, 1, 0, 0, 0);
     }
-    vkEndCommandBuffer(m_recordedCmdBuffer);
+    vkEndCommandBuffer(m_recordedCmdBuffer[0]);
     LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
   }
 
   // Executing the drawing of the recorded commands
-  vkCmdExecuteCommands(cmdBuf, 1, &m_recordedCmdBuffer);
+  vkCmdExecuteCommands(cmdBuf, 1, m_recordedCmdBuffer.data());
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -149,8 +149,8 @@ void InheritedSample::onResize(int /*w*/, int /*h*/)
 {
   if(m_inheritedViewport.inheritedViewportScissor2D == VK_FALSE)
   {
-    vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-    m_recordedCmdBuffer = VK_NULL_HANDLE;
+    vkFreeCommandBuffers(m_device, m_cmdPool, (uint32_t)m_recordedCmdBuffer.size(), m_recordedCmdBuffer.data());
+    m_recordedCmdBuffer = {VK_NULL_HANDLE};
   }
 
   createOffscreenRender();
@@ -172,8 +172,8 @@ void InheritedSample::renderUI()
   if(ImGui::Checkbox("Inherited Viewport", (bool*)&m_inheritedViewport.inheritedViewportScissor2D))
   {
     vkDeviceWaitIdle(m_device);
-    vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-    m_recordedCmdBuffer = VK_NULL_HANDLE;
+    vkFreeCommandBuffers(m_device, m_cmdPool, (uint32_t)m_recordedCmdBuffer.size(), m_recordedCmdBuffer.data());
+    m_recordedCmdBuffer = {VK_NULL_HANDLE};
   }
   ImGui::SliderFloat2("View Center", &m_viewCenter.x, 0.2f, 0.8f);
 

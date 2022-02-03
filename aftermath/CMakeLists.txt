@@ -36,6 +36,7 @@ set(SHD_COMMON_SRC
     ${SHD_COMMON_DIR}/passthrough.vert
     ${SHD_COMMON_DIR}/post.frag
     ${SHD_COMMON_DIR}/raster.vert
+    ${SHD_COMMON_DIR}/raster_overlay.frag
 )
 
 # Local shader
@@ -59,52 +60,6 @@ macro(copy_dll dlls)
     add_custom_command(TARGET ${PROJNAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy ${dlls} $<TARGET_FILE_DIR:${PROJNAME}>)
 endmacro()
-
-#####################################################################################
-# nSight Aftermath
-macro(_add_package_Aftermath)
-    if (NOT DEFINED $ENV{NSIGHT_AFTERMATH_SDK})
-      if(UNIX)
-        set(AFTERMATH_URL "https://developer.nvidia.com/rdp/assets/nsight-aftermath-sdk-2021_1-linux-package")
-        set(AFTERMATH_FILE "${DOWNLOAD_TARGET_DIR}/aftermath.tgz")
-      else()
-        set(AFTERMATH_URL "https://developer.nvidia.com/rdp/assets/nsight-aftermath-sdk-2021_1-windows-package")
-        set(AFTERMATH_FILE "${DOWNLOAD_TARGET_DIR}/aftermath.zip")
-      endif()
-
-      set(AFTERMATH_DIR "${DOWNLOAD_TARGET_DIR}/aftermath")
-
-      if (NOT EXISTS ${AFTERMATH_DIR})
-        if (NOT EXISTS ${AFTERMATH_FILE})
-          message(STATUS "Downloading Aftermath SDK...")
-          file(DOWNLOAD ${AFTERMATH_URL}
-              ${AFTERMATH_FILE}
-              SHOW_PROGRESS
-              STATUS STAT
-              LOG  log)
-    #     message(STATUS "Status: ${STAT}
-    #                    Log: ${log}")
-        endif()
-        file(MAKE_DIRECTORY ${AFTERMATH_DIR})
-        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${AFTERMATH_FILE}
-                        WORKING_DIRECTORY ${AFTERMATH_DIR})
-      endif()
-      set(NSIGHT_AFTERMATH_SDK ${AFTERMATH_DIR})
-    else()
-      set(NSIGHT_AFTERMATH_SDK  $ENV{NSIGHT_AFTERMATH_SDK} CACHE STRING "Path to the Aftermath SDK")
-    endif()
-
-    find_package(NsightAftermath)
-
-    if(NsightAftermath_FOUND)
-        add_definitions(-DNVVK_SUPPORTS_AFTERMATH)
-        include_directories(${NsightAftermath_INCLUDE_DIRS})
-        LIST(APPEND LIBRARIES_OPTIMIZED ${NsightAftermath_LIBRARIES})
-        LIST(APPEND LIBRARIES_DEBUG ${NsightAftermath_LIBRARIES})
-    endif(NsightAftermath_FOUND)
-
-endmacro(_add_package_Aftermath)
-
 
 #--------------------------------------------------------------------------------------------------
 # Source files for this project
@@ -168,7 +123,7 @@ if (NOT DEFINED $ENV{NSIGHT_AFTERMATH_SDK})
     find_package(NsightAftermath)
 
     if(NsightAftermath_FOUND)
-        add_definitions(-DNVVK_SUPPORTS_AFTERMATH)
+        # add_definitions(-DNVVK_SUPPORTS_AFTERMATH)
         # list(APPEND PLATFORM_LIBRARIES NsightAftermath::NsightAftermath)
         list(APPEND LIBRARIES_OPTIMIZED ${NsightAftermath_LIBRARIES})
         list(APPEND LIBRARIES_DEBUG ${NsightAftermath_LIBRARIES})

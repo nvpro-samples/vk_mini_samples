@@ -90,8 +90,8 @@ void OptixDenoiserSample::createHdr(const std::string& hdrFilename)
     LOGI(" = Total HDR: %6.2fms\n", sw_.elapsed());
 
     // Forced to regenerate the raster recorded command buffer
-    vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-    m_recordedCmdBuffer = VK_NULL_HANDLE;
+    vkFreeCommandBuffers(m_device, m_cmdPool, 2, m_recordedCmdBuffer.data());
+    m_recordedCmdBuffer = {VK_NULL_HANDLE};
   }
 }
 
@@ -134,8 +134,8 @@ void OptixDenoiserSample::destroy()
 //
 void OptixDenoiserSample::onResize(int /*w*/, int /*h*/)
 {
-  vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-  m_recordedCmdBuffer = VK_NULL_HANDLE;
+  vkFreeCommandBuffers(m_device, m_cmdPool, 2, m_recordedCmdBuffer.data());
+  m_recordedCmdBuffer = {VK_NULL_HANDLE};
 
   createGbuffers();  // #OPTIX_D
   createOffscreenRender();

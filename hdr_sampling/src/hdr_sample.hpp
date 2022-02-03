@@ -18,7 +18,6 @@
  */
 
 #pragma once
-#include "nvvk/memallocator_vma_vk.hpp"
 
 #include "common/src/vulkan_sample.hpp"
 #include "common/src/hdr_env.hpp"

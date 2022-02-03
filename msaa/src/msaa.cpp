@@ -24,6 +24,7 @@
 
 #include "_autogen/raster.vert.h"
 #include "_autogen/raster.frag.h"
+#include "_autogen/raster_overlay.frag.h"
 #include "nvvk/images_vk.hpp"
 
 
@@ -117,8 +118,15 @@ void MsaaSample::createGraphicPipeline()
   // Creating the Pipeline
   VkRenderPass pass = (m_msaaSamples == VK_SAMPLE_COUNT_1_BIT ? m_offscreenRenderPass : m_msaaRenderPass);  // #MSAA
   nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, pass);
-  gpb.depthStencilState.depthTestEnable     = true;
-  gpb.multisampleState.rasterizationSamples = m_msaaSamples;  // #MSAA
+  gpb.depthStencilState.depthTestEnable          = VK_TRUE;
+  gpb.depthStencilState.depthCompareOp           = VK_COMPARE_OP_LESS;
+  gpb.rasterizationState.cullMode                = VK_CULL_MODE_BACK_BIT;
+  gpb.rasterizationState.depthBiasEnable         = VK_TRUE;
+  gpb.rasterizationState.depthBiasConstantFactor = -1;
+  gpb.rasterizationState.depthBiasSlopeFactor    = 1;
+  gpb.rasterizationState.polygonMode             = VK_POLYGON_MODE_FILL;
+  gpb.rasterizationState.lineWidth               = 1.0f;
+  gpb.multisampleState.rasterizationSamples      = m_msaaSamples;  // #MSAA
   gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
   gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
   gpb.addBindingDescriptions({{0, sizeof(Vertex)}});
@@ -129,6 +137,20 @@ void MsaaSample::createGraphicPipeline()
   });
   p.pipeline = gpb.createPipeline();
   NAME2_VK(p.pipeline, "Graphics");
+
+  // Wireframe
+  {
+    gpb.clearShaders();
+    std::vector<uint32_t> fragShader(std::begin(raster_overlay_frag), std::end(raster_overlay_frag));
+    gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
+    gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
+    gpb.rasterizationState.depthBiasEnable = VK_FALSE;
+    gpb.rasterizationState.polygonMode     = VK_POLYGON_MODE_LINE;
+    gpb.rasterizationState.lineWidth       = 2.0f;
+    gpb.depthStencilState.depthWriteEnable = VK_FALSE;
+    m_wireframe                            = gpb.createPipeline();
+    NAME2_VK(m_wireframe, "Wireframe");
+  }
 }
 
 
@@ -158,54 +180,57 @@ void MsaaSample::rasterize(VkCommandBuffer cmdBuf)
   LABEL_SCOPE_VK(cmdBuf);
 
   // Recording the commands to draw the scene if not done yet
-  if(m_recordedCmdBuffer == VK_NULL_HANDLE)
+  if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
   {
     nvh::Stopwatch sw;
     // Create the command buffer to record the drawing commands
     VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocInfo.commandPool        = m_cmdPool;
     allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-    allocInfo.commandBufferCount = 1;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &m_recordedCmdBuffer);
+    allocInfo.commandBufferCount = 2;
+    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
 
     VkRenderPass pass = (m_msaaSamples == VK_SAMPLE_COUNT_1_BIT ? m_offscreenRenderPass : m_msaaRenderPass);  // #MSAA
     VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
     inheritInfo.renderPass = pass;
 
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-    beginInfo.pInheritanceInfo = &inheritInfo;
-    vkBeginCommandBuffer(m_recordedCmdBuffer, &beginInfo);
-
-    // Dynamic Viewport
-    setViewport(m_recordedCmdBuffer);
-
-    // Drawing all instances
-    auto& p = m_pContainer[eGraphic];
-    vkCmdBindPipeline(m_recordedCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
-    vkCmdBindDescriptorSets(m_recordedCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
-
-    uint32_t     nodeId{0};
-    VkDeviceSize offsets{0};
-    for(auto& node : m_gltfScene.m_nodes)
+    for(int i = 0; i < 2; i++)
     {
-      auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
-      // Push constant information
-      m_pcRaster.materialId = primitive.materialIndex;
-      m_pcRaster.instanceId = nodeId++;
-      vkCmdPushConstants(m_recordedCmdBuffer, p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                         0, sizeof(RasterPushConstant), &m_pcRaster);
+      VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+      beginInfo.pInheritanceInfo = &inheritInfo;
+      vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
 
-      vkCmdBindVertexBuffers(m_recordedCmdBuffer, 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-      vkCmdBindIndexBuffer(m_recordedCmdBuffer, m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-      vkCmdDrawIndexed(m_recordedCmdBuffer, primitive.indexCount, 1, 0, 0, 0);
+      // Dynamic Viewport
+      setViewport(m_recordedCmdBuffer[i]);
+
+      // Drawing all instances
+      auto& p = m_pContainer[eGraphic];
+      vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
+      vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
+
+      uint32_t     nodeId{0};
+      VkDeviceSize offsets{0};
+      for(auto& node : m_gltfScene.m_nodes)
+      {
+        auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
+        // Push constant information
+        m_pcRaster.materialId = primitive.materialIndex;
+        m_pcRaster.instanceId = nodeId++;
+        vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(RasterPushConstant), &m_pcRaster);
+
+        vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+        vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
+      }
+      vkEndCommandBuffer(m_recordedCmdBuffer[i]);
+      LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
     }
-    vkEndCommandBuffer(m_recordedCmdBuffer);
-    LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
   }
 
   // Executing the drawing of the recorded commands
-  vkCmdExecuteCommands(cmdBuf, 1, &m_recordedCmdBuffer);
+  vkCmdExecuteCommands(cmdBuf, m_showWireframe ? 2 : 1, m_recordedCmdBuffer.data());
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -213,8 +238,8 @@ void MsaaSample::rasterize(VkCommandBuffer cmdBuf)
 //
 void MsaaSample::onResize(int /*w*/, int /*h*/)
 {
-  vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-  m_recordedCmdBuffer = VK_NULL_HANDLE;
+  vkFreeCommandBuffers(m_device, m_cmdPool, 2, m_recordedCmdBuffer.data());
+  m_recordedCmdBuffer = {VK_NULL_HANDLE};
 
   createOffscreenRender();
   updatePostDescriptorSet(m_offscreenColor.descriptor);
@@ -354,7 +379,7 @@ void MsaaSample::renderUI()
   bool changed{false};
 
   ImGuiH::Panel::Begin();
-
+  ImGui::Checkbox("Show wireframe", &m_showWireframe);
   if(ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
   {
     ImGuiH::CameraWidget();
@@ -390,8 +415,8 @@ void MsaaSample::renderUI()
     createGraphicPipeline();
 
     // Need to re-record the scene, dependency on renderpass
-    vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-    m_recordedCmdBuffer = VK_NULL_HANDLE;
+    vkFreeCommandBuffers(m_device, m_cmdPool, 2, m_recordedCmdBuffer.data());
+    m_recordedCmdBuffer = {VK_NULL_HANDLE};
   }
 
 

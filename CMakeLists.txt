@@ -33,6 +33,7 @@ endif()
 
 #--------------------------------------------------------------------------------------------------
 # Package shared by all projects
+_add_package_ZLIB()
 _add_package_VulkanSDK()
 _add_package_ImGUI()
 _add_nvpro_core_lib()

@@ -31,6 +31,7 @@
 // Glsl Shaders compiled to Spir-V (See Makefile)
 #include "_autogen/raster.vert.h"
 #include "_autogen/raster.frag.h"
+#include "_autogen/raster_overlay.frag.h"
 #include "_autogen/passthrough.vert.h"
 #include "_autogen/pathtrace.rahit.h"
 #include "_autogen/pathtrace.rchit.h"
@@ -131,7 +132,7 @@ void VulkanSample::loadScene(const std::string& filename)
   sceneDesc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_primInfo.buffer);
   sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_instInfoBuffer.buffer);
   m_sceneDesc               = m_alloc.createBuffer(cmdBuf, sizeof(SceneDescription), &sceneDesc,
-                                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
   NAME2_VK(m_sceneDesc.buffer, "Scene Description");
 
   cmdPool.submitAndWait(cmdBuf);
@@ -338,7 +339,14 @@ void VulkanSample::createGraphicPipeline()
 
   // Creating the Pipeline
   nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, m_offscreenRenderPass);
-  gpb.depthStencilState.depthTestEnable = true;
+  gpb.depthStencilState.depthTestEnable          = VK_TRUE;
+  gpb.depthStencilState.depthCompareOp           = VK_COMPARE_OP_LESS;
+  gpb.rasterizationState.cullMode                = VK_CULL_MODE_BACK_BIT;
+  gpb.rasterizationState.depthBiasEnable         = VK_TRUE;
+  gpb.rasterizationState.depthBiasConstantFactor = -1;
+  gpb.rasterizationState.depthBiasSlopeFactor    = 1;
+  gpb.rasterizationState.polygonMode             = VK_POLYGON_MODE_FILL;
+  gpb.rasterizationState.lineWidth               = 1.0f;
   gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
   gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
   gpb.addBindingDescriptions({{0, sizeof(Vertex)}});
@@ -349,6 +357,20 @@ void VulkanSample::createGraphicPipeline()
   });
   p.pipeline = gpb.createPipeline();
   NAME2_VK(p.pipeline, "Graphics");
+
+  // Wireframe
+  {
+    gpb.clearShaders();
+    std::vector<uint32_t> fragShader(std::begin(raster_overlay_frag), std::end(raster_overlay_frag));
+    gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
+    gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
+    gpb.rasterizationState.depthBiasEnable = VK_FALSE;
+    gpb.rasterizationState.polygonMode     = VK_POLYGON_MODE_LINE;
+    gpb.rasterizationState.lineWidth       = 2.0f;
+    gpb.depthStencilState.depthWriteEnable = VK_FALSE;
+    m_wireframe                            = gpb.createPipeline();
+    NAME2_VK(m_wireframe, "Wireframe");
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -453,9 +475,11 @@ void VulkanSample::freeResources()
     p.dstPool        = VK_NULL_HANDLE;
     p.dstLayout      = VK_NULL_HANDLE;
   }
+  vkDestroyPipeline(m_device, m_wireframe, nullptr);
+  m_wireframe = VK_NULL_HANDLE;
 
-  vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-  m_recordedCmdBuffer = VK_NULL_HANDLE;
+  vkFreeCommandBuffers(m_device, m_cmdPool, 2, m_recordedCmdBuffer.data());
+  m_recordedCmdBuffer = {VK_NULL_HANDLE};
 
   // Resources
   m_alloc.destroy(m_frameInfo);
@@ -522,53 +546,57 @@ void VulkanSample::rasterize(VkCommandBuffer cmdBuf)
   LABEL_SCOPE_VK(cmdBuf);
 
   // Recording the commands to draw the scene if not done yet
-  if(m_recordedCmdBuffer == VK_NULL_HANDLE)
+  if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
   {
     nvh::Stopwatch sw;
     // Create the command buffer to record the drawing commands
     VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocInfo.commandPool        = m_cmdPool;
     allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-    allocInfo.commandBufferCount = 1;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &m_recordedCmdBuffer);
+    allocInfo.commandBufferCount = 2;
+    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
 
     VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
     inheritInfo.renderPass = m_offscreenRenderPass;
 
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-    beginInfo.pInheritanceInfo = &inheritInfo;
-    vkBeginCommandBuffer(m_recordedCmdBuffer, &beginInfo);
-
-    // Dynamic Viewport
-    setViewport(m_recordedCmdBuffer);
-
-    // Drawing all instances
-    auto& p = m_pContainer[eGraphic];
-    vkCmdBindPipeline(m_recordedCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
-    vkCmdBindDescriptorSets(m_recordedCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
-
-    uint32_t     nodeId{0};
-    VkDeviceSize offsets{0};
-    for(auto& node : m_gltfScene.m_nodes)
+    for(int i = 0; i < 2; i++)
     {
-      auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
-      // Push constant information
-      m_pcRaster.materialId = primitive.materialIndex;
-      m_pcRaster.instanceId = nodeId++;
-      vkCmdPushConstants(m_recordedCmdBuffer, p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                         0, sizeof(RasterPushConstant), &m_pcRaster);
+      auto& p = m_pContainer[eGraphic];
 
-      vkCmdBindVertexBuffers(m_recordedCmdBuffer, 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-      vkCmdBindIndexBuffer(m_recordedCmdBuffer, m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-      vkCmdDrawIndexed(m_recordedCmdBuffer, primitive.indexCount, 1, 0, 0, 0);
+      VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+      beginInfo.pInheritanceInfo = &inheritInfo;
+      vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
+
+      // Dynamic Viewport
+      setViewport(m_recordedCmdBuffer[i]);
+
+      // Drawing all instances
+      vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
+      vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
+
+      uint32_t     nodeId{0};
+      VkDeviceSize offsets{0};
+      for(auto& node : m_gltfScene.m_nodes)
+      {
+        auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
+        // Push constant information
+        m_pcRaster.materialId = primitive.materialIndex;
+        m_pcRaster.instanceId = nodeId++;
+        vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(RasterPushConstant), &m_pcRaster);
+
+        vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+        vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
+      }
+      vkEndCommandBuffer(m_recordedCmdBuffer[i]);
+      LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
     }
-    vkEndCommandBuffer(m_recordedCmdBuffer);
-    LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
   }
 
   // Executing the drawing of the recorded commands
-  vkCmdExecuteCommands(cmdBuf, 1, &m_recordedCmdBuffer);
+  vkCmdExecuteCommands(cmdBuf, m_showWireframe ? 2 : 1, m_recordedCmdBuffer.data());
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -576,8 +604,8 @@ void VulkanSample::rasterize(VkCommandBuffer cmdBuf)
 // All screen size resources are re-created
 void VulkanSample::onResize(int /*w*/, int /*h*/)
 {
-  vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_recordedCmdBuffer);
-  m_recordedCmdBuffer = VK_NULL_HANDLE;
+  vkFreeCommandBuffers(m_device, m_cmdPool, 2, m_recordedCmdBuffer.data());
+  m_recordedCmdBuffer = {VK_NULL_HANDLE};
 
   createOffscreenRender();
   updatePostDescriptorSet(m_offscreenColor.descriptor);
@@ -1129,6 +1157,11 @@ void VulkanSample::renderUI()
     if(m_renderMode == RenderMode::eRayTracer && ImGui::TreeNode("Ray Tracing"))
     {
       changed = uiRaytrace(changed);
+      ImGui::TreePop();
+    }
+    else if(m_renderMode == RenderMode::eRaster && ImGui::TreeNode("Raster"))
+    {
+      ImGui::Checkbox("Show wireframe", &m_showWireframe);
       ImGui::TreePop();
     }
   }

@@ -36,6 +36,7 @@ set(SHD_COMMON_SRC
     ${SHD_COMMON_DIR}/post.frag
     ${SHD_COMMON_DIR}/raster.frag
     ${SHD_COMMON_DIR}/raster.vert
+    ${SHD_COMMON_DIR}/raster_overlay.frag
 )
 
 # Local shader

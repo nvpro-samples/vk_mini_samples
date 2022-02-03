@@ -120,8 +120,9 @@ protected:
     eNb
   };
   std::array<PipelineContainer, Pipelines::eNb> m_pContainer;  // All pipelines
+  VkPipeline                                    m_wireframe{VK_NULL_HANDLE};
 
-  VkCommandBuffer m_recordedCmdBuffer{VK_NULL_HANDLE};  // Used by raster to replay rendering commands
+  std::array<VkCommandBuffer, 2> m_recordedCmdBuffer{VK_NULL_HANDLE};  // Used by raster to replay rendering commands
 
   nvvk::ResourceAllocatorDma m_alloc;   // Allocator for buffer, images, acceleration structures
   nvvk::DebugUtil            m_debug;   // Utility to name objects
@@ -140,6 +141,7 @@ protected:
        0}                    // 1 - type
   }};
   VkClearColorValue            m_clearColor{0.1f, 0.1f, 0.1f, 1.f};
+  bool                         m_showWireframe{false};
 
   // Resources
   std::vector<nvvk::Buffer>  m_vertices;        // One buffer per primitive (Vertex)
