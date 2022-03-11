@@ -150,7 +150,12 @@ void HdrEnvDome::createDrawPipeline()
 // - size is the image output size (framebuffer size)
 // - color is the color multiplier of the HDR (intensity)
 //
-void HdrEnvDome::draw(const VkCommandBuffer& cmdBuf, const nvmath::mat4f& view, const nvmath::mat4f& proj, const VkExtent2D& size, const float* color)
+void HdrEnvDome::draw(const VkCommandBuffer& cmdBuf,
+                      const nvmath::mat4f&   view,
+                      const nvmath::mat4f&   proj,
+                      const VkExtent2D&      size,
+                      const float*           color,
+                      float                  rotation /*=0.f*/)
 {
   LABEL_SCOPE_VK(cmdBuf);
 
@@ -163,6 +168,7 @@ void HdrEnvDome::draw(const VkCommandBuffer& cmdBuf, const nvmath::mat4f& view, 
   HdrDomePushConstant pc;
   pc.mvp       = m;
   pc.multColor = color;
+  pc.rotation  = rotation;
 
   // Execution
   std::vector<VkDescriptorSet> dstSets{m_domeSet, m_hdrEnvSet};

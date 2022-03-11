@@ -36,7 +36,8 @@ layout(set = 2, binding = eHdr) uniform sampler2D hdrTexture;
 void main()
 {
   // Adding HDR lookup
-  vec2 uv  = getSphericalUv(gl_WorldRayDirectionEXT);  // See sampling.glsl
+  vec3 dir = rotate(gl_WorldRayDirectionEXT, vec3(0, 1, 0), -frameInfo.envRotation);
+  vec2 uv  = getSphericalUv(dir);  // See sampling.glsl
   vec3 env = texture(hdrTexture, uv).rgb;
 
   payload.contrib = env * frameInfo.clearColor.xyz;

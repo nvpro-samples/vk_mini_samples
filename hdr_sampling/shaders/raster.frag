@@ -71,43 +71,68 @@ struct HitState
   vec3 bitangent;
 };
 
-// Calculation of the lighting contribution from an Image Based Light source.
-vec3 getIBLContribution(MaterialEval state, vec3 v)
+vec3 getDiffuseLight(vec3 n)
 {
-  const vec3 n     = state.normal;
-  float      NdotV = clamp(dot(n, v), 0.0, 1.0);
+  vec3 dir = rotate(n, vec3(0, 1, 0), -frameInfo.envRotation);
+  return texture(u_LambertianEnvSampler, dir).rgb * frameInfo.clearColor.rgb;
+}
 
-  int   mip        = textureQueryLevels(u_GGXEnvSampler);
-  float lod        = clamp(state.roughness * float(mip), 0.0, float(10.0));
-  vec3  reflection = normalize(reflect(-v, n));
+vec4 getSpecularSample(vec3 reflection, float lod)
+{
+  vec3 dir = rotate(reflection, vec3(0, 1, 0), -frameInfo.envRotation);
+  return textureLod(u_GGXEnvSampler, dir, lod) * frameInfo.clearColor;
+}
 
-  vec2 brdfSamplePoint = clamp(vec2(NdotV, state.roughness), vec2(0.0, 0.0), vec2(1.0, 1.0));
-  vec2 brdf            = texture(u_GGXLUT, brdfSamplePoint).rg;
 
-  vec3 irradiance    = texture(u_LambertianEnvSampler, n).rgb * frameInfo.clearColor.rgb;
-  vec3 specularLight = textureLod(u_GGXEnvSampler, reflection, lod).rgb;
+// specularWeight is introduced with KHR_materials_specular
+vec3 getIBLRadianceLambertian(vec3 n, vec3 v, float roughness, vec3 diffuseColor, vec3 F0, float specularWeight)
+{
+  float NdotV           = clampedDot(n, v);
+  vec2  brdfSamplePoint = clamp(vec2(NdotV, roughness), vec2(0.0, 0.0), vec2(1.0, 1.0));
+  vec2  f_ab            = texture(u_GGXLUT, brdfSamplePoint).rg;
 
+  vec3 irradiance = getDiffuseLight(n);
 
   // see https://bruop.github.io/ibl/#single_scattering_results at Single Scattering Results
   // Roughness dependent fresnel, from Fdez-Aguera
-  vec3 Fr     = max(vec3(1.0 - state.roughness), state.f0) - state.f0;
-  vec3 k_S    = state.f0 + Fr * pow(1.0 - NdotV, 5.0);
-  vec3 FssEss = k_S * brdf.x + brdf.y;
+
+  vec3 Fr     = max(vec3(1.0 - roughness), F0) - F0;
+  vec3 k_S    = F0 + Fr * pow(1.0 - NdotV, 5.0);
+  vec3 FssEss = specularWeight * k_S * f_ab.x + f_ab.y;  // <--- GGX / specular light contribution (scale it down if the specularWeight is low)
 
   // Multiple scattering, from Fdez-Aguera
-  float Ems    = (1.0 - (brdf.x + brdf.y));
-  vec3  F_avg  = (state.f0 + (1.0 - state.f0) / 21.0);
+  float Ems    = (1.0 - (f_ab.x + f_ab.y));
+  vec3  F_avg  = specularWeight * (F0 + (1.0 - F0) / 21.0);
   vec3  FmsEms = Ems * FssEss * F_avg / (1.0 - F_avg * Ems);
-  vec3  k_D    = state.albedo.rgb * (1.0 - FssEss + FmsEms);
+  vec3  k_D    = diffuseColor * (1.0 - FssEss + FmsEms);  // we use +FmsEms as indicated by the formula in the blog post (might be a typo in the implementation)
 
-  float diffuseRatio = 1.0 - state.metallic;
-
-  vec3 specular = specularLight * FssEss * (1 - diffuseRatio);
-  vec3 diffuse  = (FmsEms + k_D) * irradiance * diffuseRatio;
-
-
-  return (diffuse / M_PI + specular);
+  return (FmsEms + k_D) * irradiance;
 }
+
+
+vec3 getIBLRadianceGGX(vec3 n, vec3 v, float roughness, vec3 F0, float specularWeight)
+{
+  int u_MipCount = textureQueryLevels(u_GGXEnvSampler);
+
+  float NdotV      = clampedDot(n, v);
+  float lod        = roughness * float(u_MipCount - 1);
+  vec3  reflection = normalize(reflect(-v, n));
+
+  vec2 brdfSamplePoint = clamp(vec2(NdotV, roughness), vec2(0.0, 0.0), vec2(1.0, 1.0));
+  vec2 f_ab            = texture(u_GGXLUT, brdfSamplePoint).rg;
+  vec4 specularSample  = getSpecularSample(reflection, lod);
+
+  vec3 specularLight = specularSample.rgb;
+
+  // see https://bruop.github.io/ibl/#single_scattering_results at Single Scattering Results
+  // Roughness dependent fresnel, from Fdez-Aguera
+  vec3 Fr     = max(vec3(1.0 - roughness), F0) - F0;
+  vec3 k_S    = F0 + Fr * pow(1.0 - NdotV, 5.0);
+  vec3 FssEss = k_S * f_ab.x + f_ab.y;
+
+  return specularWeight * specularLight * FssEss;
+}
+
 
 void main()
 {
@@ -129,7 +154,9 @@ void main()
   // Result
   vec3 result = vec3(0);  //(matEval.albedo.xyz * frameInfo.clearColor.xyz);  // ambient
 
-  result += getIBLContribution(matEval, toEye);
+  float ambientFactor = 0.3;
+  result += getIBLRadianceGGX(matEval.normal, toEye, matEval.roughness, matEval.f0, 1.0) * ambientFactor;
+  result += getIBLRadianceLambertian(matEval.normal, toEye, matEval.roughness, matEval.albedo.rgb.rgb, matEval.f0, 1.0) * ambientFactor;
 
   result += matEval.emissive;  // emissive
 
@@ -138,7 +165,7 @@ void main()
   {
     Light light = frameInfo.light[i];
     vec3  lightDir;
-    vec3  lightContrib = lightContribution(light, hit.pos, hit.nrm, lightDir);
+    vec3  lightContrib = lightContribution(light, hit.pos, matEval.normal, lightDir);
 
     float pdf      = 0;
     vec3  brdf     = pbrEval(matEval, toEye, lightDir, pdf);

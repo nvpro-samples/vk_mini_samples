@@ -26,6 +26,7 @@
 #include "nvvk/images_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvk/renderpasses_vk.hpp"
+#include "nvvk/dynamicrendering_vk.hpp"
 #include "nvvk/buffers_vk.hpp"
 
 // Glsl Shaders compiled to Spir-V (See Makefile)
@@ -49,7 +50,8 @@ void VulkanSample::create(const nvvk::AppBaseVkCreateInfo& info)
 {
   AppBaseVk::create(info);
 
-  m_alloc.init(info.instance, info.device, info.physicalDevice);
+  m_dma = std::make_unique<nvvk::DeviceMemoryAllocator>(info.device, info.physicalDevice);
+  m_alloc.init(info.device, info.physicalDevice, m_dma.get());
   m_debug.setup(m_device);
   m_picker.setup(m_device, info.physicalDevice, info.queueIndices[0], &m_alloc);
 }
@@ -104,7 +106,15 @@ void VulkanSample::loadScene(const std::string& filename)
   std::string        warn, error;
 
   LOGI("- Loading file:\n\t %s\n", filename.c_str());
-  if(!tcontext.LoadASCIIFromFile(&tmodel, &error, &warn, filename))
+
+  auto ext = std::filesystem::path(filename).extension().string();
+  bool result{false};
+  if(ext == ".gltf")
+    result = tcontext.LoadASCIIFromFile(&tmodel, &error, &warn, filename);
+  else if(ext == ".glb")
+    result = tcontext.LoadBinaryFromFile(&tmodel, &error, &warn, filename);
+
+  if(!result)
   {
     LOGW(warn.c_str());
     LOGE(error.c_str());
@@ -280,17 +290,16 @@ void VulkanSample::updateUniformBuffer(VkCommandBuffer cmdBuf)
   const float aspectRatio = m_size.width / static_cast<float>(m_size.height);
   auto&       clip        = CameraManip.getClipPlanes();
 
-  FrameInfo hostUBO{};
-  hostUBO.view       = CameraManip.getMatrix();
-  hostUBO.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
-  hostUBO.viewInv    = nvmath::invert(hostUBO.view);
-  hostUBO.projInv    = nvmath::invert(hostUBO.proj);
-  hostUBO.light[0]   = m_lights[0];
-  hostUBO.light[1]   = m_lights[1];
-  hostUBO.clearColor = m_clearColor.float32;
+  m_frameInfo.view       = CameraManip.getMatrix();
+  m_frameInfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
+  m_frameInfo.viewInv    = nvmath::invert(m_frameInfo.view);
+  m_frameInfo.projInv    = nvmath::invert(m_frameInfo.proj);
+  m_frameInfo.light[0]   = m_lights[0];
+  m_frameInfo.light[1]   = m_lights[1];
+  m_frameInfo.clearColor = m_clearColor.float32;
 
   // Schedule the host-to-device upload. (hostUBO is copied into the cmd buffer so it is okay to deallocate when the function returns).
-  vkCmdUpdateBuffer(cmdBuf, m_frameInfo.buffer, 0, sizeof(FrameInfo), &hostUBO);
+  vkCmdUpdateBuffer(cmdBuf, m_frameInfoBuf.buffer, 0, sizeof(FrameInfo), &m_frameInfo);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -312,7 +321,7 @@ void VulkanSample::createGraphicPipeline()
   p.dstSet    = nvvk::allocateDescriptorSet(m_device, p.dstPool, p.dstLayout);
 
   // Writing to descriptors
-  VkDescriptorBufferInfo             dbiUnif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo             dbiUnif{m_frameInfoBuf.buffer, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo             sceneDesc{m_sceneDesc.buffer, 0, VK_WHOLE_SIZE};
   std::vector<VkDescriptorImageInfo> diit;
   std::vector<VkWriteDescriptorSet>  writes;
@@ -337,16 +346,17 @@ void VulkanSample::createGraphicPipeline()
   std::vector<uint32_t> vertexShader(std::begin(raster_vert), std::end(raster_vert));
   std::vector<uint32_t> fragShader(std::begin(raster_frag), std::end(raster_frag));
 
+  VkPipelineRenderingCreateInfoKHR rfInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
+  rfInfo.colorAttachmentCount    = 1;
+  rfInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  rfInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  rfInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+
   // Creating the Pipeline
-  nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, m_offscreenRenderPass);
-  gpb.depthStencilState.depthTestEnable          = VK_TRUE;
-  gpb.depthStencilState.depthCompareOp           = VK_COMPARE_OP_LESS;
-  gpb.rasterizationState.cullMode                = VK_CULL_MODE_BACK_BIT;
+  nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, {} /*m_offscreenRenderPass*/);
   gpb.rasterizationState.depthBiasEnable         = VK_TRUE;
   gpb.rasterizationState.depthBiasConstantFactor = -1;
   gpb.rasterizationState.depthBiasSlopeFactor    = 1;
-  gpb.rasterizationState.polygonMode             = VK_POLYGON_MODE_FILL;
-  gpb.rasterizationState.lineWidth               = 1.0f;
   gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
   gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
   gpb.addBindingDescriptions({{0, sizeof(Vertex)}});
@@ -355,7 +365,8 @@ void VulkanSample::createGraphicPipeline()
       {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, normal)},    // Normal + texcoord V
       {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},   // Tangents
   });
-  p.pipeline = gpb.createPipeline();
+  gpb.createInfo.pNext = &rfInfo;
+  p.pipeline           = gpb.createPipeline();
   NAME2_VK(p.pipeline, "Graphics");
 
   // Wireframe
@@ -379,9 +390,9 @@ void VulkanSample::createGraphicPipeline()
 //
 void VulkanSample::createUniformBuffer()
 {
-  m_frameInfo = m_alloc.createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  NAME2_VK(m_frameInfo.buffer, "FrameInfo");
+  m_frameInfoBuf = m_alloc.createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  NAME2_VK(m_frameInfoBuf.buffer, "FrameInfo");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -482,7 +493,7 @@ void VulkanSample::freeResources()
   m_recordedCmdBuffer = {VK_NULL_HANDLE};
 
   // Resources
-  m_alloc.destroy(m_frameInfo);
+  m_alloc.destroy(m_frameInfoBuf);
   m_alloc.destroy(m_materialBuffer);
   m_alloc.destroy(m_primInfo);
   m_alloc.destroy(m_instInfoBuffer);
@@ -517,10 +528,6 @@ void VulkanSample::freeResources()
   // Post
   m_alloc.destroy(m_offscreenColor);
   m_alloc.destroy(m_offscreenDepth);
-  vkDestroyRenderPass(m_device, m_offscreenRenderPass, nullptr);
-  vkDestroyFramebuffer(m_device, m_offscreenFramebuffer, nullptr);
-  m_offscreenRenderPass  = VK_NULL_HANDLE;
-  m_offscreenFramebuffer = VK_NULL_HANDLE;
 
   // Utilities
   m_rtBuilder.destroy();
@@ -535,6 +542,7 @@ void VulkanSample::destroy()
 {
   freeResources();
   m_alloc.deinit();
+  m_dma->deinit();
   AppBaseVk::destroy();
 }
 
@@ -547,56 +555,83 @@ void VulkanSample::rasterize(VkCommandBuffer cmdBuf)
 
   // Recording the commands to draw the scene if not done yet
   if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
-  {
-    nvh::Stopwatch sw;
-    // Create the command buffer to record the drawing commands
-    VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    allocInfo.commandPool        = m_cmdPool;
-    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-    allocInfo.commandBufferCount = 2;
-    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
+    recordRendering();
 
-    VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-    inheritInfo.renderPass = m_offscreenRenderPass;
+  nvvk::createRenderingInfo rInfo({{0, 0}, getSize()}, {m_offscreenColor.descriptor.imageView},
+                                  m_offscreenDepth.descriptor.imageView, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                  m_clearColor, {1.0f, 0}, VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT_KHR);
 
-    for(int i = 0; i < 2; i++)
-    {
-      auto& p = m_pContainer[eGraphic];
-
-      VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-      beginInfo.pInheritanceInfo = &inheritInfo;
-      vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
-
-      // Dynamic Viewport
-      setViewport(m_recordedCmdBuffer[i]);
-
-      // Drawing all instances
-      vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
-      vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
-
-      uint32_t     nodeId{0};
-      VkDeviceSize offsets{0};
-      for(auto& node : m_gltfScene.m_nodes)
-      {
-        auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
-        // Push constant information
-        m_pcRaster.materialId = primitive.materialIndex;
-        m_pcRaster.instanceId = nodeId++;
-        vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(RasterPushConstant), &m_pcRaster);
-
-        vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-        vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
-      }
-      vkEndCommandBuffer(m_recordedCmdBuffer[i]);
-      LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
-    }
-  }
+  vkCmdBeginRendering(cmdBuf, &rInfo);
 
   // Executing the drawing of the recorded commands
   vkCmdExecuteCommands(cmdBuf, m_showWireframe ? 2 : 1, m_recordedCmdBuffer.data());
+
+  vkCmdEndRendering(cmdBuf);
+
+
+  auto imageMemoryBarrier = nvvk::makeImageMemoryBarrier(m_offscreenColor.image, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                                                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+  vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                       nullptr, 0, nullptr, 1, &imageMemoryBarrier);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Record commands for rendering fill and wireframe
+//
+void VulkanSample::recordRendering()
+{
+  // Create the command buffer to record the drawing commands
+  VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  allocInfo.commandPool        = m_cmdPool;
+  allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+  allocInfo.commandBufferCount = 2;
+  vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
+
+  VkCommandBufferInheritanceRenderingInfoKHR inheritanceRenderingInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO_KHR};
+  inheritanceRenderingInfo.colorAttachmentCount    = 1;
+  inheritanceRenderingInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  inheritanceRenderingInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.rasterizationSamples    = VK_SAMPLE_COUNT_1_BIT;
+
+  VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+  inheritInfo.pNext = &inheritanceRenderingInfo;
+
+  for(int i = 0; i < 2; i++)
+  {
+    nvh::Stopwatch sw;
+    auto&          p = m_pContainer[eGraphic];
+
+    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+    beginInfo.pInheritanceInfo = &inheritInfo;
+    vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
+
+    // Dynamic Viewport
+    setViewport(m_recordedCmdBuffer[i]);
+
+    // Drawing all instances
+    vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
+    vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
+
+    uint32_t     nodeId{0};
+    VkDeviceSize offsets{0};
+    for(auto& node : m_gltfScene.m_nodes)
+    {
+      auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
+      // Push constant information
+      m_pcRaster.materialId = primitive.materialIndex;
+      m_pcRaster.instanceId = nodeId++;
+      vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                         0, sizeof(RasterPushConstant), &m_pcRaster);
+
+      vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+      vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
+    }
+    vkEndCommandBuffer(m_recordedCmdBuffer[i]);
+    LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -624,16 +659,14 @@ void VulkanSample::createOffscreenRender()
 {
   m_alloc.destroy(m_offscreenColor);
   m_alloc.destroy(m_offscreenDepth);
-  vkDestroyRenderPass(m_device, m_offscreenRenderPass, nullptr);
-  vkDestroyFramebuffer(m_device, m_offscreenFramebuffer, nullptr);
 
-  VkFormat colorFormat{VK_FORMAT_R32G32B32A32_SFLOAT};
-  VkFormat depthFormat = nvvk::findDepthFormat(m_physicalDevice);
+  m_offscreenDepthFormat = nvvk::findDepthFormat(m_physicalDevice);
 
   // Creating the color image
   {
-    auto colorCreateInfo = nvvk::makeImage2DCreateInfo(
-        m_size, colorFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+    auto colorCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_offscreenColorFormat,
+                                                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                                           | VK_IMAGE_USAGE_STORAGE_BIT);
 
     nvvk::Image image = m_alloc.createImage(colorCreateInfo);
     NAME2_VK(image.image, "Offscreen Color");
@@ -645,14 +678,14 @@ void VulkanSample::createOffscreenRender()
   }
 
   // Creating the depth buffer
-  auto depthCreateInfo = nvvk::makeImage2DCreateInfo(m_size, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+  auto depthCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_offscreenDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
   {
     nvvk::Image image = m_alloc.createImage(depthCreateInfo);
     NAME2_VK(image.image, "Offscreen Depth");
 
     VkImageViewCreateInfo depthStencilView{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     depthStencilView.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    depthStencilView.format           = depthFormat;
+    depthStencilView.format           = m_offscreenDepthFormat;
     depthStencilView.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     depthStencilView.image            = image.image;
 
@@ -669,24 +702,6 @@ void VulkanSample::createOffscreenRender()
 
     genCmdBuf.submitAndWait(cmdBuf);
   }
-
-  // Creating a renderpass for the offscreen
-  m_offscreenRenderPass = nvvk::createRenderPass(m_device, {colorFormat}, depthFormat, 1, true, true,
-                                                 VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
-  NAME2_VK(m_offscreenRenderPass, "Offscreen");
-
-  // Creating the frame buffer for offscreen
-  std::vector<VkImageView> attachments = {m_offscreenColor.descriptor.imageView, m_offscreenDepth.descriptor.imageView};
-
-  VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-  info.renderPass      = m_offscreenRenderPass;
-  info.attachmentCount = 2;
-  info.pAttachments    = attachments.data();
-  info.width           = m_size.width;
-  info.height          = m_size.height;
-  info.layers          = 1;
-  vkCreateFramebuffer(m_device, &info, nullptr, &m_offscreenFramebuffer);
-  NAME2_VK(m_offscreenFramebuffer, "Offscreen");
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -718,10 +733,17 @@ void VulkanSample::createPostPipeline()
   std::vector<uint32_t> vertexShader(std::begin(passthrough_vert), std::end(passthrough_vert));
   std::vector<uint32_t> fragShader(std::begin(post_frag), std::end(post_frag));
 
-  nvvk::GraphicsPipelineGeneratorCombined pipelineGenerator(m_device, p.pipelineLayout, m_renderPass);
+  VkPipelineRenderingCreateInfoKHR rfInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
+  rfInfo.colorAttachmentCount    = 1;
+  rfInfo.pColorAttachmentFormats = &m_colorFormat;
+  rfInfo.depthAttachmentFormat   = m_depthFormat;
+  rfInfo.stencilAttachmentFormat = m_depthFormat;
+
+  nvvk::GraphicsPipelineGeneratorCombined pipelineGenerator(m_device, p.pipelineLayout, {} /*m_renderPass*/);
   pipelineGenerator.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
   pipelineGenerator.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
   pipelineGenerator.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+  pipelineGenerator.createInfo.pNext            = &rfInfo;
 
   p.pipeline = pipelineGenerator.createPipeline();
   NAME2_VK(p.pipeline, "Post");
@@ -1068,6 +1090,9 @@ void VulkanSample::resetFrame()
 //
 void VulkanSample::screenPicking()
 {
+  if(!m_picker.isValid())
+    return;
+
   double x, y;
   glfwGetCursorPos(m_window, &x, &y);
 
@@ -1132,6 +1157,34 @@ void VulkanSample::titleBar()
 }
 
 //--------------------------------------------------------------------------------------------------
+// React on collected inputs
+//
+void VulkanSample::updateInputs()
+{
+  AppBaseVk::updateInputs();
+  if(ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard)
+    return;
+
+  if(ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+    screenPicking();
+
+  if(ImGui::IsKeyPressed(ImGuiKey_F))  // Camera frame scene
+    fitCamera(m_gltfScene.m_dimensions.min, m_gltfScene.m_dimensions.max, false);
+
+  if(ImGui::IsKeyPressed(ImGuiKey_R))  // Restart rendering
+    resetFrame();
+
+  if(ImGui::IsKeyPressed(ImGuiKey_M))  // Toggling rendering mode
+  {
+    m_renderMode = static_cast<RenderMode>(((int)m_renderMode + 1) % 2);
+    resetFrame();
+  }
+
+  if(ImGui::IsKeyPressed(ImGuiKey_Space))
+    screenPicking();
+}
+
+//--------------------------------------------------------------------------------------------------
 // Rendering UI
 //
 void VulkanSample::renderUI()
@@ -1145,7 +1198,7 @@ void VulkanSample::renderUI()
 
   if(ImGui::Button("Load glTF"))
   {  // Loading file dialog
-    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load glTF", ".gltf");
+    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load glTF", "glTF(.gltf, .glb)|*.gltf;*.glb");
     onFileDrop(filename.c_str());
   }
 
@@ -1242,45 +1295,6 @@ void VulkanSample::uiEnvironment(bool& changed)
 }
 
 //--------------------------------------------------------------------------------------------------
-// Override when mouse click, dealing only with double click
-//
-void VulkanSample::onMouseButton(int button, int action, int mods)
-{
-  AppBaseVk::onMouseButton(button, action, mods);
-  if(ImGui::GetIO().MouseDownWasDoubleClick[0])
-  {
-    screenPicking();
-  }
-}
-
-//--------------------------------------------------------------------------------------------------
-// Overload keyboard hit
-//
-void VulkanSample::onKeyboard(int key, int scancode, int action, int mods)
-{
-  nvvk::AppBaseVk::onKeyboard(key, scancode, action, mods);
-  if(action == GLFW_RELEASE)
-    return;
-
-  switch(key)
-  {
-    case GLFW_KEY_F:  // Set the camera as to see the model
-      fitCamera(m_gltfScene.m_dimensions.min, m_gltfScene.m_dimensions.max, false);
-      break;
-    case GLFW_KEY_R:  // Restart rendering
-      resetFrame();
-      break;
-    case GLFW_KEY_M:  // Toggling rendering mode
-      m_renderMode = static_cast<RenderMode>(((int)m_renderMode + 1) % 2);
-      resetFrame();
-      break;
-    case GLFW_KEY_SPACE:  // Picking under mouse
-      screenPicking();
-      break;
-  }
-}
-
-//--------------------------------------------------------------------------------------------------
 // Allow to drop .hdr files
 //
 void VulkanSample::onFileDrop(const char* filename)
@@ -1288,7 +1302,7 @@ void VulkanSample::onFileDrop(const char* filename)
   namespace fs = std::filesystem;
   vkDeviceWaitIdle(m_device);
   std::string extension = fs::path(filename).extension().string();
-  if(extension == ".gltf")
+  if(extension == ".gltf" || extension == ".glb")
   {
     freeResources();
     createScene(filename);

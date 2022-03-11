@@ -19,6 +19,7 @@ set(CMAKE_CXX_STANDARD 17)
 add_executable(${PROJNAME})
 _add_project_definitions(${PROJNAME})
 add_compile_definitions(TINYGLTF_NO_EXTERNAL_IMAGE)
+add_compile_definitions(VULKAN_HPP_TYPESAFE_CONVERSION=1)
 _add_package_KTX()
 
 #--------------------------------------------------------------------------------------------------

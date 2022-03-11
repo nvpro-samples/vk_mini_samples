@@ -49,7 +49,7 @@ add_subdirectory(msaa)
 add_subdirectory(debug_printf) 
 add_subdirectory(optix_denoiser) 
 add_subdirectory(hdr_sampling) 
-add_subdirectory(aftermath) 
+add_subdirectory(nsight_aftermath) 
 add_subdirectory(ktx_textures) 
 
 

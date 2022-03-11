@@ -26,6 +26,7 @@
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster_overlay.frag.h"
 #include "nvvk/images_vk.hpp"
+#include "nvvk/dynamicrendering_vk.hpp"
 
 
 //--------------------------------------------------------------------------------------------------
@@ -55,7 +56,7 @@ void MsaaSample::createScene(const std::string& filename)
 
     createUniformBuffer();
     createOffscreenRender();
-    createMsaaRender(m_msaaSamples);  // #MSAA
+    createMsaaImages(m_msaaSamples);  // #MSAA
     createGraphicPipeline();
     LOGI(" - %6.2fms: Graphic\n", sw_.elapsed());
   }
@@ -90,7 +91,7 @@ void MsaaSample::createGraphicPipeline()
   p.dstSet    = nvvk::allocateDescriptorSet(m_device, p.dstPool, p.dstLayout);
 
   // Writing to descriptors
-  VkDescriptorBufferInfo             dbiUnif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo             dbiUnif{m_frameInfoBuf.buffer, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo             sceneDesc{m_sceneDesc.buffer, 0, VK_WHOLE_SIZE};
   std::vector<VkDescriptorImageInfo> diit;
   std::vector<VkWriteDescriptorSet>  writes;
@@ -115,17 +116,17 @@ void MsaaSample::createGraphicPipeline()
   std::vector<uint32_t> vertexShader(std::begin(raster_vert), std::end(raster_vert));
   std::vector<uint32_t> fragShader(std::begin(raster_frag), std::end(raster_frag));
 
+  VkPipelineRenderingCreateInfoKHR rfInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
+  rfInfo.colorAttachmentCount    = 1;
+  rfInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  rfInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  rfInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+
   // Creating the Pipeline
-  VkRenderPass pass = (m_msaaSamples == VK_SAMPLE_COUNT_1_BIT ? m_offscreenRenderPass : m_msaaRenderPass);  // #MSAA
-  nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, pass);
-  gpb.depthStencilState.depthTestEnable          = VK_TRUE;
-  gpb.depthStencilState.depthCompareOp           = VK_COMPARE_OP_LESS;
-  gpb.rasterizationState.cullMode                = VK_CULL_MODE_BACK_BIT;
+  nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, nullptr /*pass*/);
   gpb.rasterizationState.depthBiasEnable         = VK_TRUE;
   gpb.rasterizationState.depthBiasConstantFactor = -1;
   gpb.rasterizationState.depthBiasSlopeFactor    = 1;
-  gpb.rasterizationState.polygonMode             = VK_POLYGON_MODE_FILL;
-  gpb.rasterizationState.lineWidth               = 1.0f;
   gpb.multisampleState.rasterizationSamples      = m_msaaSamples;  // #MSAA
   gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
   gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -135,7 +136,8 @@ void MsaaSample::createGraphicPipeline()
       {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, normal)},    // Normal + texcoord V
       {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},   // Tangents
   });
-  p.pipeline = gpb.createPipeline();
+  gpb.createInfo.pNext = &rfInfo;
+  p.pipeline           = gpb.createPipeline();
   NAME2_VK(p.pipeline, "Graphics");
 
   // Wireframe
@@ -166,8 +168,6 @@ void MsaaSample::freeResources()
   m_alloc.destroy(m_msaaDepth);
   vkDestroyImageView(m_device, m_msaaColorIView, nullptr);
   vkDestroyImageView(m_device, m_msaaDepthIView, nullptr);
-  vkDestroyRenderPass(m_device, m_msaaRenderPass, nullptr);
-  vkDestroyFramebuffer(m_device, m_msaaFramebuffer, nullptr);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -176,61 +176,100 @@ void MsaaSample::freeResources()
 //
 void MsaaSample::rasterize(VkCommandBuffer cmdBuf)
 {
-
   LABEL_SCOPE_VK(cmdBuf);
 
   // Recording the commands to draw the scene if not done yet
   if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
+    recordRendering();
+
+  if(m_msaaSamples == VK_SAMPLE_COUNT_1_BIT)  //  #MSAA
   {
-    nvh::Stopwatch sw;
-    // Create the command buffer to record the drawing commands
-    VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    allocInfo.commandPool        = m_cmdPool;
-    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-    allocInfo.commandBufferCount = 2;
-    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
-
-    VkRenderPass pass = (m_msaaSamples == VK_SAMPLE_COUNT_1_BIT ? m_offscreenRenderPass : m_msaaRenderPass);  // #MSAA
-    VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-    inheritInfo.renderPass = pass;
-
-    for(int i = 0; i < 2; i++)
-    {
-      VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-      beginInfo.pInheritanceInfo = &inheritInfo;
-      vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
-
-      // Dynamic Viewport
-      setViewport(m_recordedCmdBuffer[i]);
-
-      // Drawing all instances
-      auto& p = m_pContainer[eGraphic];
-      vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
-      vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
-
-      uint32_t     nodeId{0};
-      VkDeviceSize offsets{0};
-      for(auto& node : m_gltfScene.m_nodes)
-      {
-        auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
-        // Push constant information
-        m_pcRaster.materialId = primitive.materialIndex;
-        m_pcRaster.instanceId = nodeId++;
-        vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(RasterPushConstant), &m_pcRaster);
-
-        vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-        vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
-      }
-      vkEndCommandBuffer(m_recordedCmdBuffer[i]);
-      LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
-    }
+    nvvk::createRenderingInfo rInfo({{0, 0}, getSize()}, {m_offscreenColor.descriptor.imageView},
+                                    m_offscreenDepth.descriptor.imageView, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                    m_clearColor, {1.0f, 0}, VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT_KHR);
+    vkCmdBeginRendering(cmdBuf, &rInfo);
   }
+  else
+  {
+    nvvk::createRenderingInfo rInfo({{0, 0}, getSize()}, {m_msaaColorIView}, m_msaaDepthIView,
+                                    VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor, {1.0f, 0},
+                                    VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT_KHR);
+    rInfo.colorAttachments[0].resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    rInfo.colorAttachments[0].resolveImageView = m_offscreenColor.descriptor.imageView;  // Resolving MSAA to offscreen
+    rInfo.colorAttachments[0].resolveMode      = VK_RESOLVE_MODE_AVERAGE_BIT;
+    vkCmdBeginRendering(cmdBuf, &rInfo);
+  }
+
 
   // Executing the drawing of the recorded commands
   vkCmdExecuteCommands(cmdBuf, m_showWireframe ? 2 : 1, m_recordedCmdBuffer.data());
+  vkCmdEndRendering(cmdBuf);
+
+  // <ake sure it is finished
+  auto imageMemoryBarrier = nvvk::makeImageMemoryBarrier(m_offscreenColor.image, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                                                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+  vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                       nullptr, 0, nullptr, 1, &imageMemoryBarrier);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+// Record commands for rendering fill and wireframe
+//
+void MsaaSample::recordRendering()
+{
+  // Create the command buffer to record the drawing commands
+  VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  allocInfo.commandPool        = m_cmdPool;
+  allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+  allocInfo.commandBufferCount = 2;
+  vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
+
+  VkCommandBufferInheritanceRenderingInfoKHR inheritanceRenderingInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO_KHR};
+  inheritanceRenderingInfo.colorAttachmentCount    = 1;
+  inheritanceRenderingInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  inheritanceRenderingInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.rasterizationSamples    = m_msaaSamples;
+
+  VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+  inheritInfo.pNext = &inheritanceRenderingInfo;
+
+  for(int i = 0; i < 2; i++)
+  {
+    nvh::Stopwatch sw;
+    auto&          p = m_pContainer[eGraphic];
+
+    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+    beginInfo.pInheritanceInfo = &inheritInfo;
+    vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
+
+    // Dynamic Viewport
+    setViewport(m_recordedCmdBuffer[i]);
+
+    // Drawing all instances
+    vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
+    vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
+
+    uint32_t     nodeId{0};
+    VkDeviceSize offsets{0};
+    for(auto& node : m_gltfScene.m_nodes)
+    {
+      auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
+      // Push constant information
+      m_pcRaster.materialId = primitive.materialIndex;
+      m_pcRaster.instanceId = nodeId++;
+      vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                         0, sizeof(RasterPushConstant), &m_pcRaster);
+
+      vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+      vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
+    }
+    vkEndCommandBuffer(m_recordedCmdBuffer[i]);
+    LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -244,7 +283,7 @@ void MsaaSample::onResize(int /*w*/, int /*h*/)
   createOffscreenRender();
   updatePostDescriptorSet(m_offscreenColor.descriptor);
   resetFrame();
-  createMsaaRender(m_msaaSamples);  // #MSAA
+  createMsaaImages(m_msaaSamples);  // #MSAA
 }
 
 
@@ -252,26 +291,22 @@ void MsaaSample::onResize(int /*w*/, int /*h*/)
 // Creating MSAA image/depth and renderpass resolving in the offscreen image
 //
 // #MSAA
-void MsaaSample::createMsaaRender(VkSampleCountFlagBits samples)
+void MsaaSample::createMsaaImages(VkSampleCountFlagBits samples)
 {
   m_alloc.destroy(m_msaaColor);
   m_alloc.destroy(m_msaaDepth);
   vkDestroyImageView(m_device, m_msaaColorIView, nullptr);
   vkDestroyImageView(m_device, m_msaaDepthIView, nullptr);
 
-  VkFormat m_offscreenColorFormat{VK_FORMAT_R32G32B32A32_SFLOAT};
-  VkFormat m_offscreenDepthFormat{VK_FORMAT_X8_D24_UNORM_PACK32};
-
   // Default create image info
   VkImageCreateInfo createInfo = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   createInfo.imageType         = VK_IMAGE_TYPE_2D;
-  createInfo.samples           = samples;
+  createInfo.samples           = samples;  // #MSAA
   createInfo.mipLevels         = 1;
   createInfo.arrayLayers       = 1;
   createInfo.extent.width      = m_size.width;
   createInfo.extent.height     = m_size.height;
   createInfo.extent.depth      = 1;
-
 
   // Creating color
   {
@@ -305,69 +340,19 @@ void MsaaSample::createMsaaRender(VkSampleCountFlagBits samples)
 
     genCmdBuf.submitAndWait(cmdBuf);
   }
-
-  // Creating a renderpass for the msaa
-  if(!m_msaaRenderPass)
-  {
-    std::array<VkAttachmentDescription, 3> attachments{};
-    // Color
-    attachments[0].format        = m_offscreenColorFormat;
-    attachments[0].samples       = samples;
-    attachments[0].loadOp        = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[0].storeOp       = VK_ATTACHMENT_STORE_OP_DONT_CARE;  // # MSAA - Optimization
-    attachments[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    attachments[0].finalLayout   = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    // Depth
-    attachments[1].format        = m_offscreenDepthFormat;
-    attachments[1].samples       = samples;
-    attachments[1].loadOp        = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[1].storeOp       = VK_ATTACHMENT_STORE_OP_DONT_CARE;  // # MSAA - Optimization
-    attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    attachments[1].finalLayout   = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    // Resolve
-    attachments[2].format        = m_offscreenColorFormat;
-    attachments[2].samples       = VK_SAMPLE_COUNT_1_BIT;
-    attachments[2].loadOp        = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[2].storeOp       = VK_ATTACHMENT_STORE_OP_STORE;
-    attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[2].finalLayout   = VK_IMAGE_LAYOUT_GENERAL;
-
-    // attachments reference
-    VkAttachmentReference colorRefs{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference depthRefs{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference resolveRef{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount    = 1;
-    subpass.pColorAttachments       = &colorRefs;
-    subpass.pDepthStencilAttachment = &depthRefs;
-    subpass.pResolveAttachments     = &resolveRef;  // <-- resolving MSAA in offscreen
-    VkRenderPassCreateInfo rpInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    rpInfo.attachmentCount = (uint32_t)attachments.size();
-    rpInfo.pAttachments    = attachments.data();
-    rpInfo.subpassCount    = 1;
-    rpInfo.pSubpasses      = &subpass;
-
-    vkCreateRenderPass(m_device, &rpInfo, nullptr, &m_msaaRenderPass);
-    NAME_VK(m_msaaRenderPass);
-  }
-
-  // Creating the frame buffer for #MSAA
-  std::vector<VkImageView> attachments = {m_msaaColorIView, m_msaaDepthIView, m_offscreenColor.descriptor.imageView};
-
-  vkDestroyFramebuffer(m_device, m_msaaFramebuffer, nullptr);
-  VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-  info.renderPass      = m_msaaRenderPass;
-  info.attachmentCount = (uint32_t)attachments.size();
-  info.pAttachments    = attachments.data();
-  info.width           = m_size.width;
-  info.height          = m_size.height;
-  info.layers          = 1;
-  vkCreateFramebuffer(m_device, &info, nullptr, &m_msaaFramebuffer);
 }
 
 
+inline uint32_t floor_log2i(uint32_t v)
+{
+  uint32_t l = 0;
+  while(v > 1U)
+  {
+    v >>= 1;
+    l++;
+  }
+  return l;
+}
 //--------------------------------------------------------------------------------------------------
 // Rendering UI
 //
@@ -401,17 +386,28 @@ void MsaaSample::renderUI()
 
 
   // #MSAA
-  bool useMsaa = (m_msaaSamples == VK_SAMPLE_COUNT_4_BIT);
-  if(ImGui::Checkbox("Use MSAA", &useMsaa))
+  VkImageFormatProperties imageFormatProperties;
+  vkGetPhysicalDeviceImageFormatProperties(m_physicalDevice, m_offscreenColorFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+                                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &imageFormatProperties);
+  auto        maxSamples = static_cast<uint32_t>(log2(imageFormatProperties.sampleCounts) + 1);
+  int         item_combo = static_cast<uint32_t>(log2((double)m_msaaSamples));
+  const char* items[]    = {"1", "2", "4", "8", "16", "32", "64"};
+  ImGui::Text("Sample Count");
+  ImGui::SameLine();
+  if(ImGui::Combo("##Sample Count", &item_combo, items, maxSamples))
   {
+    int32_t samples = static_cast<int32_t>(powf(2, (float)item_combo));
+    m_msaaSamples   = static_cast<VkSampleCountFlagBits>(samples);
+
     vkDeviceWaitIdle(m_device);  // Flushing the graphic pipeline
 
     // The graphic pipeline will use offscreen or msaa render pass
-    m_msaaSamples = useMsaa ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
     vkDestroyPipeline(m_device, m_pContainer[eGraphic].pipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pContainer[eGraphic].pipelineLayout, nullptr);
     vkDestroyDescriptorPool(m_device, m_pContainer[eGraphic].dstPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_pContainer[eGraphic].dstLayout, nullptr);
+    vkDestroyPipeline(m_device, m_wireframe, nullptr);
+    createMsaaImages(m_msaaSamples);  // #MSAA
     createGraphicPipeline();
 
     // Need to re-record the scene, dependency on renderpass

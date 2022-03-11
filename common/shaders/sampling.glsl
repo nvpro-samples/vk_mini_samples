@@ -102,3 +102,11 @@ vec2 getSphericalUv(vec3 v)
   vec2 uv = vec2(theta * M_1_OVER_PI * 0.5, gamma * M_1_OVER_PI) + 0.5;
   return uv;
 }
+
+vec3 rotate(vec3 v, vec3 k, float theta)
+{
+  float cos_theta = cos(theta);
+  float sin_theta = sin(theta);
+
+  return (v * cos_theta) + (cross(k, v) * sin_theta) + (k * dot(k, v)) * (1 - cos_theta);
+}

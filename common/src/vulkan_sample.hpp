@@ -28,6 +28,7 @@
 #include "nvvk/raypicker_vk.hpp"
 
 #include "shaders/host_device.h"
+#include "nvh/timesampler.hpp"
 
 
 //--------------------------------------------------------------------------------------------------
@@ -45,6 +46,8 @@ public:
   virtual void createScene(const std::string& filename);
   // Display info in the title bar
   virtual void titleBar();
+  // Dealing with various inputs
+  void updateInputs() override;
   // Rendering the user interface
   virtual void renderUI();
   // Update/push the per frame buffer
@@ -58,11 +61,10 @@ public:
   // Free all resources allocated in create
   virtual void freeResources();
   // Destroy everything
-  void destroy() override;
+  void         destroy() override;
+  virtual void screenPicking();
 
   const VkClearColorValue& clearColor() { return m_clearColor; }
-  const VkRenderPass&      offscreenRenderPass() { return m_offscreenRenderPass; }
-  const VkFramebuffer&     offscreenFramebuffer() { return m_offscreenFramebuffer; }
 
   enum class RenderMode  // All rendering modes
   {
@@ -88,14 +90,13 @@ protected:
   virtual void updateRtDescriptorSet();
   virtual bool updateFrame();
   virtual void resetFrame();
-  virtual void screenPicking();
+  virtual void recordRendering();
+
   virtual void uiInfo();
   virtual bool uiRaytrace(bool& changed);
   virtual void uiEnvironment(bool& changed);
 
   void onResize(int w = 0, int h = 0) override;
-  void onMouseButton(int button, int action, int mods) override;
-  void onKeyboard(int key, int scancode, int action, int mods) override;
   void onFileDrop(const char* filename) override;
 
   nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const nvh::GltfPrimMesh& prim,
@@ -124,10 +125,11 @@ protected:
 
   std::array<VkCommandBuffer, 2> m_recordedCmdBuffer{VK_NULL_HANDLE};  // Used by raster to replay rendering commands
 
-  nvvk::ResourceAllocatorDma m_alloc;   // Allocator for buffer, images, acceleration structures
-  nvvk::DebugUtil            m_debug;   // Utility to name objects
-  nvvk::SBTWrapper           m_sbt;     // Shading binding table wrapper
-  nvvk::RayPickerKHR         m_picker;  // Send ray at mouse coordinates
+  std::unique_ptr<nvvk::DeviceMemoryAllocator> m_dma;     // The memory allocator
+  nvvk::ResourceAllocator                      m_alloc;   // Allocator for buffer, images, acceleration structures
+  nvvk::DebugUtil                              m_debug;   // Utility to name objects
+  nvvk::SBTWrapper                             m_sbt;     // Shading binding table wrapper
+  nvvk::RayPickerKHR                           m_picker;  // Send ray at mouse coordinates
 
   nvh::GltfScene               m_gltfScene;  // Loaded scene
   std::array<Light, NB_LIGHTS> m_lights = {{
@@ -143,6 +145,8 @@ protected:
   VkClearColorValue            m_clearColor{0.1f, 0.1f, 0.1f, 1.f};
   bool                         m_showWireframe{false};
 
+  FrameInfo m_frameInfo{};
+
   // Resources
   std::vector<nvvk::Buffer>  m_vertices;        // One buffer per primitive (Vertex)
   std::vector<nvvk::Buffer>  m_indices;         // One buffer per primitive (uint32_t)
@@ -150,7 +154,7 @@ protected:
   nvvk::Buffer               m_primInfo;        // Array of PrimMeshInfo
   nvvk::Buffer               m_instInfoBuffer;  // Array of InstanceInfo
   nvvk::Buffer               m_sceneDesc;       // SceneDescription
-  nvvk::Buffer               m_frameInfo;       // Device-Host of FrameInfo
+  nvvk::Buffer               m_frameInfoBuf;    // Device-Host of FrameInfo
   std::vector<nvvk::Texture> m_textures;        // Vector of all textures of the scene
 
   std::vector<std::pair<nvvk::Image, VkImageCreateInfo>> m_images;  // vector of all images of the scene
@@ -165,8 +169,8 @@ protected:
   };
 
   // Post/offscreen pipeline
-  VkRenderPass  m_offscreenRenderPass{VK_NULL_HANDLE};
-  VkFramebuffer m_offscreenFramebuffer{VK_NULL_HANDLE};
+  VkFormat      m_offscreenColorFormat{VK_FORMAT_R32G32B32A32_SFLOAT};
+  VkFormat      m_offscreenDepthFormat{};
   nvvk::Texture m_offscreenColor;
   nvvk::Texture m_offscreenDepth;
   Tonemapper    m_tonemapper{

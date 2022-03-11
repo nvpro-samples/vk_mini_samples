@@ -32,23 +32,22 @@ void DebugPrintf::updateUniformBuffer(VkCommandBuffer cmdBuf)
   const float aspectRatio = m_size.width / static_cast<float>(m_size.height);
   auto&       clip        = CameraManip.getClipPlanes();
 
-  FrameInfo hostUBO{};
-  hostUBO.view       = CameraManip.getMatrix();
-  hostUBO.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
-  hostUBO.viewInv    = nvmath::invert(hostUBO.view);
-  hostUBO.projInv    = nvmath::invert(hostUBO.proj);
-  hostUBO.light[0]   = m_lights[0];
-  hostUBO.light[1]   = m_lights[1];
-  hostUBO.clearColor = m_clearColor.float32;
-  hostUBO.coord      = nvmath::vec2f(-1, -1);
+  m_frameInfo.view       = CameraManip.getMatrix();
+  m_frameInfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
+  m_frameInfo.viewInv    = nvmath::invert(m_frameInfo.view);
+  m_frameInfo.projInv    = nvmath::invert(m_frameInfo.proj);
+  m_frameInfo.light[0]   = m_lights[0];
+  m_frameInfo.light[1]   = m_lights[1];
+  m_frameInfo.clearColor = m_clearColor.float32;
+  m_frameInfo.coord      = nvmath::vec2f(-1, -1);
 
-  if(ImGui::GetIO().MouseClicked[0])
+  if(ImGui::IsMouseClicked(ImGuiMouseButton_Left))
   {
     double x, y;
     glfwGetCursorPos(m_window, &x, &y);
-    hostUBO.coord = nvmath::vec2f(x, y);
+    m_frameInfo.coord = nvmath::vec2f(x, y);
   }
 
   // Schedule the host-to-device upload. (hostUBO is copied into the cmd buffer so it is okay to deallocate when the function returns).
-  vkCmdUpdateBuffer(cmdBuf, m_frameInfo.buffer, 0, sizeof(FrameInfo), &hostUBO);
+  vkCmdUpdateBuffer(cmdBuf, m_frameInfoBuf.buffer, 0, sizeof(FrameInfo), &m_frameInfo);
 }

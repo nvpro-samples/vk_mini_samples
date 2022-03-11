@@ -32,7 +32,11 @@
 #include "_autogen/pathtrace.rchit.h"
 #include "_autogen/pathtrace.rgen.h"
 #include "_autogen/pathtrace.rmiss.h"
+#include "nvvk/dynamicrendering_vk.hpp"
 
+// #VMA
+#define VMA_IMPLEMENTATION
+#include "vk_mem_alloc.h"
 
 //--------------------------------------------------------------------------------------------------
 // Overload: adding HDR
@@ -40,7 +44,17 @@
 void HdrSample::create(const nvvk::AppBaseVkCreateInfo& info)
 {
   AppBaseVk::create(info);
-  m_alloc.init(m_instance, m_device, m_physicalDevice);
+
+  // #VMA
+  VmaAllocatorCreateInfo allocatorInfo = {};
+  allocatorInfo.physicalDevice         = info.physicalDevice;
+  allocatorInfo.device                 = info.device;
+  allocatorInfo.instance               = info.instance;
+  allocatorInfo.flags                  = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+  vmaCreateAllocator(&allocatorInfo, &m_vmaAlloc);
+
+  m_vma = std::make_unique<nvvk::VMAMemoryAllocator>(info.device, info.physicalDevice, m_vmaAlloc);
+  m_alloc.init(info.device, info.physicalDevice, m_vma.get());  // #VMA
   m_debug.setup(m_device);
   m_picker.setup(m_device, m_physicalDevice, info.queueIndices[0], &m_alloc);
 
@@ -92,11 +106,15 @@ void HdrSample::destroy()
   m_hdrEnv.destroy();
   m_hdrDome.destroy();
   m_alloc.deinit();
+
+  // #VMA
+  vmaDestroyAllocator(m_vmaAlloc);
+  m_vma->deinit();
   AppBaseVk::destroy();
 }
 
 //--------------------------------------------------------------------------------------------------
-// Drawing in the backkground a dome
+// Drawing in the background a dome
 //
 void HdrSample::drawDome(VkCommandBuffer cmdBuf)
 {
@@ -105,7 +123,7 @@ void HdrSample::drawDome(VkCommandBuffer cmdBuf)
   auto&       view        = CameraManip.getMatrix();
   auto        proj        = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, 0.1f, 1000.0f);
 
-  m_hdrDome.draw(cmdBuf, view, proj, m_size, &m_clearColor.float32[0]);
+  m_hdrDome.draw(cmdBuf, view, proj, m_size, &m_clearColor.float32[0], m_frameInfo.envRotation);
 }
 
 
@@ -128,7 +146,7 @@ void HdrSample::createGraphicPipeline()
   p.dstSet    = nvvk::allocateDescriptorSet(m_device, p.dstPool, p.dstLayout);
 
   // Writing to descriptors
-  VkDescriptorBufferInfo             dbiUnif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo             dbiUnif{m_frameInfoBuf.buffer, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo             sceneDesc{m_sceneDesc.buffer, 0, VK_WHOLE_SIZE};
   std::vector<VkDescriptorImageInfo> diit;
   std::vector<VkWriteDescriptorSet>  writes;
@@ -154,16 +172,17 @@ void HdrSample::createGraphicPipeline()
   std::vector<uint32_t> vertexShader(std::begin(raster_vert), std::end(raster_vert));
   std::vector<uint32_t> fragShader(std::begin(raster_frag), std::end(raster_frag));
 
+  VkPipelineRenderingCreateInfoKHR rfInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
+  rfInfo.colorAttachmentCount    = 1;
+  rfInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  rfInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  rfInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+
   // Creating the Pipeline
-  nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, m_offscreenRenderPass);
-  gpb.depthStencilState.depthTestEnable          = VK_TRUE;
-  gpb.depthStencilState.depthCompareOp           = VK_COMPARE_OP_LESS;
-  gpb.rasterizationState.cullMode                = VK_CULL_MODE_BACK_BIT;
+  nvvk::GraphicsPipelineGeneratorCombined gpb(m_device, p.pipelineLayout, {} /*m_offscreenRenderPass*/);
   gpb.rasterizationState.depthBiasEnable         = VK_TRUE;
   gpb.rasterizationState.depthBiasConstantFactor = -1;
   gpb.rasterizationState.depthBiasSlopeFactor    = 1;
-  gpb.rasterizationState.polygonMode             = VK_POLYGON_MODE_FILL;
-  gpb.rasterizationState.lineWidth               = 1.0f;
   gpb.addShader(vertexShader, VK_SHADER_STAGE_VERTEX_BIT);
   gpb.addShader(fragShader, VK_SHADER_STAGE_FRAGMENT_BIT);
   gpb.addBindingDescriptions({{0, sizeof(Vertex)}});
@@ -172,8 +191,9 @@ void HdrSample::createGraphicPipeline()
       {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, normal)},    // Normal + texcoord V
       {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},   // Tangents
   });
-  p.pipeline = gpb.createPipeline();
-  m_debug.setObjectName(p.pipeline, "Graphics");
+  gpb.createInfo.pNext = &rfInfo;
+  p.pipeline           = gpb.createPipeline();
+  NAME2_VK(p.pipeline, "Graphics");
 
   // Wireframe
   {
@@ -194,62 +214,89 @@ void HdrSample::createGraphicPipeline()
 //--------------------------------------------------------------------------------------------------
 // Overload: see #HDR
 //
+//--------------------------------------------------------------------------------------------------
+// Drawing the scene in raster mode: record all command and "play back"
+//
 void HdrSample::rasterize(VkCommandBuffer cmdBuf)
 {
   LABEL_SCOPE_VK(cmdBuf);
 
   // Recording the commands to draw the scene if not done yet
   if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
-  {
-    nvh::Stopwatch sw;
-    // Create the command buffer to record the drawing commands
-    VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    allocInfo.commandPool        = m_cmdPool;
-    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-    allocInfo.commandBufferCount = 2;
-    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
+    recordRendering();
 
-    VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-    inheritInfo.renderPass = m_offscreenRenderPass;
-    for(int i = 0; i < 2; i++)
-    {
-      VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-      beginInfo.pInheritanceInfo = &inheritInfo;
-      vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
+  nvvk::createRenderingInfo rInfo({{0, 0}, getSize()}, {m_offscreenColor.descriptor.imageView},
+                                  m_offscreenDepth.descriptor.imageView, VK_ATTACHMENT_LOAD_OP_LOAD,
+                                  VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor,  //#HDR
+                                  {1.0f, 0}, VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT_KHR);
 
-      // Dynamic Viewport
-      setViewport(m_recordedCmdBuffer[i]);
-
-      // Drawing all instances
-      auto&                        p = m_pContainer[eGraphic];
-      std::vector<VkDescriptorSet> dstSets{p.dstSet, m_hdrDome.getDescSet()};  // #HDR
-      vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
-      vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0,
-                              static_cast<uint32_t>(dstSets.size()), dstSets.data(), 0, nullptr);
-
-      uint32_t     nodeId{0};
-      VkDeviceSize offsets{0};
-      for(auto& node : m_gltfScene.m_nodes)
-      {
-        auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
-        // Push constant information
-        m_pcRaster.materialId = primitive.materialIndex;
-        m_pcRaster.instanceId = nodeId++;
-        vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(RasterPushConstant), &m_pcRaster);
-
-        vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-        vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
-      }
-      vkEndCommandBuffer(m_recordedCmdBuffer[i]);
-      LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
-    }
-  }
+  vkCmdBeginRendering(cmdBuf, &rInfo);
 
   // Executing the drawing of the recorded commands
   vkCmdExecuteCommands(cmdBuf, m_showWireframe ? 2 : 1, m_recordedCmdBuffer.data());
+
+  vkCmdEndRendering(cmdBuf);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Record commands for rendering fill and wireframe
+//
+void HdrSample::recordRendering()
+{
+  nvh::Stopwatch sw;
+  // Create the command buffer to record the drawing commands
+  VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  allocInfo.commandPool        = m_cmdPool;
+  allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+  allocInfo.commandBufferCount = 2;
+  vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
+
+  VkCommandBufferInheritanceRenderingInfoKHR inheritanceRenderingInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO_KHR};
+  inheritanceRenderingInfo.colorAttachmentCount    = 1;
+  inheritanceRenderingInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  inheritanceRenderingInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.rasterizationSamples    = VK_SAMPLE_COUNT_1_BIT;
+
+  VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+  inheritInfo.pNext = &inheritanceRenderingInfo;
+
+  for(int i = 0; i < 2; i++)
+  {
+    auto& p = m_pContainer[eGraphic];
+
+    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+    beginInfo.pInheritanceInfo = &inheritInfo;
+    vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
+
+    // Dynamic Viewport
+    setViewport(m_recordedCmdBuffer[i]);
+
+    // Drawing all instances
+    std::vector<VkDescriptorSet> dstSets{p.dstSet, m_hdrDome.getDescSet()};  // #HDR
+    vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
+    vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0,
+                            static_cast<uint32_t>(dstSets.size()), dstSets.data(), 0, nullptr);
+
+    uint32_t     nodeId{0};
+    VkDeviceSize offsets{0};
+    for(auto& node : m_gltfScene.m_nodes)
+    {
+      auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
+      // Push constant information
+      m_pcRaster.materialId = primitive.materialIndex;
+      m_pcRaster.instanceId = nodeId++;
+      vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                         0, sizeof(RasterPushConstant), &m_pcRaster);
+
+      vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+      vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
+    }
+    vkEndCommandBuffer(m_recordedCmdBuffer[i]);
+    LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -261,82 +308,8 @@ void HdrSample::onResize(int /*w*/, int /*h*/)
   m_hdrDome.setOutImage(m_offscreenColor.descriptor);
 }
 
-
 //--------------------------------------------------------------------------------------------------
-// Overload: renderpass no longer clear the color image, since we draw the dome in the background
-// see #HDR
-//
-void HdrSample::createOffscreenRender()
-{
-  m_alloc.destroy(m_offscreenColor);
-  m_alloc.destroy(m_offscreenDepth);
-  vkDestroyRenderPass(m_device, m_offscreenRenderPass, nullptr);
-  vkDestroyFramebuffer(m_device, m_offscreenFramebuffer, nullptr);
-
-  VkFormat colorFormat{VK_FORMAT_R32G32B32A32_SFLOAT};
-  VkFormat depthFormat = nvvk::findDepthFormat(m_physicalDevice);
-
-  // Creating the color image
-  {
-    auto colorCreateInfo = nvvk::makeImage2DCreateInfo(
-        m_size, colorFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-
-    nvvk::Image image = m_alloc.createImage(colorCreateInfo);
-    NAME2_VK(image.image, "Offscreen Color");
-
-    VkImageViewCreateInfo ivInfo = nvvk::makeImageViewCreateInfo(image.image, colorCreateInfo);
-    VkSamplerCreateInfo   sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    m_offscreenColor                        = m_alloc.createTexture(image, ivInfo, sampler);
-    m_offscreenColor.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-  }
-
-  // Creating the depth buffer
-  auto depthCreateInfo = nvvk::makeImage2DCreateInfo(m_size, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-  {
-    nvvk::Image image = m_alloc.createImage(depthCreateInfo);
-    NAME2_VK(image.image, "Offscreen Depth");
-
-    VkImageViewCreateInfo depthStencilView{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    depthStencilView.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    depthStencilView.format           = depthFormat;
-    depthStencilView.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-    depthStencilView.image            = image.image;
-
-    m_offscreenDepth = m_alloc.createTexture(image, depthStencilView);
-  }
-
-  // Setting the image layout for both color and depth
-  {
-    nvvk::CommandPool genCmdBuf(m_device, m_graphicsQueueIndex);
-    auto              cmdBuf = genCmdBuf.createCommandBuffer();
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_offscreenColor.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_offscreenDepth.image, VK_IMAGE_LAYOUT_UNDEFINED,
-                                VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
-
-    genCmdBuf.submitAndWait(cmdBuf);
-  }
-
-  // Creating a renderpass for the offscreen
-  m_offscreenRenderPass = nvvk::createRenderPass(m_device, {colorFormat}, depthFormat, 1, false, true,  // #HDR
-                                                 VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
-  NAME2_VK(m_offscreenRenderPass, "Offscreen");
-
-  // Creating the frame buffer for offscreen
-  std::vector<VkImageView> attachments = {m_offscreenColor.descriptor.imageView, m_offscreenDepth.descriptor.imageView};
-
-  VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-  info.renderPass      = m_offscreenRenderPass;
-  info.attachmentCount = 2;
-  info.pAttachments    = attachments.data();
-  info.width           = m_size.width;
-  info.height          = m_size.height;
-  info.layers          = 1;
-  vkCreateFramebuffer(m_device, &info, nullptr, &m_offscreenFramebuffer);
-  NAME2_VK(m_offscreenFramebuffer, "Offscreen");
-}
-
-//--------------------------------------------------------------------------------------------------
-// Overload: adding HDR to the descriptorset layout. See #HDR
+// Overload: adding HDR to the descriptor set layout. See #HDR
 //
 void HdrSample::createRtPipeline()
 {
@@ -492,7 +465,7 @@ void HdrSample::onFileDrop(const char* filename)
   namespace fs = std::filesystem;
   vkDeviceWaitIdle(m_device);
   std::string extension = fs::path(filename).extension().string();
-  if(extension == ".gltf")
+  if(extension == ".gltf" || extension == ".glb")
   {
     freeResources();
     createScene(filename);
@@ -518,7 +491,7 @@ void HdrSample::renderUI()
   ImGuiH::Panel::Begin();
   if(ImGui::Button("Load glTF"))
   {  // Loading file dialog
-    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load glTF", ".gltf");
+    auto filename = NVPSystem::windowOpenFileDialog(m_window, "Load glTF", "glTF(.gltf, .glb)|*.gltf;*.glb");
     onFileDrop(filename.c_str());
   }
   ImGui::SameLine();
@@ -549,7 +522,10 @@ void HdrSample::renderUI()
     ImGuiH::CameraWidget();
 
   if(ImGui::CollapsingHeader("Environment"))
+  {
+    changed |= ImGui::SliderAngle("Rotation", &m_frameInfo.envRotation);  //, -180, 180);
     uiEnvironment(changed);
+  }
 
   uiInfo();
 

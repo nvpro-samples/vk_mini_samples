@@ -46,7 +46,7 @@ layout(set = 1, binding = eTextures)  uniform sampler2D texturesMap[]; // all te
 // clang-format on
 
 #include "common/shaders/sampling.glsl"
-#include "pbr_gltf.glsl" // <------------ Using local version
+#include "pbr_gltf.glsl"  // <------------ Using local version
 #include "common/shaders/get_hit.glsl"
 #include "common/shaders/direct_lighting.glsl"
 #include "common/shaders/shading.glsl"

@@ -26,8 +26,8 @@ if not %found% == 1 (
 @REM Updating current 
 git submodule update --init --recursive
 
-mkdir _Build
-cd _Build
+mkdir build
+cd build
 del CMakeCache.txt
 cmake .. -A x64
 if %ERRORLEVEL% neq 0 call :ErrorOccured

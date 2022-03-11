@@ -131,6 +131,7 @@ struct FrameInfo
   mat4  projInv;
   vec4  clearColor;
   Light light[NB_LIGHTS];
+  float envRotation;
 };
 
 struct InstanceInfo
@@ -156,8 +157,9 @@ struct RtxPushConstant
 
 struct HdrDomePushConstant
 {
-  mat4 mvp;
-  vec4 multColor;
+  mat4  mvp;
+  vec4  multColor;
+  float rotation;
 };
 
 struct Vertex

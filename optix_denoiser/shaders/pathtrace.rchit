@@ -57,7 +57,7 @@ layout(set = 2, binding = eHdr) uniform sampler2D hdrTexture;
 #include "common/shaders/hdr_env_sampling.glsl"
 #include "common/shaders/get_hit.glsl"
 
-// --vvvv-- Adding HDR sampling --vvvv-- 
+// --vvvv-- Adding HDR sampling --vvvv--
 
 //-----------------------------------------------------------------------
 // Use for light/env contribution
@@ -94,7 +94,7 @@ VisibilityContribution DirectLight(MaterialEval matEval, HitState hit)
     isLight      = true;
   }
   else
-  { // <------ Adding HDR sampling
+  {  // <------ Adding HDR sampling
     vec3 randVal     = vec3(rand(payload.seed), rand(payload.seed), rand(payload.seed));
     vec4 radiancePdf = environmentSample(hdrTexture, randVal, lightDir);
     lightContrib     = radiancePdf.xyz * frameInfo.clearColor.xyz;
@@ -139,9 +139,9 @@ void main()
   GltfShadeMaterial mat     = materials.m[matIndex];
   MaterialEval      matEval = evaluateMaterial(mat, hit.nrm, hit.tangent, hit.bitangent, hit.uv);
 
-  payload.hitT    = gl_HitTEXT;
+  payload.hitT = gl_HitTEXT;
   //payload.contrib = shading(matEval, hit);
-    ShadingResult result;
+  ShadingResult result;
   shading(matEval, hit, result);
 
   payload.weight       = result.weight;

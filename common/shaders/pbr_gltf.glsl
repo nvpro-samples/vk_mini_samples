@@ -346,7 +346,7 @@ vec3 pbrEval(in MaterialEval state, in vec3 V, in vec3 L, inout float pdf)
     float specularWeight = 1.0;
     float alphaRoughness = state.roughness;
 
-    f_diffuse = BRDF_lambertian(state.albedo.xyz, state.metallic);
+    f_diffuse  = BRDF_lambertian(state.albedo.xyz, state.metallic);
     f_specular = BRDF_specularGGX(state.f0, f90, alphaRoughness, VdotH, NdotL, NdotV, NdotH);
 
     pdf += diffuseRatio * (NdotL * M_1_PI);                                       // diffuse

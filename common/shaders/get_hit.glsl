@@ -85,10 +85,10 @@ HitState GetHitState(PrimMeshInfo pinfo)
   const vec4 tng1    = vec4(v1.tangent);
   const vec4 tng2    = vec4(v2.tangent);
   vec3       tangent = normalize(tng0.xyz * barycentrics.x + tng1.xyz * barycentrics.y + tng2.xyz * barycentrics.z);
-  vec3       world_tangent  = normalize(vec3(tangent * gl_WorldToObjectEXT));
-  vec3       world_binormal = cross(worldNormal, world_tangent) * tng0.w;
-  hit.tangent               = world_tangent;
-  hit.bitangent             = world_binormal;
+  vec3       worldTangent = normalize(vec3(tangent * gl_WorldToObjectEXT));
+
+  hit.tangent   = normalize(worldTangent - worldNormal * dot(worldNormal, worldTangent));
+  hit.bitangent = cross(worldNormal, hit.tangent) * tng0.w;
 
   return hit;
 }

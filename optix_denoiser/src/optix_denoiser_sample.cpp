@@ -126,6 +126,7 @@ void OptixDenoiserSample::destroy()
 
   m_hdrEnv.destroy();  // #OPTIX_D #HDR
   m_alloc.deinit();
+  m_dma->deinit();
   AppBaseVk::destroy();
 }
 
@@ -542,7 +543,7 @@ void OptixDenoiserSample::onFileDrop(const char* filename)
   namespace fs = std::filesystem;
   vkDeviceWaitIdle(m_device);
   std::string extension = fs::path(filename).extension().string();
-  if(extension == ".gltf")
+  if(extension == ".gltf" || extension == ".glb")
   {
     freeResources();
     createScene(filename);
@@ -671,7 +672,7 @@ void OptixDenoiserSample::submitWithTLSemaphore(const VkCommandBuffer& cmdBuf)
   submits.pSignalSemaphoreInfos    = &signalSemaphore;
 #endif  // _DEBUG
 
-  vkQueueSubmit2KHR(m_queue, 1, &submits, {});
+  vkQueueSubmit2(m_queue, 1, &submits, {});
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -709,7 +710,7 @@ void OptixDenoiserSample::submitFrame(const VkCommandBuffer& cmdBuf)
   submits.signalSemaphoreInfoCount = 1;
   submits.pSignalSemaphoreInfos    = &signalSemaphore;
 
-  vkQueueSubmit2KHR(m_queue, 1, &submits, fence);
+  vkQueueSubmit2(m_queue, 1, &submits, fence);
 
   // Presenting frame
   m_swapChain.present(m_queue);

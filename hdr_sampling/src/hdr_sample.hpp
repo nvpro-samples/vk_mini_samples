@@ -22,6 +22,7 @@
 #include "common/src/vulkan_sample.hpp"
 #include "common/src/hdr_env.hpp"
 #include "common/src/hdr_env_dome.hpp"
+#include "nvvk/memallocator_vma_vk.hpp"
 
 
 //--------------------------------------------------------------------------------------------------
@@ -30,16 +31,15 @@
 class HdrSample : public VulkanSample
 {
 public:
-  // Load HDR and set image
   void createHdr(const std::string& hdrFilename);
-  // Draw the HDR dome for raster
   void drawDome(VkCommandBuffer cmdBuf);
 
+  // Override
   void destroy() override;
   void createGraphicPipeline() override;
   void rasterize(VkCommandBuffer cmdBuf) override;
+  void recordRendering() override;
   void onResize(int /*w*/, int /*h*/) override;
-  void createOffscreenRender() override;
   void createRtPipeline() override;
   void raytrace(VkCommandBuffer cmdBuf) override;
   void onFileDrop(const char* filename) override;
@@ -48,10 +48,9 @@ public:
   void createScene(const std::string& filename) override;
 
 private:
-  //nvvk::ResourceAllocatorVma m_alloc;  // Allocator for buffer, images, acceleration structures
-
-  //VkClearColorValue m_clearColor{0.5f, 0.5f, 0.5f, 1.f};
-
   HdrEnv     m_hdrEnv;
   HdrEnvDome m_hdrDome;
+
+  VmaAllocator                              m_vmaAlloc;
+  std::unique_ptr<nvvk::VMAMemoryAllocator> m_vma;  // The memory allocator
 };

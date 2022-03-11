@@ -112,7 +112,7 @@ int main(int argc, char** argv)
 
   // Requesting Vulkan extensions and layers
   nvvk::ContextCreateInfo contextInfo;
-  contextInfo.setVersion(1, 2);                       // Using Vulkan 1.2
+  contextInfo.setVersion(1, 3);                       // Using Vulkan 1.3
   for(uint32_t ext_id = 0; ext_id < count; ext_id++)  // Adding required extensions (surface, win32, linux, ..)
     contextInfo.addInstanceExtension(reqExtensions[ext_id]);
   contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);  // Allow debug names
@@ -144,8 +144,6 @@ int main(int argc, char** argv)
 
   // Synchronization (mix of timeline and binary semaphores)
   contextInfo.addDeviceExtension(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME, false);
-  VkPhysicalDeviceSynchronization2FeaturesKHR syncFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR};
-  contextInfo.addDeviceExtension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false, &syncFeature);
 
   // Buffer - interop
   contextInfo.addDeviceExtension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
@@ -182,10 +180,10 @@ int main(int argc, char** argv)
   vkSample.createHdr(hdrFile);
   vkSample.createScene(sceneFile);
 
-  ImGui_ImplGlfw_InitForVulkan(window, true);
-
-
-  nvvk::AxisVK vkAxis;
+  nvvk::AxisVK                 vkAxis;
+  nvvk::AxisVK::CreateAxisInfo ainfo;
+  ainfo.colorFormat = {vkSample.getColorFormat()};
+  ainfo.depthFormat = vkSample.getDepthFormat();
   vkAxis.init(vkctx.m_device, vkSample.getRenderPass());
 
   // Main loop

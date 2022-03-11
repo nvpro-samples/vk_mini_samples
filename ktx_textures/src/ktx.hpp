@@ -50,7 +50,6 @@ public:
 
 
 private:
-  FrameInfo m_hostUBO{{}, {}, {}, {}, {}, {{}}, true};
   bool loadCreateImage(const VkCommandBuffer& cmdBuf, const std::filesystem::path& basedir, tinygltf::Image& gltfImage);
 
   nvvk::ProfilerVK m_profiler;

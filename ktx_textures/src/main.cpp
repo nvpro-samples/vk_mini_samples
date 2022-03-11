@@ -36,6 +36,7 @@
 #include "nvvk/context_vk.hpp"
 #include "nvh/inputparser.h"
 #include "nvvk/gizmos_vk.hpp"
+#include "nvvk/dynamicrendering_vk.hpp"
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -108,7 +109,7 @@ int main(int argc, char** argv)
 
   // Requesting Vulkan extensions and layers
   nvvk::ContextCreateInfo contextInfo;
-  contextInfo.setVersion(1, 2);                       // Using Vulkan 1.2
+  contextInfo.setVersion(1, 3);                       // Using Vulkan 1.3
   for(uint32_t ext_id = 0; ext_id < count; ext_id++)  // Adding required extensions (surface, win32, linux, ..)
     contextInfo.addInstanceExtension(reqExtensions[ext_id]);
   contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);  // Allow debug names
@@ -123,6 +124,7 @@ int main(int argc, char** argv)
   contextInfo.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayQueryFeatures);  // Used for picking
   contextInfo.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
   contextInfo.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+
 
   // Creating Vulkan base application
   nvvk::Context vkctx{};
@@ -149,15 +151,16 @@ int main(int argc, char** argv)
   info.surface        = surface;
   info.window         = window;
   info.queueIndices.push_back(vkctx.m_queueGCT.familyIndex);
+  info.useDynamicRendering = true;
   vkSample.create(info);
   // Loading and creating the scene
   vkSample.createScene(sceneFile);
 
-  ImGui_ImplGlfw_InitForVulkan(window, true);
-
-
-  nvvk::AxisVK vkAxis;
-  vkAxis.init(vkctx.m_device, vkSample.getRenderPass());
+  nvvk::AxisVK                 vkAxis;
+  nvvk::AxisVK::CreateAxisInfo ainfo;
+  ainfo.colorFormat = {vkSample.getColorFormat()};
+  ainfo.depthFormat = vkSample.getDepthFormat();
+  vkAxis.init(vkctx.m_device, ainfo);
 
   // Main loop
   while(!glfwWindowShouldClose(window))
@@ -204,30 +207,20 @@ int main(int argc, char** argv)
       else
       {
         // Raster
-        VkRenderPassBeginInfo offscreenRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        offscreenRenderPassBeginInfo.clearValueCount = 2;
-        offscreenRenderPassBeginInfo.pClearValues    = clearValues.data();
-        offscreenRenderPassBeginInfo.renderPass      = vkSample.offscreenRenderPass();
-        offscreenRenderPassBeginInfo.framebuffer     = vkSample.offscreenFramebuffer();
-        offscreenRenderPassBeginInfo.renderArea      = {{0, 0}, vkSample.getSize()};
-
-        vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+        nvvk::createRenderingInfo rInfo({{0, 0}, vkSample.getSize()}, {vkSample.getSwapChain().getActiveImageView()},
+                                        vkSample.getDepthView());
+        vkCmdBeginRendering(cmdBuf, &rInfo);
         vkSample.rasterize(cmdBuf);
-        vkCmdEndRenderPass(cmdBuf);
+        vkCmdEndRendering(cmdBuf);
       }
     }
 
     // 2nd rendering pass: tone mapper, UI
     {
-      VkRenderPassBeginInfo postRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-      postRenderPassBeginInfo.clearValueCount = 2;
-      postRenderPassBeginInfo.pClearValues    = clearValues.data();
-      postRenderPassBeginInfo.renderPass      = vkSample.getRenderPass();
-      postRenderPassBeginInfo.framebuffer     = vkSample.getFramebuffers()[curFrame];
-      postRenderPassBeginInfo.renderArea      = {{0, 0}, vkSample.getSize()};
-
       // Rendering to the swapchain framebuffer the rendered image and apply a tonemapper
-      vkCmdBeginRenderPass(cmdBuf, &postRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+      nvvk::createRenderingInfo rInfo({{0, 0}, vkSample.getSize()}, {vkSample.getSwapChain().getActiveImageView()},
+                                      vkSample.getDepthView());
+      vkCmdBeginRendering(cmdBuf, &rInfo);
       vkSample.drawPost(cmdBuf);
 
       // Rendering UI
@@ -237,7 +230,7 @@ int main(int argc, char** argv)
       // Display axis in the lower left corner.
       vkAxis.display(cmdBuf, CameraManip.getMatrix(), vkSample.getSize());
 
-      vkCmdEndRenderPass(cmdBuf);
+      vkCmdEndRendering(cmdBuf);
     }
 
     // Submit for display

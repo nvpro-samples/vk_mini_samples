@@ -48,7 +48,12 @@ public:
   void setup(const VkDevice& device, const VkPhysicalDevice& physicalDevice, uint32_t familyIndex, nvvk::ResourceAllocator* allocator);
   void create(VkDescriptorSet dstSet, VkDescriptorSetLayout dstSetLayout);
   void setOutImage(const VkDescriptorImageInfo& outimage);
-  void draw(const VkCommandBuffer& cmdBuf, const nvmath::mat4f& view, const nvmath::mat4f& proj, const VkExtent2D& size, const float* color);
+  void draw(const VkCommandBuffer& cmdBuf,
+            const nvmath::mat4f&   view,
+            const nvmath::mat4f&   proj,
+            const VkExtent2D&      size,
+            const float*           color,
+            float                  rotation = 0.f);
   void destroy();
 
   inline const VkDescriptorSetLayout getDescLayout() { return m_hdrLayout; }

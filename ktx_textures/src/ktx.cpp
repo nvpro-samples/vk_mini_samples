@@ -17,10 +17,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//#define TINYGLTF_IMPLEMENTATION
-//#define STB_IMAGE_IMPLEMENTATION
-//#define STB_IMAGE_WRITE_IMPLEMENTATION
-
 #include "fileformats/nv_ktx.h"
 
 #include "ktx.hpp"
@@ -30,9 +26,6 @@
 #include "nvvk/renderpasses_vk.hpp"
 #include "nvvk/buffers_vk.hpp"
 
-
-// For printing VkFormat names
-#include "vulkan/vulkan.hpp"
 #include "stb_image.h"
 
 //--------------------------------------------------------------------------------------------------
@@ -45,6 +38,8 @@ void KtxSample::create(const nvvk::AppBaseVkCreateInfo& info)
   m_profiler.setLabelUsage(true);  // depends on VK_EXT_debug_utils
 
   m_clearColor = {0.5f, 0.5f, 0.5f, 1.0f};
+
+  m_frameInfo.isSrgb = true;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -89,7 +84,7 @@ void KtxSample::loadScene(const std::string& filename)
   sceneDesc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_primInfo.buffer);
   sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_instInfoBuffer.buffer);
   m_sceneDesc               = m_alloc.createBuffer(cmdBuf, sizeof(SceneDescription), &sceneDesc,
-                                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
   NAME2_VK(m_sceneDesc.buffer, "Scene Description");
 
   cmdPool.submitAndWait(cmdBuf);
@@ -109,16 +104,16 @@ void KtxSample::updateUniformBuffer(VkCommandBuffer cmdBuf)
   const float aspectRatio = m_size.width / static_cast<float>(m_size.height);
   auto&       clip        = CameraManip.getClipPlanes();
 
-  m_hostUBO.view       = CameraManip.getMatrix();
-  m_hostUBO.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
-  m_hostUBO.viewInv    = nvmath::invert(m_hostUBO.view);
-  m_hostUBO.projInv    = nvmath::invert(m_hostUBO.proj);
-  m_hostUBO.light[0]   = m_lights[0];
-  m_hostUBO.light[1]   = m_lights[1];
-  m_hostUBO.clearColor = m_clearColor.float32;
+  m_frameInfo.view       = CameraManip.getMatrix();
+  m_frameInfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
+  m_frameInfo.viewInv    = nvmath::invert(m_frameInfo.view);
+  m_frameInfo.projInv    = nvmath::invert(m_frameInfo.proj);
+  m_frameInfo.light[0]   = m_lights[0];
+  m_frameInfo.light[1]   = m_lights[1];
+  m_frameInfo.clearColor = m_clearColor.float32;
 
   // Schedule the host-to-device upload. (hostUBO is copied into the cmd buffer so it is okay to deallocate when the function returns).
-  vkCmdUpdateBuffer(cmdBuf, m_frameInfo.buffer, 0, sizeof(FrameInfo), &m_hostUBO);
+  vkCmdUpdateBuffer(cmdBuf, m_frameInfoBuf.buffer, 0, sizeof(FrameInfo), &m_frameInfo);
 }
 
 
@@ -162,7 +157,7 @@ void KtxSample::createTextureImages(VkCommandBuffer cmdBuf, tinygltf::Model& glt
   }
 
   // We assume images are Uniform
-  m_hostUBO.isSrgb = false;
+  m_frameInfo.isSrgb = false;
 
   // First - create the images
   m_images.reserve(gltfModel.images.size());
@@ -211,6 +206,7 @@ void KtxSample::destroy()
   freeResources();
   m_alloc.deinit();
   m_profiler.deinit();
+  m_dma->deinit();
   AppBaseVk::destroy();
 }
 
@@ -290,7 +286,7 @@ void KtxSample::renderUI()
   }
   // #KTX
   ImGui::Separator();
-  changed |= ImGui::Checkbox("Is sRGB", (bool*)&m_hostUBO.isSrgb);
+  changed |= ImGui::Checkbox("Is sRGB", (bool*)&m_frameInfo.isSrgb);
   ImGuiH::tooltip("Images are in sRGB domain and converted to linear by the hardware.", true);
 
   ImGui::PopItemWidth();
@@ -345,7 +341,7 @@ bool KtxSample::loadCreateImage(const VkCommandBuffer& cmdBuf, const std::filesy
     VkFormat format = ktximage.format;
     if(ktximage.is_srgb)
     {
-      m_hostUBO.isSrgb = true;  // If one image is found to be sRGB, we assume that all images are properly defined
+      m_frameInfo.isSrgb = true;  // If one image is found to be sRGB, we assume that all images are properly defined
 
       // If this was not the fact, we would need to convert all images to UNORM and do the conversion in the shader
       // format = static_cast<VkFormat>(static_cast<int>(format) - 1);  // SRGB always follow UNORM
@@ -355,8 +351,7 @@ bool KtxSample::loadCreateImage(const VkCommandBuffer& cmdBuf, const std::filesy
     if((format >= VK_FORMAT_ASTC_4x4_SFLOAT_BLOCK_EXT && format <= VK_FORMAT_ASTC_12x12_SFLOAT_BLOCK_EXT)
        || (format >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK))
     {
-      vk::Format f = static_cast<vk::Format>(format);
-      LOGE("Format unsupported: %s\n", vk::to_string(f).c_str());
+      LOGE("Format unsupported: %d\n", format);
       return false;
     }
 

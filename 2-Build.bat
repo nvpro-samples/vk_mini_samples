@@ -1,10 +1,10 @@
 @echo off
 
-if not exist _Build (
-    mkdir _Build
+if not exist build (
+    mkdir build
 )
 
-cd _Build
+cd build
 rem cmake -DCMAKE_BUILD_TYPE=Release .. -A x64
 cmake --build . --config Release --parallel 10
 

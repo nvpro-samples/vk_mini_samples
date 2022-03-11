@@ -18,6 +18,8 @@
  */
 
 #include "inherited.hpp"
+#include "nvvk/renderpasses_vk.hpp"
+#include "nvvk/dynamicrendering_vk.hpp"
 
 //--------------------------------------------------------------------------------------------------
 // Overload: requesting inherited feature
@@ -72,52 +74,78 @@ void InheritedSample::createScene(const std::string& filename)
   LOGI("TOTAL: %7.2fms\n\n", sw.elapsed());
 }
 
-
 //--------------------------------------------------------------------------------------------------
-// Overload: using inherited feature
+// Drawing the scene in raster mode: record all command and "play back"
 //
-void InheritedSample::rasterize(VkCommandBuffer cmdBuf)
+void InheritedSample::rasterize(VkCommandBuffer cmdBuf, VkRect2D renderArea)
 {
   LABEL_SCOPE_VK(cmdBuf);
 
   // Recording the commands to draw the scene if not done yet
   if(m_recordedCmdBuffer[0] == VK_NULL_HANDLE)
+    recordRendering();
+
+  nvvk::createRenderingInfo rInfo(renderArea, {m_offscreenColor.descriptor.imageView}, m_offscreenDepth.descriptor.imageView,
+                                  VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor, {1.0f, 0},
+                                  VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT_KHR);
+  vkCmdBeginRendering(cmdBuf, &rInfo);
+
+  // Executing the drawing of the recorded commands
+  vkCmdExecuteCommands(cmdBuf, m_showWireframe ? 2 : 1, m_recordedCmdBuffer.data());
+
+  vkCmdEndRendering(cmdBuf);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+// Record commands for rendering fill and wireframe
+//
+void InheritedSample::recordRendering()
+{
+  nvh::Stopwatch sw;
+  // Create the command buffer to record the drawing commands
+  VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  allocInfo.commandPool        = m_cmdPool;
+  allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+  allocInfo.commandBufferCount = 2;
+  vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
+
+
+  // #inherit
+  // The extension struct needed to enable inheriting 2D viewport+scisors.
+  VkCommandBufferInheritanceViewportScissorInfoNV inheritViewportInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV};
+  inheritViewportInfo.viewportScissor2D  = m_inheritedViewport.inheritedViewportScissor2D;
+  inheritViewportInfo.viewportDepthCount = 1;
+  inheritViewportInfo.pViewportDepths    = &m_viewportDepth;
+
+  VkCommandBufferInheritanceRenderingInfoKHR inheritanceRenderingInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO_KHR};
+  inheritanceRenderingInfo.colorAttachmentCount    = 1;
+  inheritanceRenderingInfo.pColorAttachmentFormats = &m_offscreenColorFormat;
+  inheritanceRenderingInfo.depthAttachmentFormat   = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.stencilAttachmentFormat = m_offscreenDepthFormat;
+  inheritanceRenderingInfo.rasterizationSamples    = VK_SAMPLE_COUNT_1_BIT;
+  inheritanceRenderingInfo.pNext                   = &inheritViewportInfo;
+
+
+  VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+  inheritInfo.pNext = &inheritanceRenderingInfo;
+
+  for(int i = 0; i < 2; i++)
   {
-    nvh::Stopwatch sw;
-    // Create the command buffer to record the drawing commands
-    VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    allocInfo.commandPool        = m_cmdPool;
-    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-    allocInfo.commandBufferCount = 1;
-    vkAllocateCommandBuffers(m_device, &allocInfo, m_recordedCmdBuffer.data());
-
-
-    // #inherit
-    // The extension struct needed to enable inheriting 2D viewport+scisors.
-    VkCommandBufferInheritanceViewportScissorInfoNV inheritViewportInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_VIEWPORT_SCISSOR_INFO_NV};
-    inheritViewportInfo.viewportScissor2D  = m_inheritedViewport.inheritedViewportScissor2D;
-    inheritViewportInfo.viewportDepthCount = 1;
-    inheritViewportInfo.pViewportDepths    = &m_viewportDepth;
-
-    VkCommandBufferInheritanceInfo inheritInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
-    inheritInfo.renderPass = m_offscreenRenderPass;
-    inheritInfo.pNext      = &inheritViewportInfo;
+    auto& p = m_pContainer[eGraphic];
 
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
     beginInfo.pInheritanceInfo = &inheritInfo;
-    vkBeginCommandBuffer(m_recordedCmdBuffer[0], &beginInfo);
+    vkBeginCommandBuffer(m_recordedCmdBuffer[i], &beginInfo);
 
-
+    // #inherit
     // Dynamic Viewport
-    if(m_inheritedViewport.inheritedViewportScissor2D == VK_FALSE)
-      setViewport(m_recordedCmdBuffer[0]);
-
+    //setViewport(m_recordedCmdBuffer[i]);
 
     // Drawing all instances
-    auto& p = m_pContainer[eGraphic];
-    vkCmdBindPipeline(m_recordedCmdBuffer[0], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
-    vkCmdBindDescriptorSets(m_recordedCmdBuffer[0], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
+    vkCmdBindPipeline(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, i == 0 ? p.pipeline : m_wireframe);
+    vkCmdBindDescriptorSets(m_recordedCmdBuffer[i], VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelineLayout, 0, 1, &p.dstSet, 0, nullptr);
 
     uint32_t     nodeId{0};
     VkDeviceSize offsets{0};
@@ -127,35 +155,27 @@ void InheritedSample::rasterize(VkCommandBuffer cmdBuf)
       // Push constant information
       m_pcRaster.materialId = primitive.materialIndex;
       m_pcRaster.instanceId = nodeId++;
-      vkCmdPushConstants(m_recordedCmdBuffer[0], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+      vkCmdPushConstants(m_recordedCmdBuffer[i], p.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                          0, sizeof(RasterPushConstant), &m_pcRaster);
 
-      vkCmdBindVertexBuffers(m_recordedCmdBuffer[0], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
-      vkCmdBindIndexBuffer(m_recordedCmdBuffer[0], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
-      vkCmdDrawIndexed(m_recordedCmdBuffer[0], primitive.indexCount, 1, 0, 0, 0);
+      vkCmdBindVertexBuffers(m_recordedCmdBuffer[i], 0, 1, &m_vertices[node.primMesh].buffer, &offsets);
+      vkCmdBindIndexBuffer(m_recordedCmdBuffer[i], m_indices[node.primMesh].buffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdDrawIndexed(m_recordedCmdBuffer[i], primitive.indexCount, 1, 0, 0, 0);
     }
-    vkEndCommandBuffer(m_recordedCmdBuffer[0]);
+    vkEndCommandBuffer(m_recordedCmdBuffer[i]);
     LOGI("Recoreded Command Buffer: %7.2fms\n", sw.elapsed());
   }
-
-  // Executing the drawing of the recorded commands
-  vkCmdExecuteCommands(cmdBuf, 1, m_recordedCmdBuffer.data());
 }
+
 
 //--------------------------------------------------------------------------------------------------
 // Overload: resize no longer need to delete the recorded command buffer
 //
 void InheritedSample::onResize(int /*w*/, int /*h*/)
 {
-  if(m_inheritedViewport.inheritedViewportScissor2D == VK_FALSE)
-  {
-    vkFreeCommandBuffers(m_device, m_cmdPool, (uint32_t)m_recordedCmdBuffer.size(), m_recordedCmdBuffer.data());
-    m_recordedCmdBuffer = {VK_NULL_HANDLE};
-  }
-
   createOffscreenRender();
   updatePostDescriptorSet(m_offscreenColor.descriptor);
-  updateRtDescriptorSet();
+  //updateRtDescriptorSet();
   resetFrame();
 }
 
@@ -194,17 +214,16 @@ void InheritedSample::updateUniformBuffer(VkCommandBuffer cmdBuf, const VkExtent
   const float aspectRatio = size.width / static_cast<float>(size.height);
   auto&       clip        = CameraManip.getClipPlanes();
 
-  FrameInfo hostUBO{};
-  hostUBO.view       = CameraManip.getMatrix();
-  hostUBO.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
-  hostUBO.viewInv    = nvmath::invert(hostUBO.view);
-  hostUBO.projInv    = nvmath::invert(hostUBO.proj);
-  hostUBO.light[0]   = m_lights[0];
-  hostUBO.light[1]   = m_lights[1];
-  hostUBO.clearColor = m_clearColor.float32;
+  m_frameInfo.view       = CameraManip.getMatrix();
+  m_frameInfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, clip.x, clip.y);
+  m_frameInfo.viewInv    = nvmath::invert(m_frameInfo.view);
+  m_frameInfo.projInv    = nvmath::invert(m_frameInfo.proj);
+  m_frameInfo.light[0]   = m_lights[0];
+  m_frameInfo.light[1]   = m_lights[1];
+  m_frameInfo.clearColor = m_clearColor.float32;
 
   // Schedule the host-to-device upload. (hostUBO is copied into the cmd buffer so it is okay to deallocate when the function returns).
-  vkCmdUpdateBuffer(cmdBuf, m_frameInfo.buffer, 0, sizeof(FrameInfo), &hostUBO);
+  vkCmdUpdateBuffer(cmdBuf, m_frameInfoBuf.buffer, 0, sizeof(FrameInfo), &m_frameInfo);
 }
 
 
@@ -232,11 +251,11 @@ void InheritedSample::fourViews(VkCommandBuffer cmdBuf)
   nvmath::vec2f midPoint{m_size.width * m_viewCenter.x, m_size.height * m_viewCenter.y};
 
   // Same rendering pass default values, except for `renderArea`
-  VkRenderPassBeginInfo offscreenRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-  offscreenRenderPassBeginInfo.clearValueCount = 2;
-  offscreenRenderPassBeginInfo.pClearValues    = clearValues.data();
-  offscreenRenderPassBeginInfo.renderPass      = m_offscreenRenderPass;
-  offscreenRenderPassBeginInfo.framebuffer     = m_offscreenFramebuffer;
+  //VkRenderPassBeginInfo offscreenRenderPassBeginInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+  //offscreenRenderPassBeginInfo.clearValueCount = 2;
+  //offscreenRenderPassBeginInfo.pClearValues    = clearValues.data();
+  //offscreenRenderPassBeginInfo.renderPass      = m_offscreenRenderPass;
+  //offscreenRenderPassBeginInfo.framebuffer     = m_offscreenFramebuffer;
 
   // Upper left
   viewport.x      = 0.0f;
@@ -250,11 +269,11 @@ void InheritedSample::fourViews(VkCommandBuffer cmdBuf)
   scissor.extent.height = (uint32_t)viewport.height;
   vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
   updateUniformBuffer(cmdBuf, scissor.extent);
-  offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
-  clearValues[0].color                    = m_clearColor;
-  vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-  rasterize(cmdBuf);
-  vkCmdEndRenderPass(cmdBuf);
+  //  offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
+  clearValues[0].color = m_clearColor;
+  //vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+  rasterize(cmdBuf, scissor);
+  //vkCmdEndRenderPass(cmdBuf);
 
   // upper right
   viewport.x      = midPoint.x;
@@ -268,11 +287,11 @@ void InheritedSample::fourViews(VkCommandBuffer cmdBuf)
   scissor.extent.height = (uint32_t)viewport.height;
   vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
   updateUniformBuffer(cmdBuf, scissor.extent);
-  offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
-  clearValues[0].color                    = clearDarker;
-  vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-  rasterize(cmdBuf);
-  vkCmdEndRenderPass(cmdBuf);
+  //offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
+  clearValues[0].color = clearDarker;
+  //vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+  rasterize(cmdBuf, scissor);
+  //vkCmdEndRenderPass(cmdBuf);
 
   // Lower left
   viewport.x      = 0.0;
@@ -286,11 +305,11 @@ void InheritedSample::fourViews(VkCommandBuffer cmdBuf)
   scissor.extent.height = (uint32_t)viewport.height;
   vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
   updateUniformBuffer(cmdBuf, scissor.extent);
-  offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
-  clearValues[0].color                    = clearDarker;
-  vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-  rasterize(cmdBuf);
-  vkCmdEndRenderPass(cmdBuf);
+  //  offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
+  clearValues[0].color = clearDarker;
+  //vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+  rasterize(cmdBuf, scissor);
+  //vkCmdEndRenderPass(cmdBuf);
 
   // Lower right
   viewport.x      = midPoint.x;
@@ -304,9 +323,9 @@ void InheritedSample::fourViews(VkCommandBuffer cmdBuf)
   scissor.extent.height = (uint32_t)viewport.height;
   vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
   updateUniformBuffer(cmdBuf, scissor.extent);
-  offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
-  clearValues[0].color                    = m_clearColor;
-  vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-  rasterize(cmdBuf);
-  vkCmdEndRenderPass(cmdBuf);
+  //offscreenRenderPassBeginInfo.renderArea = {scissor.offset, scissor.extent};
+  clearValues[0].color = m_clearColor;
+  //vkCmdBeginRenderPass(cmdBuf, &offscreenRenderPassBeginInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+  rasterize(cmdBuf, scissor);
+  //vkCmdEndRenderPass(cmdBuf);
 }

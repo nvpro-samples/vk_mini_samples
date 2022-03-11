@@ -34,7 +34,8 @@ class InheritedSample : public VulkanSample
 public:
   void create(const nvvk::AppBaseVkCreateInfo& info) override;
   void createScene(const std::string& filename) override;
-  void rasterize(VkCommandBuffer cmdBuff) override;
+  void rasterize(VkCommandBuffer cmdBuff, VkRect2D renderArea);
+  void recordRendering() override;
   void onResize(int /*w*/, int /*h*/) override;
   void renderUI() override;
   void updateUniformBuffer(VkCommandBuffer cmdBuf, const VkExtent2D& size);

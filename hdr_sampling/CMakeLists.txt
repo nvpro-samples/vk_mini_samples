@@ -18,6 +18,7 @@ set(COMMON_DIR ${SAMPLES_ROOT_DIR}/common)
 set(CMAKE_CXX_STANDARD 17)
 add_executable(${PROJNAME})
 _add_project_definitions(${PROJNAME})
+_add_package_VMA()
 
 #--------------------------------------------------------------------------------------------------
 # Shaders in project

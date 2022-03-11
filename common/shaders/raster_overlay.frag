@@ -19,7 +19,7 @@
 
 #version 450
 
-// Incoming 
+// Incoming
 layout(location = 1) in vec2 i_texCoord;
 layout(location = 2) in vec3 i_normal;
 layout(location = 3) in vec3 i_viewDir;
