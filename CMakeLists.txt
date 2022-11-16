@@ -25,6 +25,8 @@ else()
 endif()
 
 set(SAMPLES_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(SAMPLES_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/common)
+set(NVPRO_CORE_DIR ${BASE_DIRECTORY}/nvpro_core)
 
 if(MSVC)
     add_definitions(/wd26812)  # 'enum class' over 'enum'
@@ -35,22 +37,19 @@ endif()
 # Package shared by all projects
 _add_package_ZLIB()
 _add_package_VulkanSDK()
+_add_package_ShaderC()
 _add_package_ImGUI()
 _add_nvpro_core_lib()
+_add_package_Glm()
+
 
 message(STATUS "COPY ${CMAKE_CURRENT_SOURCE_DIR}/media  to  ${OUTPUT_PATH}")
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION ${OUTPUT_PATH})
 
+
 #--------------------------------------------------------------------------------------------------
 # Sub examples
-add_subdirectory(base_sample) 
-add_subdirectory(inherited) 
-add_subdirectory(msaa) 
-add_subdirectory(debug_printf) 
-add_subdirectory(optix_denoiser) 
-add_subdirectory(hdr_sampling) 
-add_subdirectory(nsight_aftermath) 
-add_subdirectory(ktx_textures) 
+add_subdirectory(samples)
 
 
 #--------------------------------------------------------------------------------------------------

@@ -1,10 +1,8 @@
 # Vulkan Samples
 
-This repository holds many samples, showing various aspect of Vulkan, debugging tips and usage of other Nvidia tools.
+This repository holds many samples, showing various aspect of Vulkan, debugging tips and usage of other Nvidia tools. It has a dependency on [nvpro_core](https://github.com/nvpro-samples/nvpro_core) for some core Vulkan helper classes and other small utilities. All projects are using [GLFW](https://www.glfw.org/download) and [Dear ImGui](https://github.com/ocornut/imgui)
 
-Most of the samples have for starting point, the [base_sample](base_sample) sample. They are applying a few modifications to that base sample, by deriving from it, to illustrate the modifications required to enable the feature or what need to be demonstrate.
-
-Each sample have its own documentation written in [Markdown](https://github.github.com/gfm/) describing what was modified and where to get more information.
+Each sample have its own documentation written in [Markdown](https://github.github.com/gfm/) describing what was done and where to get more information.
 
 ## Build
 
@@ -52,63 +50,47 @@ Some samples depend on other SDKs. They are only required if you intend to build
 
 ## Samples
 
-### [Base Sample](base_sample)
+### Application Class
 
-![base_sample](base_sample/docs/thumb.png)
+The examples are for most using the [Application class](application/application_vk/src/application.hpp). This class is a modified version of the Dear ImGui Vulkan example. It is creating the window, based on GLFW, creates and initialize the UI, but also creates the swapchain with ImGui framework.
 
-**Extensions**:
-[`VK_KHR_ray_tracing_pipeline`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#VK_KHR_ray_tracing_pipeline), [`VK_KHR_acceleration_structure`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_acceleration_structure.html), [`VK_KHR_ray_query`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_ray_query.html), [`VK_KHR_deferred_host_operations`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_deferred_host_operations.html), [`VK_KHR_buffer_device_address`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_buffer_device_address.html)
- <br/>
+Samples are attached to the application class as Engines. While the application runs, the sample will be called to render its UI, or to perform rendering operation in the current frame.
 
-This is a simple but complete Vulkan sample. It loads glTF scenes and renders using rasterizer or ray tracer. Note, at some point, the other samples were created from this one.
+#### Init
 
-### [Aftermath SDK](aftermath)
+The `init()` function will create the Vulkan context using `nvvk::Context`, create the GLFW window and create the swapchains by calling `ImGui_ImplVulkanH_CreateOrResizeWindow`.
 
-![](aftermath/docs/thumb.png)
+#### Run
 
-**Extensions**:
-[`VK_NV_device_diagnostics_config`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_NV_device_diagnostics_config.html), [`VK_NV_device_diagnostic_checkpoints`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_NV_device_diagnostic_checkpoints.html)
- <br/>
-Adding Aftermath SDK to automatically generate GPU crash dump when a there is a device lost. Dumps are written before the computer crashes and can be inspected in Nsight Graphics.
+The `run()` function is an infinite loop until the close event is trigger. Within the loop, each engine will be called with:
 
-### [Inherited Viewport](inherited)
+* onResize : Called when the viewport size is changing
+* onUIRender : Called for anything related to UI
+* onRender : For anything to render within a frame, with the command buffer of the frame.
+* onUIMenu : To add functions to the menubar
 
-![](inherited/docs/thumb.png)
+At the end of each loop the frame is rendered with `frameRender()` then the frame is presented with `framePresent()`.  
 
-**Extensions**:
-[`VK_NV_inherited_viewport_scissor`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_NV_inherited_viewport_scissor.html)
- <br/>
-Using the inherited extension to avoid re-generating multiple recorded command buffers for different viewport sizes.
+### Basic Samples
 
-### [Multi-Sampling Anti-Aliasing (MSAA)](msaa)
+If you are new to this repository, the first samples to read to better understand the framwork are [solid color](samples/solid_color) and [rectangle](samples/rectangle).
 
-![msaa](msaa/docs/thumb.png)
+| Name | Description | Image |
+| ------ | ------ | ---- |
+| [solid_color](samples/solid_color) | Set a user custom color to a pixel wide texture and display it.  | ![](samples/solid_color/docs/solid_color_th.jpg) |
+| [rectangle](samples/rectangle) | Render a 2D rectangle to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) |
+| [aftermath](samples/aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/aftermath/docs/aftermath_th.jpg) |
+| [image_ktx](samples/image_ktx) | Display KTX image and apply tonemap post processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) |
+| [image_viewer](samples/image_viewer) | Load an image, allow to zoom and pan under mouse cursor | ![](samples/image_viewer/docs/image_viewer_th.jpg) |
+| [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing  | ![](samples/msaa/docs/msaa_th.jpg) |
+| [shader_printf](samples/shader_printf) | Add printf to shader and display in a log window  | ![](samples/shader_printf/docs/printf_th.jpg) |
+| [raytrace](samples/raytrace) | Simple ray tracer using metalic-roughness shading, reflection and shadows and simple sky shader.  | ![](samples/raytrace/docs/raytrace_th.jpg) |
+| [simple_polygons](samples/simple_polygons) | Rasterizing multiple polygonal objects.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) |
+| [offscreen](samples/offscreen) | Render without window context and save image to disk.  | ![](samples/offscreen/docs/offline_th.jpg) |
+| [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) |
 
-Using multi-sampling anti-aliasing in efficient way for the rasterizer.
-
-### [Shader Debug Printf](debug_printf)
-
-![debug_printf](debug_printf/docs/thumb.png)<br/>
-**Extensions**:
-[`VK_KHR_shader_non_semantic_info`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_shader_non_semantic_info.html)
-
-Adding debug printing information directly in the shader code.
-
-### [OptiX Denoiser](optix_denoiser)
-
-![img](optix_denoiser/docs/thumb.png)<br/>
-**Extensions**: [VK_KHR_synchronization2](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_synchronization2.html), [VK_KHR_external_memory](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_external_memory.html)
-
-Using the OptiX denoiser on the path traced image to remove residual noise.
-
-### [HDR sampling](hdr_sampling)
-
-![](hdr_sampling/docs/thumb.jpg)<br/>
-**Extensions**:
-
-High Dynamic Range image sampling is added to the base sample for both raster and ray trace, using multiple importance sampling acceleration structure and convoluted cubemaps.
 
 ## LICENSE
 
-Copyright 2021 NVIDIA CORPORATION. Released under Apache License,
+Copyright 2022 NVIDIA CORPORATION. Released under Apache License,
 Version 2.0. See "LICENSE" file for details.

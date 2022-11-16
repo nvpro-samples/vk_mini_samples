@@ -3,9 +3,12 @@
 **/build/*
 **/_auto*/*
 **/extern/*
+**/.obsidian/
 _Build/*
 _Install/*
 bin_x64/*
 downloaded_resources/*
 /nvpro_core/
 .vscode/**
+.vs/
+

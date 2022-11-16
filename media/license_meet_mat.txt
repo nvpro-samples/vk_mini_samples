@@ -1,0 +1,11 @@
+Model Information:
+* title:	Meet MAT
+* source:	https://sketchfab.com/3d-models/meet-mat-6d467069570e48c99a5fd5e6db53561b
+* author:	Adobe substance 3D (https://sketchfab.com/substance3D)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Meet MAT" (https://sketchfab.com/3d-models/meet-mat-6d467069570e48c99a5fd5e6db53561b) by Adobe substance 3D (https://sketchfab.com/substance3D) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
