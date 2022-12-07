@@ -41,6 +41,7 @@ layout(location = 0) rayPayloadInEXT HitPayload payload;
 layout(buffer_reference, scalar) readonly buffer Vertices  { Vertex v[]; };
 layout(buffer_reference, scalar) readonly buffer Indices   { uvec3 i[]; };
 layout(buffer_reference, scalar) readonly buffer PrimMeshInfos { PrimMeshInfo i[]; };
+layout(buffer_reference, scalar) readonly buffer InstanceInfos { InstanceInfo i[]; };
 layout(buffer_reference, scalar) readonly buffer Materials { vec4 m[]; };
 
 layout(set = 0, binding = BRtTlas ) uniform accelerationStructureEXT topLevelAS;
@@ -161,10 +162,14 @@ void main()
   PrimMeshInfos pInfo_ = PrimMeshInfos(sceneDesc.primInfoAddress);
   PrimMeshInfo  pinfo  = pInfo_.i[gl_InstanceCustomIndexEXT];
 
+  // Retrieve the Instance buffer information
+  InstanceInfos iInfo_ = InstanceInfos(sceneDesc.instInfoAddress);
+  InstanceInfo  iInfo  = iInfo_.i[gl_InstanceID];
+
   HitState hit = getHitState(pinfo);
 
   Materials materials = Materials(sceneDesc.materialAddress);
-  vec3      albedo    = materials.m[gl_InstanceCustomIndexEXT].xyz;
+  vec3      albedo    = materials.m[iInfo.materialID].xyz;
 
   // Color at hit point
   vec3 color = ggxEvaluate(V, hit.nrm, L, albedo, pc.metallic, pc.roughness);
