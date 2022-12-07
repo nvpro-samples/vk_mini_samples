@@ -54,12 +54,10 @@
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
 #include "shaders/device_host.h"
+#include "nvvk/error_vk.hpp"
 
 
-nvvkhl::SampleAppLog g_logger;
-
-namespace nvvkhl {
-
+static nvvkhl::SampleAppLog g_logger;
 
 class ShaderPrintf : public nvvkhl::IAppElement
 {
@@ -71,9 +69,9 @@ public:
   {
     m_app         = app;
     m_device      = m_app->getDevice();
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc       = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
-    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());      // Not all depth are supported
+    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc       = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());              // Not all depth are supported
 
     createPipeline();
     createGeometryBuffers();
@@ -238,9 +236,9 @@ private:
 
   nvvkhl::Application* m_app{nullptr};
 
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocVma>        m_alloc;
+  std::unique_ptr<nvvkhl::GBuffer>  m_gBuffers;
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
   PushConstant m_pushConstant{};
 
@@ -255,15 +253,13 @@ private:
   VkDevice          m_device = VK_NULL_HANDLE;                      // Convenient
 };
 
-}  // namespace nvvkhl
-
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
 auto main(int argc, char** argv) -> int
 {
-  // #ElementLogger For logging
+  // #debug_printf : reroute the log to our nvvkhl::SampleAppLog class. The ElememtLogger will display it.
   nvprintSetCallback([](int /*level*/, const char* fmt) { g_logger.addLog("%s", fmt); });
 
   nvvkhl::ApplicationCreateInfo spec;
@@ -286,16 +282,44 @@ auto main(int argc, char** argv) -> int
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
-  // #debug_printf : allow all messages to go through
-  app->getContext()->setDebugSeverityFilterMask(VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT);
+  //------
+  // #debug_printf
+  // Vulkan message callback - for receiving the printf in the shader
+  // Note: there is already a callback in nvvk::Context, but by defaut it is not printing INFO severity
+  //       this callback will catch the message and will make it clean for display.
+  auto dbg_messenger_callback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                   const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
+    // Get rid of all the extra message we don't need
+    std::string clean_msg = callbackData->pMessage;
+    clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
+    nvprintf(clean_msg.c_str()); // <- This will end up in the Logger
+    return VK_FALSE;  // to continue
+  };
+
+  // Creating the callback
+  VkDebugUtilsMessengerEXT           dbg_messenger;
+  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+  dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
+  dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
+  dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
+  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getContext()->m_instance, &dbg_messenger_create_info, nullptr, &dbg_messenger));
+
+  // #debug_printf : By uncommenting the next line, we would allow all messages to go through  the
+  // nvvk::Context::debugCallback. But the message wouldn't be clean as the one we made.
+  // Since we have the one above, it would also duplicate all messages.
+  //app->getContext()->setDebugSeverityFilterMask(VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT);
 
   // Create a view/render
   auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
   app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ShaderPrintf>());
   app->addElement(std::make_unique<nvvkhl::ElementLogger>(&g_logger, true));  // Add logger window
+  app->addElement(std::make_shared<ShaderPrintf>());
 
   app->run();
+
+  // #debug_printf : Removing the callback
+  vkDestroyDebugUtilsMessengerEXT(app->getContext()->m_instance, dbg_messenger, nullptr);
+
   app.reset();
 
   return test->errorCode();
