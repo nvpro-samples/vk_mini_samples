@@ -44,7 +44,6 @@
 
 #include <GLFW/glfw3.h>
 
-namespace nvvkhl {
 class RectangleSample : public nvvkhl::IAppElement
 {
 public:
@@ -55,9 +54,9 @@ public:
   {
     m_app         = app;
     m_device      = m_app->getDevice();
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc       = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
-    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());      // Not all depth are supported
+    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc       = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());              // Not all depth are supported
 
     createPipeline();
     createGeometryBuffers();
@@ -217,9 +216,9 @@ private:
 
   nvvkhl::Application* m_app{nullptr};
 
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocVma>        m_alloc;
+  std::unique_ptr<nvvkhl::GBuffer>  m_gBuffers;
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
   VkExtent2D        m_viewSize{0, 0};
   VkFormat          m_colorFormat      = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
@@ -232,7 +231,6 @@ private:
   VkDevice          m_device = VK_NULL_HANDLE;                      // Convenient
 };
 
-}  // namespace nvvkhl
 
 auto main(int argc, char** argv) -> int
 {
@@ -247,7 +245,7 @@ auto main(int argc, char** argv) -> int
 
   auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
   app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::RectangleSample>());
+  app->addElement(std::make_shared<RectangleSample>());
 
   app->run();
   app.reset();

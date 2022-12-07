@@ -66,7 +66,6 @@
 #include "_autogen/raytrace.rmiss.h"
 
 
-namespace nvvkhl {
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Ray trace multiple primitives
 class Raytracing : public nvvkhl::IAppElement
@@ -80,8 +79,8 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Requesting ray tracing properties
@@ -234,7 +233,7 @@ private:
   }
 
 
-  void createGbuffers(const vec2& size)
+  void createGbuffers(const nvmath::vec2f& size)
   {
     // Rendering image targets
     m_viewSize = size;
@@ -554,7 +553,7 @@ private:
   //
   nvvkhl::Application*                          m_app{nullptr};
   std::unique_ptr<nvvk::DebugUtil>              m_dutil;
-  std::unique_ptr<AllocVma>                     m_alloc;
+  std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer> m_rtSet;  // Descriptor set
 
   vec2                             m_viewSize    = {1, 1};
@@ -599,10 +598,8 @@ private:
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
   nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper
   nvvk::RaytracingBuilderKHR m_rtBuilder;
-  PipelineContainer          m_rtPipe;
+  nvvkhl::PipelineContainer  m_rtPipe;
 };
-
-}  // namespace nvvkhl
 //////////////////////////////////////////////////////////////////////////
 ///
 ///
@@ -634,7 +631,7 @@ auto main(int argc, char** argv) -> int
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());         // Menu / Quit
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());  // Window title info
-  app->addElement(std::make_shared<nvvkhl::Raytracing>());
+  app->addElement(std::make_shared<Raytracing>());
 
 
   app->run();

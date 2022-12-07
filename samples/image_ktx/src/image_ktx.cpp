@@ -72,7 +72,6 @@ static std::string g_img_file = R"(media/fruit.ktx2)";
 
 constexpr bool g_use_tm_compute = true;
 
-namespace nvvkhl {
 // Texture wrapper class which load an KTX image
 struct TextureKtx
 {
@@ -165,7 +164,7 @@ struct TextureKtx
 
 private:
   nvvk::Context*                   m_ctx{nullptr};
-  AllocVma*                        m_alloc{nullptr};
+  nvvkhl::AllocVma*                m_alloc{nullptr};
   std::unique_ptr<nvvk::DebugUtil> m_dutil;
 
   VkExtent2D    m_size{0, 0};
@@ -185,9 +184,9 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc      = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
-    m_tonemapper = std::make_unique<TonemapperPostProcess>(m_app->getContext().get(), m_alloc.get());
+    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc      = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_app->getContext().get(), m_alloc.get());
     m_dset       = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
@@ -481,11 +480,11 @@ private:
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocVma>        m_alloc;
+  nvvkhl::Application*              m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  vec2                             m_viewSize    = {0, 0};
+  nvmath::vec2f                    m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_srgbFormat  = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
@@ -509,12 +508,12 @@ private:
   {
     vec4 color{1.F};
   };
-  std::vector<nvh::PrimitiveMesh>               m_meshes;
-  std::vector<nvh::Node>                        m_nodes;
-  std::vector<Material>                         m_materials;
-  std::shared_ptr<TextureKtx>                   m_texture;
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;  // Descriptor set
-  std::unique_ptr<TonemapperPostProcess>        m_tonemapper;
+  std::vector<nvh::PrimitiveMesh>                m_meshes;
+  std::vector<nvh::Node>                         m_nodes;
+  std::vector<Material>                          m_materials;
+  std::shared_ptr<TextureKtx>                    m_texture;
+  std::unique_ptr<nvvk::DescriptorSetContainer>  m_dset;  // Descriptor set
+  std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
 
 
   // Pipeline
@@ -523,8 +522,6 @@ private:
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int              m_frame{0};
 };
-
-}  // namespace nvvkhl
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -548,7 +545,7 @@ auto main(int argc, char** argv) -> int
   // Add all application elements
   app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<nvvkhl::ImageKtx>());
+  app->addElement(std::make_shared<ImageKtx>());
 
   app->run();
   app.reset();

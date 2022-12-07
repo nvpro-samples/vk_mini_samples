@@ -149,8 +149,6 @@ bool nvvk::checkResult(VkResult result, const char* /*file*/, int32_t /*line*/)
 }
 #endif
 
-namespace nvvkhl {
-
 #ifdef USE_NSIGHT_AFTERMATH
 // A helper that prepends the frame number to a string
 static auto createMarkerStringForFrame(const char* marker_string, int frame_number) -> std::string
@@ -510,8 +508,6 @@ private:
   nvvk::Texture                   m_texture;
 };
 
-}  // namespace nvvkhl
-
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
@@ -549,7 +545,7 @@ int main(int argc, char** argv)
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());
-  app->addElement(std::make_shared<nvvkhl::AftermathSample>());
+  app->addElement(std::make_shared<AftermathSample>());
 
 
   app->run();

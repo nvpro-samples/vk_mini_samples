@@ -54,8 +54,6 @@
 #include <GLFW/glfw3.h>
 
 
-namespace nvvkhl {
-
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
 class Msaa : public nvvkhl::IAppElement
@@ -69,8 +67,8 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     createVkBuffers();
@@ -428,9 +426,9 @@ private:
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocVma>        m_alloc;
+  nvvkhl::Application*              m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
   // #MSAA
   nvvk::Image           m_msaaColor;
@@ -472,8 +470,6 @@ private:
   int              m_frame{0};
 };
 
-}  // namespace nvvkhl
-
 //////////////////////////////////////////////////////////////////////////
 ///
 ///
@@ -494,7 +490,7 @@ auto main(int argc, char** argv) -> int
   // Add all application elements
   app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<nvvkhl::Msaa>());
+  app->addElement(std::make_shared<Msaa>());
 
   app->run();
   app.reset();

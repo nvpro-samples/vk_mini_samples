@@ -48,8 +48,6 @@
 #include "nvvkhl/pipeline_container.hpp"
 
 
-namespace nvvkhl {
-
 // ShaderToy inputs
 struct InputUniforms
 {
@@ -83,8 +81,8 @@ public:
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc  = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc  = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset   = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // glsl compiler
@@ -441,8 +439,6 @@ private:
   VkShaderModule m_fmoduleA = VK_NULL_HANDLE;
 };
 
-}  // namespace nvvkhl
-
 auto main(int argc, char** argv) -> int
 {
   nvvkhl::ApplicationCreateInfo spec;
@@ -457,8 +453,8 @@ auto main(int argc, char** argv) -> int
 
   auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
   app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::TinyShaderToy>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
+  app->addElement(std::make_shared<TinyShaderToy>());
 
   app->run();
   app.reset();

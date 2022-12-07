@@ -55,7 +55,6 @@
 #include "nvvkhl/element_testing.hpp"
 
 
-namespace nvvkhl {
 class SolidColor : public nvvkhl::IAppElement
 {
 public:
@@ -68,7 +67,7 @@ public:
     m_app = app;
 
     // Create the Vulkan allocator (VMA)
-    m_alloc = std::make_unique<AllocVma>(app->getContext().get());
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(app->getContext().get());
     m_dutil = std::make_unique<nvvk::DebugUtil>(m_app->getDevice());
     createTexture();
   };
@@ -179,12 +178,10 @@ private:
   VkDescriptorSet      m_descriptorSet{};
   bool                 m_dirty{false};
 
-  std::unique_ptr<AllocVma>        m_alloc;
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  nvvkhl::Application*             m_app{nullptr};
+  std::unique_ptr<nvvkhl::AllocVma> m_alloc;
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  nvvkhl::Application*              m_app{nullptr};
 };
-
-}  // namespace nvvkhl
 
 auto main(int argc, char** argv) -> int
 {
@@ -200,7 +197,7 @@ auto main(int argc, char** argv) -> int
   // Create this example
   auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
   app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::SolidColor>());
+  app->addElement(std::make_shared<SolidColor>());
 
   app->run();
 

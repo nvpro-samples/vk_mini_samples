@@ -61,11 +61,10 @@
 #include <GLFW/glfw3.h>
 
 
-namespace nvvkhl {
 // Texture wrapper class which load an image
 struct SampleTexture
 {
-  SampleTexture(nvvk::Context* c, AllocVma* a)
+  SampleTexture(nvvk::Context* c, nvvkhl::AllocVma* a)
       : m_ctx(c)
       , m_alloc(a)
   {
@@ -74,7 +73,7 @@ struct SampleTexture
     create(4, data.data());
   }
 
-  SampleTexture(nvvk::Context* c, AllocVma* a, const std::string& filename)
+  SampleTexture(nvvk::Context* c, nvvkhl::AllocVma* a, const std::string& filename)
       : m_ctx(c)
       , m_alloc(a)
   {
@@ -120,10 +119,10 @@ struct SampleTexture
   [[nodiscard]] float getAspect() const { return static_cast<float>(m_size.width) / static_cast<float>(m_size.height); }
 
 private:
-  VkExtent2D     m_size{0, 0};
-  nvvk::Texture  m_texture;
-  nvvk::Context* m_ctx{nullptr};
-  AllocVma*      m_alloc{nullptr};
+  VkExtent2D        m_size{0, 0};
+  nvvk::Texture     m_texture;
+  nvvk::Context*    m_ctx{nullptr};
+  nvvkhl::AllocVma* m_alloc{nullptr};
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -138,8 +137,8 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
@@ -468,9 +467,9 @@ private:
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocVma>        m_alloc;
+  nvvkhl::Application*              m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
   nvmath::vec2f                    m_viewSize{0, 0};
   VkFormat                         m_colorFormat{VK_FORMAT_R8G8B8A8_UNORM};       // Color format of the image
@@ -497,7 +496,6 @@ private:
   int              m_frame{0};
 };
 
-}  // namespace nvvkhl
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary>
@@ -518,7 +516,7 @@ int main(int argc, char** argv)
   // Create a view/render
   auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
   app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ImageViewer>());
+  app->addElement(std::make_shared<ImageViewer>());
 
   app->run();
   app.reset();
