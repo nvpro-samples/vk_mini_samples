@@ -24,6 +24,10 @@
 */
 //////////////////////////////////////////////////////////////////////////
 
+// clang-format off
+#define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
+
+// clang-format on
 #include <array>
 #include <vulkan/vulkan_core.h>
 
@@ -46,9 +50,9 @@
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
 #include "shaders/device_host.h"
+#include "nvvk/images_vk.hpp"
 
 
-namespace nvvkhl {
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
 class SimplePolygons : public nvvkhl::IAppElement
@@ -62,8 +66,8 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc = std::make_unique<AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     createScene();
@@ -88,6 +92,12 @@ public:
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
 
+      // Deal with mouse interaction only if the window has focus
+      if(ImGui::IsWindowHovered(ImGuiFocusedFlags_RootWindow) && ImGui::IsMouseDoubleClicked(0))
+      {
+        rasterPicking();
+      }
+
       // Display the G-Buffer image
       ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
@@ -100,7 +110,7 @@ public:
   {
     auto sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float   aspect_ratio = m_viewSize.x / m_viewSize.y;
     nvmath::vec3f eye;
     nvmath::vec3f center;
     nvmath::vec3f up;
@@ -110,7 +120,7 @@ public:
     FrameInfo   finfo{};
     const auto& clip = CameraManip.getClipPlanes();
     finfo.view       = CameraManip.getMatrix();
-    finfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
+    finfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
     finfo.camPos     = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
@@ -124,7 +134,7 @@ public:
     m_app->setViewport(cmd);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0, 1, m_dset->getSets(), 0, nullptr);
-    VkDeviceSize offsets{0};
+    const VkDeviceSize offsets{0};
     for(auto& n : m_nodes)
     {
       auto& m = m_meshVk[n.mesh];
@@ -152,13 +162,13 @@ private:
     m_meshes.emplace_back(nvh::octahedron());
     m_meshes.emplace_back(nvh::icosahedron());
     m_meshes.emplace_back(nvh::cone());
-    int num_meshes = static_cast<int>(m_meshes.size());
+    const int num_meshes = static_cast<int>(m_meshes.size());
 
     // Materials (colorful)
     for(int i = 0; i < num_meshes; i++)
     {
       const nvmath::vec3f freq = nvmath::vec3f(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      nvmath::vec3f       v    = static_cast<nvmath::vec3f>(sin(freq) * 0.5F + 0.5F);
+      const nvmath::vec3f v    = static_cast<nvmath::vec3f>(sin(freq) * 0.5F + 0.5F);
       m_materials.push_back({nvmath::vec4f(v, 1)});
     }
 
@@ -182,11 +192,12 @@ private:
     d->initLayout();
     d->initPool(1);
 
-    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                      sizeof(PushConstant)};
     d->initPipeLayout(1, &push_constant_ranges);
 
     // Writing to descriptors
-    VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(d->makeWrite(0, 0, &dbi_unif));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
@@ -238,6 +249,10 @@ private:
     m_frameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_frameInfo.buffer);
+
+    m_pixelBuffer = m_alloc->createBuffer(sizeof(float) * 4, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
 
@@ -252,17 +267,123 @@ private:
       m_alloc->destroy(m.indices);
     }
     m_alloc->destroy(m_frameInfo);
+    m_alloc->destroy(m_pixelBuffer);
 
     m_dset->deinit();
     m_gBuffers.reset();
   }
 
   //--------------------------------------------------------------------------------------------------
+  // Find the 3D position under the mouse cursor and set the camera interest to this position
+  //
+  void rasterPicking()
+  {
+    nvmath::vec2f       mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+    const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
+    mouse_pos                     = mouse_pos - corner;           // Mouse pos relative to center of viewport
+
+    const float         aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const auto&         clip         = CameraManip.getClipPlanes();
+    const nvmath::mat4f view         = CameraManip.getMatrix();
+    const nvmath::mat4f proj         = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
+
+    // Find the distance under the cursor
+    const float d = getDepth(static_cast<int>(mouse_pos.x), static_cast<int>(mouse_pos.y));
+
+    if(d < 1.0F)  // Ignore infinite
+    {
+      const nvmath::vec3f hit_pos = unprojectScreenPosition({mouse_pos.x, mouse_pos.y, d}, view, proj);
+
+      // Set the interest position
+      nvmath::vec3f eye, center, up;
+      CameraManip.getLookat(eye, center, up);
+      CameraManip.setLookat(eye, hit_pos, up, false);
+    }
+  }
+
+  //--------------------------------------------------------------------------------------------------
+  // Read the depth buffer at the X,Y coordinates
+  // Note: depth format is VK_FORMAT_D32_SFLOAT
+  //
+  float getDepth(int x, int y)
+  {
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+
+    // Transit the depth buffer image in eTransferSrcOptimal
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, range);
+
+    // Copy the pixel under the cursor
+    VkBufferImageCopy copy_region{};
+    copy_region.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    copy_region.imageOffset      = {x, y, 0};
+    copy_region.imageExtent      = {1, 1, 1};
+    vkCmdCopyImageToBuffer(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_pixelBuffer.buffer,
+                           1, &copy_region);
+
+    // Put back the depth buffer as  it was
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, range);
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
+
+    // Grab the value
+    float value{1.0F};
+    void* mapped = m_alloc->map(m_pixelBuffer);
+    switch(m_gBuffers->getDepthFormat())
+    {
+      case VK_FORMAT_X8_D24_UNORM_PACK32:
+      case VK_FORMAT_D24_UNORM_S8_UINT: {
+        uint32_t ivalue{0};
+        memcpy(&ivalue, mapped, sizeof(uint32_t));
+        uint32_t mask = (1 << 24) - 1;
+        ivalue        = ivalue & mask;
+        value         = float(ivalue) / float(mask);
+      }
+      break;
+      case VK_FORMAT_D32_SFLOAT: {
+        memcpy(&value, mapped, sizeof(float));
+      }
+      break;
+    }
+    m_alloc->unmap(m_pixelBuffer);
+
+    return value;
+  }
+
+  //--------------------------------------------------------------------------------------------------
+  // Return the 3D position of the screen 2D + depth
+  //
+  nvmath::vec3f unprojectScreenPosition(const nvmath::vec3f& screenPos, const nvmath::mat4f& view, const nvmath::mat4f& proj)
+  {
+    // Transformation of normalized coordinates between -1 and 1
+    const VkExtent2D size = m_gBuffers->getSize();
+    nvmath::vec4f    win_norm;
+    win_norm.x = screenPos.x / static_cast<float>(size.width) * 2.0F - 1.0F;
+    win_norm.y = screenPos.y / static_cast<float>(size.height) * 2.0F - 1.0F;
+    win_norm.z = screenPos.z;
+    win_norm.w = 1.0;
+
+    // Transform to world space
+    const nvmath::mat4f mat       = proj * view;
+    const nvmath::mat4f mat_inv   = nvmath::invert(mat);
+    nvmath::vec4f       world_pos = mat_inv * win_norm;
+    world_pos.w                   = 1.0F / world_pos.w;
+    world_pos.x                   = world_pos.x * world_pos.w;
+    world_pos.y                   = world_pos.y * world_pos.w;
+    world_pos.z                   = world_pos.z * world_pos.w;
+
+    return nvmath::vec3f(world_pos);
+  }
+
+
+  //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocVma>        m_alloc;
+  nvvkhl::Application*              m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
   nvmath::vec2f                    m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
@@ -280,6 +401,7 @@ private:
   };
   std::vector<PrimitiveMeshVk> m_meshVk;
   nvvk::Buffer                 m_frameInfo;
+  nvvk::Buffer                 m_pixelBuffer;
 
   std::vector<VkSampler> m_samplers;
 
@@ -298,8 +420,6 @@ private:
   VkPipeline m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int        m_frame{0};
 };
-
-}  // namespace nvvkhl
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
@@ -323,7 +443,7 @@ auto main(int argc, char** argv) -> int
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());
-  app->addElement(std::make_shared<nvvkhl::SimplePolygons>());
+  app->addElement(std::make_shared<SimplePolygons>());
 
   app->run();
   app.reset();
