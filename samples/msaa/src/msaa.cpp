@@ -106,6 +106,8 @@ public:
 
   void onUIRender() override
   {
+    if(!m_gBuffers)
+      return;
 
     {  // Setting menu
       ImGui::Begin("Settings");
@@ -119,7 +121,7 @@ public:
                                                VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
                                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &image_format_properties);
       // sampleCounts is 3, 7 or 15, following line find n, in 2^n == sampleCounts+1
-      int max_sample_items = static_cast<int>(log2(static_cast<float>(image_format_properties.sampleCounts)) + 1.0F);
+      const       int max_sample_items = static_cast<int>(log2(static_cast<float>(image_format_properties.sampleCounts)) + 1.0F);
       // Same for the current VkSampleCountFlag, which is a power of two
       int                        item_combo = static_cast<int>(log2(static_cast<float>(m_msaaSamples)));
       std::array<const char*, 7> items      = {"1", "2", "4", "8", "16", "32", "64"};
@@ -161,7 +163,7 @@ public:
       {
         std::array<char, 256> buf{};
 
-        int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
+        const         int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
                            static_cast<int>(m_viewSize.x), static_cast<int>(m_viewSize.y),
                            static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         assert(ret > 0);
@@ -173,20 +175,23 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    if(!m_gBuffers)
+      return;
 
-    float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
+    const     float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
     nvmath::vec3f eye;
     nvmath::vec3f center;
     nvmath::vec3f up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo   finfo{};
-    const auto& clip = CameraManip.getClipPlanes();
-    finfo.view       = CameraManip.getMatrix();
-    finfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
-    finfo.camPos     = eye;
+    FrameInfo            finfo{};
+    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
+    finfo.view                = CameraManip.getMatrix();
+    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
+    finfo.camPos              = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // #MSAA
@@ -213,7 +218,7 @@ public:
 
     vkCmdEndRendering(cmd);
     // Make sure it is finished
-    auto image_memory_barrier =
+    const     VkImageMemoryBarrier image_memory_barrier =
         nvvk::makeImageMemoryBarrier(m_gBuffers->getColorImage(), VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                                      VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
@@ -225,14 +230,14 @@ private:
   {
     // Meshes
     m_meshes.emplace_back(nvh::cone(0.05F));
-    int num_instances = 50;
+    const     int num_instances = 50;
 
     // Instances
     for(int i = 0; i < num_instances; i++)
     {
-      auto& n    = m_nodes.emplace_back();
-      n.mesh     = 0;
-      n.material = i;
+      nvh::Node& n = m_nodes.emplace_back();
+      n.mesh       = 0;
+      n.material   = i;
 
       nvmath::mat4f mrot, mtrans;
       mrot.as_rot(static_cast<float>(i) / static_cast<float>(num_instances) * nv_two_pi, {0.0F, 0.0F, 1.0F});
@@ -244,7 +249,7 @@ private:
     for(int i = 0; i < num_instances; i++)
     {
       const vec3 freq = vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      vec3       v    = static_cast<vec3>(nvmath::sin(freq) * 0.5F + 0.5F);
+      const       vec3       v    = static_cast<vec3>(nvmath::sin(freq) * 0.5F + 0.5F);
       m_materials.push_back({vec4(v, 1.0F)});
     }
 
@@ -255,16 +260,16 @@ private:
 
   void renderScene(VkCommandBuffer cmd)
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     m_app->setViewport(cmd);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
-    VkDeviceSize offsets{0};
-    for(auto& n : m_nodes)
+    const     VkDeviceSize offsets{0};
+    for(const nvh::Node& n : m_nodes)
     {
-      auto& m           = m_meshVk[n.mesh];
-      auto  num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
+      const       PrimitiveMeshVk& m           = m_meshVk[n.mesh];
+      auto             num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
 
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
@@ -280,24 +285,23 @@ private:
 
   void createPipeline()
   {
-    auto& d = m_dset;
-    d->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->initLayout();
-    d->initPool(2);  // two frames - allow to change on the fly
+    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->initLayout();
+    m_dset->initPool(2);  // two frames - allow to change on the fly
 
     // Writing to descriptors
-    VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const     VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(d->makeWrite(0, 0, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
-    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const     VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
     create_info.pPushConstantRanges    = &push_constant_ranges;
     create_info.setLayoutCount         = 1;
-    create_info.pSetLayouts            = &d->getLayout();
+    create_info.pSetLayouts            = &m_dset->getLayout();
     vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -353,7 +357,7 @@ private:
       create_info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;  // #MSAA - Optimization
       m_msaaColor = m_alloc->createImage(create_info);
       m_dutil->setObjectName(m_msaaColor.image, "msaaColor");
-      auto iv_info = nvvk::makeImageViewCreateInfo(m_msaaColor.image, create_info);
+      const       VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(m_msaaColor.image, create_info);
       vkCreateImageView(m_device, &iv_info, nullptr, &m_msaaColorIView);
     }
 
@@ -364,14 +368,14 @@ private:
 
       m_msaaDepth = m_alloc->createImage(create_info);
       m_dutil->setObjectName(m_msaaDepth.image, "msaaDepth");
-      auto iv_info                        = nvvk::makeImageViewCreateInfo(m_msaaDepth.image, create_info);
+      VkImageViewCreateInfo iv_info       = nvvk::makeImageViewCreateInfo(m_msaaDepth.image, create_info);
       iv_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
       vkCreateImageView(m_device, &iv_info, nullptr, &m_msaaDepthIView);
     }
 
     // Setting the image layout for both color and depth
     {
-      auto* cmd = m_app->createTempCmdBuffer();
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
       nvvk::cmdBarrierImageLayout(cmd, m_msaaColor.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
       nvvk::cmdBarrierImageLayout(cmd, m_msaaDepth.image, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -382,13 +386,13 @@ private:
 
   void createVkBuffers()
   {
-    auto* cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_meshVk.resize(m_meshes.size());
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
-      auto& m    = m_meshVk[i];
-      m.vertices = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      PrimitiveMeshVk& m = m_meshVk[i];
+      m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }
@@ -406,7 +410,7 @@ private:
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
 
-    for(auto& m : m_meshVk)
+    for(PrimitiveMeshVk& m : m_meshVk)
     {
       m_alloc->destroy(m.vertices);
       m_alloc->destroy(m.indices);
@@ -473,7 +477,7 @@ private:
 //////////////////////////////////////////////////////////////////////////
 ///
 ///
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = PROJECT_NAME " Example";

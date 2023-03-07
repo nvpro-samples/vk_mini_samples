@@ -92,21 +92,19 @@ struct SampleTexture
 
   ~SampleTexture()
   {  // Destroying in next frame, avoid deleting while using
-    nvvkhl::Application::submitResourceFree([tex = m_texture, a = m_alloc]() {
-      auto t = tex;
-      a->destroy(t);
-    });
+    nvvkhl::Application::submitResourceFree(
+        [tex = m_texture, a = m_alloc]() { a->destroy(const_cast<nvvk::Texture&>(tex)); });
   }
 
   // Create the image, the sampler and the image view + generate the mipmap level for all
   void create(uint32_t bufsize, void* data)
   {
-    VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    VkFormat            format      = VK_FORMAT_R8G8B8A8_UNORM;
-    VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
+    const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    const VkFormat            format    = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkImageCreateInfo create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
 
     nvvk::CommandPool cpool(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
-    auto*             cmd = cpool.createCommandBuffer();
+    VkCommandBuffer   cmd = cpool.createCommandBuffer();
     m_texture             = m_alloc->createTexture(cmd, bufsize, data, create_info, sampler_info);
     nvvk::cmdGenerateMipmaps(cmd, m_texture.image, format, m_size, create_info.mipLevels);
     cpool.submitAndWait(cmd);
@@ -142,8 +140,8 @@ public:
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
-    std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
-    std::string              img_file             = nvh::findFile(R"(media/fruit.jpg)", default_search_paths, true);
+    const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
+    const std::string              img_file = nvh::findFile(R"(media/fruit.jpg)", default_search_paths, true);
     assert(!img_file.empty());
     m_texture = std::make_shared<SampleTexture>(m_app->getContext().get(), m_alloc.get(), img_file);
     assert(m_texture->isValid());
@@ -228,17 +226,17 @@ public:
       ImGui::Begin("Viewport");
 
       // Get size of current viewport
-      nvmath::vec2f size = ImGui::GetContentRegionAvail();
+      const nvmath::vec2f size = ImGui::GetContentRegionAvail();
 
       // Deal with mouse interaction only if the window has focus
       if(ImGui::IsWindowHovered(ImGuiFocusedFlags_RootWindow))
       {
-        ImGuiIO& io = ImGui::GetIO();
+        const ImGuiIO& io = ImGui::GetIO();
 
-        nvmath::vec2f mouse_pos = ImGui::GetMousePos();               // Current mouse pos in window
-        nvmath::vec2f corner    = ImGui::GetCursorScreenPos();        // Corner of the viewport
-        mouse_pos               = (mouse_pos - corner) - size / 2.F;  // Mouse pos relative to center of viewport
-        nvmath::vec2f pan       = mouse_pos * (2.F / m_zoom) / size;  // Position in image space before zoom
+        nvmath::vec2f       mouse_pos = ImGui::GetMousePos();               // Current mouse pos in window
+        const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();        // Corner of the viewport
+        mouse_pos                     = (mouse_pos - corner) - size / 2.F;  // Mouse pos relative to center of viewport
+        const nvmath::vec2f pan       = mouse_pos * (2.F / m_zoom) / size;  // Position in image space before zoom
 
         // Change zoom on mouse wheel
         if(io.MouseWheel > 0)
@@ -250,15 +248,16 @@ public:
           m_zoom /= 1.1F;
         }
 
-        nvmath::vec2f pan2 = mouse_pos * (2.F / m_zoom) / size;  // Position in image space after zoom
+        const nvmath::vec2f pan2 = mouse_pos * (2.F / m_zoom) / size;  // Position in image space after zoom
         m_pan += pan2 - pan;  // Re-adjust panning (making zoom relative to mouse cursor)
 
-        nvmath::vec2f drag = ImGui::GetMouseDragDelta(0, 0);  // Get the amount of mouse drag
-        ImGui::ResetMouseDragDelta();                         // We want static move
-        m_pan += drag * (2.F / m_zoom) / size;                // Drag in image space
+        const nvmath::vec2f drag = ImGui::GetMouseDragDelta(0, 0);  // Get the amount of mouse drag
+        ImGui::ResetMouseDragDelta();                               // We want static move
+        m_pan += drag * (2.F / m_zoom) / size;                      // Drag in image space
       }
 
       // Display the G-Buffer image
+      if(m_gBuffers)
       ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
       ImGui::End();
@@ -282,10 +281,14 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    if(!m_gBuffers)
+      return;
+
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
     // Adjusting the aspect ratio of the image
-    float img_aspect_ratio  = m_texture->getAspect();
-    float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float img_aspect_ratio  = m_texture->getAspect();
+    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
 
     m_pushConst.scale = {1.0F, 1.0F};
     if(img_aspect_ratio > view_aspect_ratio)
@@ -312,10 +315,10 @@ public:
     }
 
     // Applying the zoom and pan
-    nvmath::mat4f ortho = nvmath::ortho(-1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F);
-    nvmath::mat4f scale = nvmath::scale_mat4(nvmath::vec3f(m_zoom, m_zoom, 0));
-    nvmath::mat4f trans = nvmath::translation_mat4(nvmath::vec3f(m_pan.x, m_pan.y, 0));
-    m_pushConst.transfo = ortho * scale * trans;
+    const nvmath::mat4f ortho = nvmath::ortho(-1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F);
+    const nvmath::mat4f scale = nvmath::scale_mat4(nvmath::vec3f(m_zoom, m_zoom, 0));
+    const nvmath::mat4f trans = nvmath::translation_mat4(nvmath::vec3f(m_pan.x, m_pan.y, 0));
+    m_pushConst.transfo       = ortho * scale * trans;
 
     // Drawing the quad in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -328,7 +331,7 @@ public:
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant), &m_pushConst);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
-    VkDeviceSize offsets{0};
+    const VkDeviceSize offsets{0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
     vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
@@ -350,20 +353,19 @@ private:
 
   void createPipeline()
   {
-    auto& d = m_dset;
-    d->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->initLayout();
-    d->initPool(2);  // two frames - allow to change textures on the fly
-    m_dutil->setObjectName(d->getLayout(), "Texture");
+    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->initLayout();
+    m_dset->initPool(2);  // two frames - allow to change textures on the fly
+    m_dutil->setObjectName(m_dset->getLayout(), "Texture");
 
 
-    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
     create_info.pPushConstantRanges    = &push_constant_ranges;
     create_info.setLayoutCount         = 1;
-    create_info.pSetLayouts            = &d->getLayout();
+    create_info.pSetLayouts            = &m_dset->getLayout();
 
     vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout);
 
@@ -393,10 +395,9 @@ private:
 
   void updateTexture()
   {
-    auto& d = m_dset;
     m_frame = (m_frame + 1) % 2;
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(d->makeWrite(m_frame, 0, &m_texture->descriptor()));
+    writes.emplace_back(m_dset->makeWrite(m_frame, 0, &m_texture->descriptor()));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
@@ -411,10 +412,8 @@ private:
   void createVkBuffers()
   {
     nvvkhl::Application::submitResourceFree([vertices = m_vertices, indices = m_indices, alloc = m_alloc]() {
-      auto v = vertices;
-      auto i = indices;
-      alloc->destroy(v);
-      alloc->destroy(i);
+      alloc->destroy(const_cast<nvvk::Buffer&>(vertices));
+      alloc->destroy(const_cast<nvvk::Buffer&>(indices));
     });
 
     // Quad with UV coordinates
@@ -426,9 +425,9 @@ private:
     vertices[3] = {{-1.0F, 1.0F}, {0.0F, 1.0F}};
 
     {
-      auto* cmd  = m_app->createTempCmdBuffer();
-      m_vertices = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices  = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME(m_vertices.buffer);
       m_dutil->DBG_NAME(m_indices.buffer);
       m_app->submitAndWaitTempCmdBuffer(cmd);

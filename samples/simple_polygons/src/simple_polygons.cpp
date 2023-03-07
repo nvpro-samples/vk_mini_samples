@@ -81,6 +81,8 @@ public:
 
   void onUIRender() override
   {
+    if(!m_gBuffers)
+      return;
 
     {  // Setting menu
       ImGui::Begin("Settings");
@@ -108,7 +110,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    if(!m_gBuffers)
+      return;
+
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     const float   aspect_ratio = m_viewSize.x / m_viewSize.y;
     nvmath::vec3f eye;
@@ -117,11 +122,11 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo   finfo{};
-    const auto& clip = CameraManip.getClipPlanes();
-    finfo.view       = CameraManip.getMatrix();
-    finfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
-    finfo.camPos     = eye;
+    FrameInfo            finfo{};
+    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
+    finfo.view                = CameraManip.getMatrix();
+    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
+    finfo.camPos              = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // Drawing the primitives in a G-Buffer
@@ -135,9 +140,9 @@ public:
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0, 1, m_dset->getSets(), 0, nullptr);
     const VkDeviceSize offsets{0};
-    for(auto& n : m_nodes)
+    for(const nvh::Node& n : m_nodes)
     {
-      auto& m = m_meshVk[n.mesh];
+      PrimitiveMeshVk& m = m_meshVk[n.mesh];
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
       m_pushConst.color   = m_materials[n.material].color;
@@ -175,7 +180,7 @@ private:
     // Instances
     for(int i = 0; i < num_meshes; i++)
     {
-      auto& n       = m_nodes.emplace_back();
+      nvh::Node& n  = m_nodes.emplace_back();
       n.mesh        = i;
       n.material    = i;
       n.translation = vec3(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
@@ -187,19 +192,18 @@ private:
 
   void createPipeline()
   {
-    auto& d = m_dset;
-    d->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->initLayout();
-    d->initPool(1);
+    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->initLayout();
+    m_dset->initPool(1);
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                                       sizeof(PushConstant)};
-    d->initPipeLayout(1, &push_constant_ranges);
+    m_dset->initPipeLayout(1, &push_constant_ranges);
 
     // Writing to descriptors
     const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(d->makeWrite(0, 0, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -216,7 +220,7 @@ private:
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, n))},  // Normal
     });
 
-    nvvk::GraphicsPipelineGenerator pgen(m_device, d->getPipeLayout(), prend_info, pstate);
+    nvvk::GraphicsPipelineGenerator pgen(m_device, m_dset->getPipeLayout(), prend_info, pstate);
     pgen.addShader(std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)}, VK_SHADER_STAGE_VERTEX_BIT);
     pgen.addShader(std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)}, VK_SHADER_STAGE_FRAGMENT_BIT);
 
@@ -235,13 +239,13 @@ private:
 
   void createVkBuffers()
   {
-    auto* cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_meshVk.resize(m_meshes.size());
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
-      auto& m    = m_meshVk[i];
-      m.vertices = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      PrimitiveMeshVk& m = m_meshVk[i];
+      m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }
@@ -261,7 +265,7 @@ private:
   {
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
 
-    for(auto& m : m_meshVk)
+    for(PrimitiveMeshVk& m : m_meshVk)
     {
       m_alloc->destroy(m.vertices);
       m_alloc->destroy(m.indices);
@@ -282,10 +286,10 @@ private:
     const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
     mouse_pos                     = mouse_pos - corner;           // Mouse pos relative to center of viewport
 
-    const float         aspect_ratio = m_viewSize.x / m_viewSize.y;
-    const auto&         clip         = CameraManip.getClipPlanes();
-    const nvmath::mat4f view         = CameraManip.getMatrix();
-    const nvmath::mat4f proj         = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
+    const float          aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const nvmath::vec2f& clip         = CameraManip.getClipPlanes();
+    const nvmath::mat4f  view         = CameraManip.getMatrix();
+    const nvmath::mat4f  proj         = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
 
     // Find the distance under the cursor
     const float d = getDepth(static_cast<int>(mouse_pos.x), static_cast<int>(mouse_pos.y));
@@ -337,9 +341,9 @@ private:
       case VK_FORMAT_D24_UNORM_S8_UINT: {
         uint32_t ivalue{0};
         memcpy(&ivalue, mapped, sizeof(uint32_t));
-        uint32_t mask = (1 << 24) - 1;
-        ivalue        = ivalue & mask;
-        value         = float(ivalue) / float(mask);
+        const uint32_t mask = (1 << 24) - 1;
+        ivalue              = ivalue & mask;
+        value               = float(ivalue) / float(mask);
       }
       break;
       case VK_FORMAT_D32_SFLOAT: {
@@ -424,7 +428,7 @@ private:
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = PROJECT_NAME " Example";

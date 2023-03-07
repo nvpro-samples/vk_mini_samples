@@ -19,8 +19,18 @@ function(DefaultBasicMakefile)
     target_include_directories(${PROJECT_NAME} PRIVATE ${SAMPLES_COMMON_DIR})
 
     # Linking with other libraries
-    target_link_libraries (${PROJECT_NAME} ${PLATFORM_LIBRARIES})
-    target_link_libraries (${PROJECT_NAME} nvpro_core)
+    target_link_libraries(${PROJECT_NAME} optimized
+        ${LIBRARIES_OPTIMIZED}
+        ${PLATFORM_LIBRARIES}
+        nvpro_core
+         ${UNIXLINKLIBS}
+    )
+    target_link_libraries(${PROJECT_NAME} debug
+        ${LIBRARIES_DEBUG}
+        ${PLATFORM_LIBRARIES}
+        nvpro_core
+        ${UNIXLINKLIBS}
+    )
 
     # Compile definitions
     target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_NAME="${PROJECT_NAME}")
@@ -42,7 +52,7 @@ function(DefaultBasicMakefile)
         VULKAN_TARGET "vulkan1.2"
         HEADER ON
         DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
-        FLAGS "-I${SHD_DIR}  -I${NVPRO_CORE_DIR} -g"
+        FLAGS -I${SHD_DIR} -I${NVPRO_CORE_DIR} -g
         )
 
     target_sources(${PROJECT_NAME} PRIVATE ${GLSL_SOURCES} ${GLSL_HEADERS})

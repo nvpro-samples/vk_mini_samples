@@ -91,7 +91,7 @@ public:
     m_glslC->addInclude(NVPSystem::exePath());
     m_glslC->addInclude(NVPSystem::exePath() + std::string(PROJECT_NAME) + std::string("/shaders"));
 
-    auto err_msg = compileShaders();
+    const std::string err_msg = compileShaders();
     if(!err_msg.empty())
     {
       LOGE("%s\n", err_msg.c_str());
@@ -111,6 +111,9 @@ public:
 
   void onUIRender() override
   {
+    if(!m_gBuffers)
+      return;
+
     static std::string error_msg;
     {  // Setting panel
       ImGui::Begin("Settings");
@@ -128,7 +131,7 @@ public:
       {
         ImGui::TextColored({1, 0, 0, 1}, "ERROR");
         ImGui::Separator();
-        ImGui::TextWrapped(error_msg.c_str());
+        ImGui::TextWrapped("%s", error_msg.c_str());
         ImGui::Separator();
       }
 
@@ -168,7 +171,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    if(!m_gBuffers)
+      return;
+
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     // Ping-Pong double buffer
     static int double_buffer{0};
@@ -183,7 +189,7 @@ public:
     renderToBuffer(cmd, m_pipelineBufA, in_image, out_image);
 
     // Barrier - making sure the rendered image from BufferA is ready to be used
-    auto image_memory_barrier =
+    const VkImageMemoryBarrier image_memory_barrier =
         nvvk::makeImageMemoryBarrier(m_gBuffers->getColorImage(out_image), VK_ACCESS_SHADER_READ_BIT,
                                      VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
@@ -203,7 +209,7 @@ private:
 
   void createPipelineLayout()
   {
-    VkPushConstantRange push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
+    const VkPushConstantRange push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
 
     m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
     m_dset->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -259,19 +265,19 @@ private:
     m_app->setViewport(cmd);
 
     // Writing descriptor
-    VkDescriptorImageInfo             in_desc  = m_gBuffers->getDescriptorImageInfo(inImage);
-    VkDescriptorImageInfo             out_desc = m_gBuffers->getDescriptorImageInfo(outImage);
+    const VkDescriptorImageInfo             in_desc  = m_gBuffers->getDescriptorImageInfo(inImage);
+    const VkDescriptorImageInfo             out_desc = m_gBuffers->getDescriptorImageInfo(outImage);
     std::vector<VkWriteDescriptorSet> writes;
     writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
     writes.push_back(m_dset->makeWrite(0, 1, &out_desc));
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0,
                               static_cast<uint32_t>(writes.size()), writes.data());
 
-    // Pusing the "Input Uniforms"
+    // Pushing the "Input Uniforms"
     vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms), &m_inputUniform);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    VkDeviceSize offsets{0};
+    const VkDeviceSize offsets{0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
     vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
@@ -298,9 +304,9 @@ private:
     const std::vector<uint16_t> indices  = {0, 3, 2, 0, 2, 1};
 
     {
-      auto* cmd  = m_app->createTempCmdBuffer();
-      m_vertices = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices  = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_app->submitAndWaitTempCmdBuffer(cmd);
       m_dutil->DBG_NAME(m_vertices.buffer);
       m_dutil->DBG_NAME(m_indices.buffer);
@@ -323,11 +329,14 @@ private:
 
     // Compile default shaders
     setCompilerOptions();
-    const auto vert_result = m_glslC->compileFile("raster.vert", shaderc_shader_kind::shaderc_vertex_shader);
+    const shaderc::SpvCompilationResult vert_result =
+        m_glslC->compileFile("raster.vert", shaderc_shader_kind::shaderc_vertex_shader);
     m_glslC->options()->AddMacroDefinition("INCLUDE_FILE", "0");
-    const auto frag_result = m_glslC->compileFile("raster.frag", shaderc_shader_kind::shaderc_fragment_shader);
+    const shaderc::SpvCompilationResult frag_result =
+        m_glslC->compileFile("raster.frag", shaderc_shader_kind::shaderc_fragment_shader);
     m_glslC->options()->AddMacroDefinition("INCLUDE_FILE", "1");
-    const auto frag_result_a = m_glslC->compileFile("raster.frag", shaderc_shader_kind::shaderc_fragment_shader);
+    const shaderc::SpvCompilationResult frag_result_a =
+        m_glslC->compileFile("raster.frag", shaderc_shader_kind::shaderc_fragment_shader);
 
     if(vert_result.GetNumErrors() == 0 && frag_result.GetNumErrors() == 0 && frag_result_a.GetNumErrors() == 0)
     {
@@ -361,9 +370,9 @@ private:
   void updateUniforms()
   {
     // Grab Data
-    nvmath::vec2f mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
-    nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
-    nvmath::vec2f size      = ImGui::GetContentRegionAvail();
+    const nvmath::vec2f mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+    const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
+    const nvmath::vec2f size      = ImGui::GetContentRegionAvail();
 
     // Set uniforms
     m_inputUniform.iResolution           = nvmath::vec3f(size, 0);
@@ -439,7 +448,7 @@ private:
   VkShaderModule m_fmoduleA = VK_NULL_HANDLE;
 };
 
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = PROJECT_NAME " Example";

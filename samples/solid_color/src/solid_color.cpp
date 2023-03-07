@@ -102,7 +102,7 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     if(m_dirty)
     {
@@ -142,8 +142,8 @@ private:
 
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
-    VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R32G32B32A32_SFLOAT);
-    VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    const VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R32G32B32A32_SFLOAT);
+    const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     m_texture = m_alloc->createTexture(cmd, m_imageData.size() * sizeof(float), m_imageData.data(), create_info, sampler_info);
     m_app->submitAndWaitTempCmdBuffer(cmd);
     m_dutil->setObjectName(m_texture.image, "Image");
@@ -154,15 +154,15 @@ private:
 
   void setData(VkCommandBuffer cmd)
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     assert(m_texture.image);
-    VkOffset3D               offset{0};
-    VkImageSubresourceLayers subresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    VkExtent3D               extent{1, 1, 1};
+    const VkOffset3D               offset{0};
+    const VkImageSubresourceLayers subresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    const VkExtent3D               extent{1, 1, 1};
     nvvk::cmdBarrierImageLayout(cmd, m_texture.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-    auto* staging = m_alloc->getStaging();
+    nvvk::StagingMemoryManager* staging = m_alloc->getStaging();
     staging->cmdToImage(cmd, m_texture.image, offset, extent, subresource, m_imageData.size() * sizeof(float),
                         m_imageData.data());
 
@@ -183,7 +183,7 @@ private:
   nvvkhl::Application*              m_app{nullptr};
 };
 
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = std::string(PROJECT_NAME) + " Example";

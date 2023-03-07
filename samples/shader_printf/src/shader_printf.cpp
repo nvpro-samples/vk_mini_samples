@@ -121,8 +121,8 @@ public:
       // Pick the mouse coordinate if the mouse is down
       if(ImGui::GetIO().MouseDown[0])
       {
-        nvmath::vec2f mouse_pos   = ImGui::GetMousePos();         // Current mouse pos in window
-        nvmath::vec2f corner      = ImGui::GetCursorScreenPos();  // Corner of the viewport
+        const         nvmath::vec2f mouse_pos   = ImGui::GetMousePos();         // Current mouse pos in window
+        const         nvmath::vec2f corner      = ImGui::GetCursorScreenPos();  // Corner of the viewport
         m_pushConstant.mouseCoord = mouse_pos - corner;
       }
       else
@@ -131,7 +131,10 @@ public:
       }
 
       // Display the G-Buffer image
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      if(m_gBuffers)
+      {
+        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      }
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -139,7 +142,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto _sdbg = m_dutil->DBG_SCOPE(cmd);
+    if (!m_gBuffers)
+      return;
+
+    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
     nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()}, m_gBuffers->getDepthImageView(),
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
@@ -151,7 +157,7 @@ public:
                        sizeof(PushConstant), &m_pushConstant);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    VkDeviceSize offsets{0};
+    const     VkDeviceSize offsets{0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
     vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
@@ -169,7 +175,7 @@ private:
   void createPipeline()
   {
 
-    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const     VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
@@ -213,9 +219,9 @@ private:
     const std::vector<uint16_t> indices  = {0, 2, 1, 2, 0, 3};
 
     {
-      auto* cmd  = m_app->createTempCmdBuffer();
-      m_vertices = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices  = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_app->submitAndWaitTempCmdBuffer(cmd);
       m_dutil->DBG_NAME(m_vertices.buffer);
       m_dutil->DBG_NAME(m_indices.buffer);
@@ -257,10 +263,11 @@ private:
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   // #debug_printf : reroute the log to our nvvkhl::SampleAppLog class. The ElememtLogger will display it.
-  nvprintSetCallback([](int /*level*/, const char* fmt) { g_logger.addLog("%s", fmt); });
+  nvprintSetCallback([](int level, const char* fmt) { g_logger.addLog(level, "%s", fmt); });
+  g_logger.setLogLevel(LOGBITS_ALL);
 
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = PROJECT_NAME " Example";
@@ -292,12 +299,12 @@ auto main(int argc, char** argv) -> int
     // Get rid of all the extra message we don't need
     std::string clean_msg = callbackData->pMessage;
     clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
-    nvprintf(clean_msg.c_str()); // <- This will end up in the Logger
-    return VK_FALSE;  // to continue
+    nvprintf(clean_msg.c_str());  // <- This will end up in the Logger
+    return VK_FALSE;              // to continue
   };
 
   // Creating the callback
-  VkDebugUtilsMessengerEXT           dbg_messenger;
+  VkDebugUtilsMessengerEXT           dbg_messenger{};
   VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
   dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
   dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;

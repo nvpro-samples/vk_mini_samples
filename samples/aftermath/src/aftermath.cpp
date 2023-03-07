@@ -275,7 +275,10 @@ public:
     {  // Display the G-Buffer image
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      if(m_gBuffers)
+      {
+        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      }
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -283,7 +286,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto _sdbg = m_dutil->DBG_SCOPE(cmd);
+    if (!m_gBuffers)
+      return;
+
+    const     nvvk::DebugUtil::ScopedCmdLabel s_dbg = m_dutil->DBG_SCOPE(cmd);
 #if defined(USE_NSIGHT_AFTERMATH)
     m_frameNumber++;
 
@@ -298,10 +304,10 @@ public:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
-    float         view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
-    const auto&   clip              = CameraManip.getClipPlanes();
-    nvmath::mat4f matv              = CameraManip.getMatrix();
-    nvmath::mat4f matp              = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
+    const     float         view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
+    const nvmath::vec2f&   clip              = CameraManip.getClipPlanes();
+    const     nvmath::mat4f matv              = CameraManip.getMatrix();
+    const     nvmath::mat4f matp              = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
 
     FrameInfo finfo{};
     finfo.time[0] = static_cast<float>(ImGui::GetTime());
@@ -334,16 +340,15 @@ public:
 private:
   void createPipeline()
   {
-    auto& d = m_dset;
-    d->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->initLayout();
-    d->initPool(2);  // two frames - allow to change on the fly
+    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->initLayout();
+    m_dset->initPool(2);  // two frames - allow to change on the fly
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.setLayoutCount = 1;
-    create_info.pSetLayouts    = &d->getLayout();
+    create_info.pSetLayouts    = &m_dset->getLayout();
     NVVK_CHECK(vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipe.layout));
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -393,26 +398,24 @@ private:
   }
   void updateDescriptorSet()
   {
-    auto& d = m_dset;
     // Writing to descriptors
-    VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
-    VkDescriptorBufferInfo dbi_val{m_bValues.buffer, 0, VK_WHOLE_SIZE};
+    const     VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const     VkDescriptorBufferInfo dbi_val{m_bValues.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(d->makeWrite(0, 0, &dbi_unif));
-    writes.emplace_back(d->makeWrite(0, 1, &dbi_val));
-    writes.emplace_back(d->makeWrite(0, 2, &m_texture.descriptor));
+    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, 1, &dbi_val));
+    writes.emplace_back(m_dset->makeWrite(0, 2, &m_texture.descriptor));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
   void wrongDescriptorSet()
   {
-    auto& d = m_dset;
     // Writing to descriptors
     VkDescriptorBufferInfo dbi_unif{nullptr, 0, VK_WHOLE_SIZE};
     dbi_unif.buffer = VkBuffer(0xDEADBEEFDEADBEEF);
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(d->makeWrite(0, 1, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, 1, &dbi_unif));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
@@ -432,7 +435,7 @@ private:
     m_meshes.emplace_back(nvh::sphere(0.5F, 20, 20));
 
     {
-      auto* cmd = m_app->createTempCmdBuffer();
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
       // Create buffer of the mesh
       m_vertices = m_alloc->createBuffer(cmd, m_meshes[0].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -446,14 +449,14 @@ private:
       m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
       // Dummy buffer of values
-      std::vector<float> values = {0.5F};
+      const       std::vector<float> values = {0.5F};
       m_bValues = m_alloc->createBuffer(cmd, values, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
       m_dutil->DBG_NAME(m_bValues.buffer);
 
       // Create dummy texture
       {
-        VkImageCreateInfo    create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R8G8B8A8_UNORM);
-        VkSamplerCreateInfo  sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        const         VkImageCreateInfo    create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R8G8B8A8_UNORM);
+        const         VkSamplerCreateInfo  sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         std::vector<uint8_t> image_data = {255, 0, 255, 255};
         m_texture = m_alloc->createTexture(cmd, image_data.size() * sizeof(uint8_t), image_data.data(), create_info, sampler_info);
         m_dutil->DBG_NAME(m_texture.image);

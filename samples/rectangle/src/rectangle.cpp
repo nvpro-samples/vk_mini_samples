@@ -92,6 +92,9 @@ public:
 
   void onUIRender() override
   {
+    if(!m_gBuffers)
+      return;
+
     {  // Setting panel
       ImGui::Begin("Settings");
       ImGui::ColorPicker4("Clear Color", &m_clearColor.float32[0], ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
@@ -105,7 +108,7 @@ public:
       {
         std::array<char, 256> buf{};
 
-        int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
+        const         int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
                            static_cast<int>(m_viewSize.width), static_cast<int>(m_viewSize.height),
                            static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         assert(ret > 0);
@@ -125,7 +128,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto _sdbg = m_dutil->DBG_SCOPE(cmd);
+    if(!m_gBuffers)
+      return;
+
+    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()}, m_gBuffers->getDepthImageView(),
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
@@ -135,7 +141,7 @@ public:
     m_app->setViewport(cmd);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    VkDeviceSize offsets{0};
+    const     VkDeviceSize offsets{0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
     vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
@@ -152,7 +158,7 @@ private:
 
   void createPipeline()
   {
-    VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    const     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -193,9 +199,9 @@ private:
     const std::vector<uint16_t> indices  = {0, 2, 1, 2, 0, 3};
 
     {
-      auto* cmd  = m_app->createTempCmdBuffer();
-      m_vertices = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices  = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_app->submitAndWaitTempCmdBuffer(cmd);
       m_dutil->DBG_NAME(m_vertices.buffer);
       m_dutil->DBG_NAME(m_indices.buffer);
@@ -232,7 +238,7 @@ private:
 };
 
 
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = PROJECT_NAME " Example";

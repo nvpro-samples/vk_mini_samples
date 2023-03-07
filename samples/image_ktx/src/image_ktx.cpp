@@ -81,7 +81,7 @@ struct TextureKtx
       , m_alloc(a)
   {
     nv_ktx::KTXImage      ktx_image;
-    nv_ktx::ReadSettings  ktx_read_settings;
+    const     nv_ktx::ReadSettings  ktx_read_settings;
     nv_ktx::ErrorWithText maybe_error = ktx_image.readFromFile(filename.c_str(), ktx_read_settings);
     if(maybe_error.has_value())
     {
@@ -109,9 +109,9 @@ struct TextureKtx
   // Create the image, the sampler and the image view + generate the mipmap level for all
   void create(nv_ktx::KTXImage& ktximage)
   {
-    VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    VkFormat            format      = ktximage.format;
-    VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
+    const     VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    const     VkFormat            format      = ktximage.format;
+    const     VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
 
     nvvk::CommandPool cpool(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
     auto*             cmd = cpool.createCommandBuffer();
@@ -123,8 +123,8 @@ struct TextureKtx
 
     // Creating image level 0
     std::vector<char>& data         = ktximage.subresource();
-    VkDeviceSize       buffer_size  = data.size();
-    nvvk::Image        result_image = m_alloc->createImage(cmd, buffer_size, data.data(), img_create_info);
+    const     VkDeviceSize       buffer_size  = data.size();
+    const     nvvk::Image        result_image = m_alloc->createImage(cmd, buffer_size, data.data(), img_create_info);
 
     // Create all mip-levels
     nvvk::cmdBarrierImageLayout(cmd, result_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -134,14 +134,14 @@ struct TextureKtx
       img_create_info.extent.width  = std::max(1U, ktximage.mip_0_width >> mip);
       img_create_info.extent.height = std::max(1U, ktximage.mip_0_height >> mip);
 
-      VkOffset3D               offset{};
+      const       VkOffset3D               offset{};
       VkImageSubresourceLayers subresource{};
       subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       subresource.layerCount = 1;
       subresource.mipLevel   = mip;
 
       std::vector<char>& mipresource = ktximage.subresource(mip, 0, 0);
-      VkDeviceSize       buffer_size = mipresource.size();
+      const       VkDeviceSize       buffer_size = mipresource.size();
       if(img_create_info.extent.width > 0 && img_create_info.extent.height > 0)
       {
         staging->cmdToImage(cmd, result_image.image, offset, img_create_info.extent, subresource, buffer_size,
@@ -151,7 +151,7 @@ struct TextureKtx
     nvvk::cmdBarrierImageLayout(cmd, result_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     // Texture
-    VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(result_image.image, img_create_info);
+    const     VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(result_image.image, img_create_info);
     m_texture                     = m_alloc->createTexture(result_image, iv_info, sampler_info);
     m_dutil->DBG_NAME(m_texture.image);
     m_dutil->DBG_NAME(m_texture.descriptor.sampler);
@@ -190,8 +190,8 @@ public:
     m_dset       = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
-    std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
-    std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
+    const     std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
+    const     std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
     assert(!img_file.empty());
     m_texture = std::make_shared<TextureKtx>(m_app->getContext().get(), m_alloc.get(), img_file);
     assert(m_texture->valid());
@@ -204,10 +204,12 @@ public:
     if(g_use_tm_compute)
     {
       m_tonemapper->createComputePipeline();
+      m_tonemapper->updateComputeDescriptorSets(m_gBuffers->getDescriptorImageInfo(1), m_gBuffers->getDescriptorImageInfo(0));
     }
     else
     {
       m_tonemapper->createGraphicPipeline(m_gBuffers->getColorFormat(0), m_gBuffers->getDepthFormat());
+      m_tonemapper->updateGraphicDescriptorSets(m_gBuffers->getDescriptorImageInfo(1));
     }
   }
 
@@ -275,6 +277,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer0 image
+      if(m_gBuffers)
       ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
       ImGui::End();
@@ -284,19 +287,19 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto          sdbg              = m_dutil->DBG_SCOPE(cmd);
-    float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
-    CameraManip.getLookat(eye, center, up);
+    if (!m_gBuffers)
+      return;
+
+    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
+    const     float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
 
     // Update Frame buffer uniform buffer
-    FrameInfo   finfo{};
-    const auto& clip = CameraManip.getClipPlanes();
-    finfo.view       = CameraManip.getMatrix();
-    finfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
-    finfo.camPos     = eye;
+    FrameInfo            finfo{};
+    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
+    finfo.view                = CameraManip.getMatrix();
+    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
+    finfo.camPos              = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     renderScene(cmd);  // Render to GBuffer-1
@@ -309,22 +312,23 @@ private:
   {
     m_meshes.emplace_back(nvh::sphere());
     m_materials.push_back({vec4(1)});
-    auto& n    = m_nodes.emplace_back();
-    n.mesh     = 0;
-    n.material = 0;
+    nvh::Node& n = m_nodes.emplace_back();
+    n.mesh       = 0;
+    n.material   = 0;
 
     CameraManip.setClipPlanes({0.1F, 100.0F});
     CameraManip.setLookat({0.0F, 0.0F, 1.5F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
 
     // Set clear color in sRgb space
-    auto c = toLinear({0.3F, 0.3F, 0.3F});
+    nvmath::vec3f c = toLinear({0.3F, 0.3F, 0.3F});
     memcpy(m_clearColor.float32, &c.x, sizeof(vec3));
   }
 
 
   void renderScene(VkCommandBuffer cmd)
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    const    nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
     // Drawing the scene in GBuffer-1
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(1)},
                                      m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -335,10 +339,10 @@ private:
     m_app->setViewport(cmd);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
-    VkDeviceSize offsets{0};
-    for(auto& n : m_nodes)
+    const VkDeviceSize offsets{0};
+    for(const nvh::Node& n : m_nodes)
     {
-      auto& m = m_meshVk[n.mesh];
+      const PrimitiveMeshVk& m = m_meshVk[n.mesh];
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
       m_pushConst.color   = m_materials[n.material].color;
@@ -356,7 +360,8 @@ private:
 
   void renderPost(VkCommandBuffer cmd)
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    const  nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
     if(g_use_tm_compute)
     {
       // Compute
@@ -381,26 +386,25 @@ private:
 
   void createPipeline()
   {
-    auto& d = m_dset;
-    d->addBinding(BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->addBinding(BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-    d->initLayout();
-    d->initPool(2);  // two frames - allow to change on the fly
+    m_dset->addBinding(BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->initLayout();
+    m_dset->initPool(2);  // two frames - allow to change on the fly
 
     // Writing to descriptors
-    VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(d->makeWrite(0, 0, &dbi_unif));
-    writes.emplace_back(d->makeWrite(0, BKtxTex, &m_texture->descriptorImage()));
+    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, BKtxTex, &m_texture->descriptorImage()));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
-    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
     create_info.pPushConstantRanges    = &push_constant_ranges;
     create_info.setLayoutCount         = 1;
-    create_info.pSetLayouts            = &d->getLayout();
+    create_info.pSetLayouts            = &m_dset->getLayout();
     NVVK_CHECK(vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout));
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -433,19 +437,19 @@ private:
   {
     m_viewSize = {size.width, size.height};
     // Create two color GBuffers: 0-final result, 1-scene in sRGB
-    std::vector<VkFormat> color_buffers = {m_colorFormat, m_srgbFormat};
+    const std::vector<VkFormat> color_buffers = {m_colorFormat, m_srgbFormat};
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, color_buffers, m_depthFormat);
   }
 
   void createVkBuffers()
   {
-    auto* cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_meshVk.resize(m_meshes.size());
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
-      auto& m    = m_meshVk[i];
-      m.vertices = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      PrimitiveMeshVk& m = m_meshVk[i];
+      m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }
@@ -465,7 +469,7 @@ private:
 
     m_texture.reset();
 
-    for(auto& m : m_meshVk)
+    for(PrimitiveMeshVk& m : m_meshVk)
     {
       m_alloc->destroy(m.vertices);
       m_alloc->destroy(m.indices);
@@ -526,7 +530,7 @@ private:
 
 //////////////////////////////////////////////////////////////////////////
 
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
   spec.name             = PROJECT_NAME " Example";

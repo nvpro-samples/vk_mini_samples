@@ -52,9 +52,9 @@ namespace nvvkhl {
 class OfflineRender
 {
 public:
-  OfflineRender(nvvk::Context* ctx)
-  {
-    m_ctx     = ctx;
+  explicit OfflineRender(nvvk::Context* ctx)
+    : m_ctx (ctx)
+  { 
     m_alloc   = std::make_unique<nvvkhl::AllocVma>(ctx);
     m_cmdPool = std::make_unique<nvvk::CommandPool>(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
   }
@@ -66,11 +66,11 @@ public:
   // Rendering the scene to a frame buffer
   void offlineRender(float anim_time)
   {
-    nvh::ScopedTimer _st("Offline rendering");
+    const nvh::ScopedTimer s_timer("Offline rendering");
 
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color        = {0.1f, 0.1f, 0.4f, 0.f};
-    clearValues[1].depthStencil = {1.0f, 0};
+    std::array<VkClearValue, 2> clear_values{};
+    clear_values[0].color        = {0.1F, 0.1F, 0.4F, 0.F};
+    clear_values[1].depthStencil = {1.0F, 0};
 
     // Preparing the rendering
     VkCommandBuffer cmd = m_cmdPool->createCommandBuffer();
@@ -82,21 +82,21 @@ public:
 
     vkCmdBeginRendering(cmd, &r_info);
 
-    nvmath::vec2f size_f = {static_cast<float>(m_gBuffers->getSize().width), static_cast<float>(m_gBuffers->getSize().height)};
+    const     nvmath::vec2f size_f = {static_cast<float>(m_gBuffers->getSize().width), static_cast<float>(m_gBuffers->getSize().height)};
 
     // Viewport and scissor
-    VkViewport viewport{0.0F, 0.0F, size_f.x, size_f.y, 0.0F, 1.0F};
+    const     VkViewport viewport{0.0F, 0.0F, size_f.x, size_f.y, 0.0F, 1.0F};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-    VkRect2D scissor{{0, 0}, m_gBuffers->getSize()};
+    const     VkRect2D scissor{{0, 0}, m_gBuffers->getSize()};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     // Rendering the full-screen pixel shader
-    PushConstant pc;
-    pc.aspectRatio = size_f.x / size_f.y;
-    pc.iTime       = anim_time;
+    PushConstant push_c;
+    push_c.aspectRatio = size_f.x / size_f.y;
+    push_c.iTime       = anim_time;
 
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant), &pc);
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant), &push_c);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);  // No vertices, it is implicitly done in the vertex shader
 
@@ -111,25 +111,25 @@ public:
   //
   void saveImage(const std::string& outFilename)
   {
-    nvh::ScopedTimer _st("Save Image\n");
+    const     nvh::ScopedTimer s_timer("Save Image\n");
 
     // Create a temporary buffer to hold the pixels of the image
-    VkBufferUsageFlags usage{VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    VkDeviceSize       bufferSize  = 4 * sizeof(uint8_t) * m_gBuffers->getSize().width * m_gBuffers->getSize().height;
-    nvvk::Buffer       pixelBuffer = m_alloc->createBuffer(bufferSize, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    const     VkBufferUsageFlags usage{VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const     VkDeviceSize       buffer_size  = 4 * sizeof(uint8_t) * m_gBuffers->getSize().width * m_gBuffers->getSize().height;
+    nvvk::Buffer       pixel_buffer = m_alloc->createBuffer(buffer_size, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
-    imageToBuffer(m_gBuffers->getColorImage(), pixelBuffer.buffer);
+    imageToBuffer(m_gBuffers->getColorImage(), pixel_buffer.buffer);
 
     // Write the buffer to disk
     LOGI(" - Size: %d, %d\n", m_gBuffers->getSize().width, m_gBuffers->getSize().height);
     LOGI(" - Bytes: %d\n", m_gBuffers->getSize().width * m_gBuffers->getSize().height * 4);
     LOGI(" - Out name: %s\n", outFilename.c_str());
-    const void* data = m_alloc->map(pixelBuffer);
+    const void* data = m_alloc->map(pixel_buffer);
     stbi_write_jpg(outFilename.c_str(), m_gBuffers->getSize().width, m_gBuffers->getSize().height, 4, data, 0);
-    m_alloc->unmap(pixelBuffer);
+    m_alloc->unmap(pixel_buffer);
 
     // Destroy temporary buffer
-    m_alloc->destroy(pixelBuffer);
+    m_alloc->destroy(pixel_buffer);
   }
 
 
@@ -138,22 +138,22 @@ public:
   //
   void imageToBuffer(const VkImage& imgIn, const VkBuffer& pixelBufferOut)
   {
-    nvh::ScopedTimer _st(" - Image To Buffer");
+    const     nvh::ScopedTimer s_timer(" - Image To Buffer");
 
     VkCommandBuffer cmd = m_cmdPool->createCommandBuffer();
 
     // Make the image layout eTransferSrcOptimal to copy to buffer
-    VkImageSubresourceRange subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresourceRange);
+    const     VkImageSubresourceRange subresource_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresource_range);
 
     // Copy the image to the buffer
-    VkBufferImageCopy copyRegion{};
-    copyRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copyRegion.imageExtent      = VkExtent3D{m_gBuffers->getSize().width, m_gBuffers->getSize().height, 1};
-    vkCmdCopyImageToBuffer(cmd, imgIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixelBufferOut, 1, &copyRegion);
+    VkBufferImageCopy copy_region{};
+    copy_region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy_region.imageExtent      = VkExtent3D{m_gBuffers->getSize().width, m_gBuffers->getSize().height, 1};
+    vkCmdCopyImageToBuffer(cmd, imgIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixelBufferOut, 1, &copy_region);
 
     // Put back the image as it was
-    nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, subresourceRange);
+    nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, subresource_range);
     m_cmdPool->submitAndWait(cmd);
   }
 
@@ -163,10 +163,10 @@ public:
   //
   void createPipeline()
   {
-    nvh::ScopedTimer _st("Create Pipeline");
+    const     nvh::ScopedTimer s_timer("Create Pipeline");
 
     // Pipeline Layout: The layout of the shader needs only Push Constants: we are using parameters, time and aspect ratio
-    VkPushConstantRange        push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const     VkPushConstantRange        push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
     VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges    = &push_constants;
@@ -193,7 +193,7 @@ public:
   //
   void createFramebuffer(const VkExtent2D& size)
   {
-    nvh::ScopedTimer _st("Create Framebuffer");
+    const     nvh::ScopedTimer s_timer("Create Framebuffer");
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_ctx->m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
   }
 
@@ -220,10 +220,10 @@ private:
 };
 }  // namespace nvvkhl
 
-auto main(int argc, char** argv) -> int
+int main(int argc, char** argv)
 {
   // Logging to file
-  std::string logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
+  const   std::string logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
   nvprintSetLogFileName(logfile.c_str());
 
   float       anim_time{0.0F};
@@ -243,10 +243,10 @@ auto main(int argc, char** argv) -> int
 
   // Creating the Vulkan instance and device, with only defaults, no extension
   nvvk::Context           vkctx;
-  nvvk::ContextCreateInfo vkctxInfo{};
-  vkctxInfo.apiMajor = 1;
-  vkctxInfo.apiMinor = 3;
-  vkctx.init(vkctxInfo);
+  nvvk::ContextCreateInfo vkctx_info{};
+  vkctx_info.apiMajor = 1;
+  vkctx_info.apiMinor = 3;
+  vkctx.init(vkctx_info);
 
 
   // Create the application
