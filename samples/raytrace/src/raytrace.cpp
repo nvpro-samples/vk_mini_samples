@@ -65,6 +65,7 @@
 #include "_autogen/raytrace.rgen.h"
 #include "_autogen/raytrace.rmiss.h"
 
+#define MAXRAYRECURSIONDEPTH 5
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Ray trace multiple primitives
@@ -122,7 +123,9 @@ public:
       PropertyEditor::entry("Metallic", [&] { return ImGui::SliderFloat("#1", &m_pushConst.metallic, 0.0F, 1.0F); });
       PropertyEditor::entry("Roughness", [&] { return ImGui::SliderFloat("#1", &m_pushConst.roughness, 0.0F, 1.0F); });
       PropertyEditor::entry("Intensity", [&] { return ImGui::SliderFloat("#1", &m_pushConst.intensity, 0.0F, 10.0F); });
-      PropertyEditor::entry("Depth", [&] { return ImGui::SliderInt("#1", &m_pushConst.maxDepth, 0, 5); });
+      PropertyEditor::entry("Depth", [&] {
+        return ImGui::SliderInt("#1", &m_pushConst.maxDepth, 0, MAXRAYRECURSIONDEPTH);
+      });
       PropertyEditor::end();
       ImGui::Separator();
       ImGui::Text("Sun Orientation");
@@ -486,7 +489,7 @@ private:
     ray_pipeline_info.pStages                      = stages.data();
     ray_pipeline_info.groupCount                   = static_cast<uint32_t>(shader_groups.size());
     ray_pipeline_info.pGroups                      = shader_groups.data();
-    ray_pipeline_info.maxPipelineRayRecursionDepth = 2;  // Ray depth
+    ray_pipeline_info.maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH;  // Ray depth 
     ray_pipeline_info.layout                       = p.layout;
     vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &ray_pipeline_info, nullptr, &p.plines[0]);
     m_dutil->DBG_NAME(p.plines[0]);
