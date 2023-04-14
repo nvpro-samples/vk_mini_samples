@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2022 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,10 +22,10 @@
 
  This sample loads a KTX image with the `nv_ktx::KTXImage`
  
- - The library requires to also link with libzstd_static zlibstatic basisu
+ - The library requires to also link with libzstd_static, zlibstatic and basisu
    This can be found in the CMakeLists.txt
 
- Note that KTX can be sRgb, that mean if we are using it straight, we also
+ Note that KTX can be linear or sRgb, since our framebuffer aren't set as sRGB, we also
  need a tonemapper. We could have simply computed the result value in the 
  fragment shader, but it is more interesting to see that a second pass 
  can be added, therefore making it more flexible. 
@@ -199,17 +199,14 @@ public:
     createScene();
     createVkBuffers();
     createPipeline();
-    createGbuffers(m_app->getViewportSize());
 
     if(g_use_tm_compute)
     {
       m_tonemapper->createComputePipeline();
-      m_tonemapper->updateComputeDescriptorSets(m_gBuffers->getDescriptorImageInfo(1), m_gBuffers->getDescriptorImageInfo(0));
     }
     else
     {
       m_tonemapper->createGraphicPipeline(m_gBuffers->getColorFormat(0), m_gBuffers->getDepthFormat());
-      m_tonemapper->updateGraphicDescriptorSets(m_gBuffers->getDescriptorImageInfo(1));
     }
   }
 

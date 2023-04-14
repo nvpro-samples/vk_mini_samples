@@ -4,6 +4,24 @@
 // it is responsability of the host application to provide the right inputs to it and get the
 // output color from it and assign it to the screen pixel.
 
+// Input Uniforms
+/**
+Shader can be fed with different types of per-frame static information by using the following uniform variables:
+uniform vec3 iResolution;
+uniform float iTime;
+uniform float iTimeDelta;
+uniform float iFrame;
+uniform float iChannelTime[1];
+uniform vec4 iMouse;
+uniform vec3 iChannelResolution[1];
+uniform samplerXX iChanneli;
+
+Ex: to read from result of buffer_a
+    fragColor = texelFetch(iChannel0, ivec2(fragCoord), 0);
+
+**/
+
+
 void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
   // From https://www.shadertoy.com/view/XsVSzW
@@ -28,5 +46,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
   float r   = sin(uv.x - time) * 0.5 + 0.5;
   float b   = sin(uv.y + time) * 0.5 + 0.5;
   float g   = sin((uv.x + uv.y + sin(time * 0.5)) * 0.5) * 0.5 + 0.5;
+  
   fragColor = vec4(r, g, b, 1.0);
 }

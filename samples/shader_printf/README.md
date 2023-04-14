@@ -2,15 +2,16 @@
 
 ![img](docs/printf.png)
 
-[Debug Printf](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md) allows to debug shaders using a debug printf function. This function works conjunctly with [VK_EXT_debug_utils](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_EXT_debug_utils.html), and the print messages will be sent with the `VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT` flag.
+[Debug Printf](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md) allows to debug shaders using a debug printf function. 
 
-In debug, the [nvvk](https://github.com/nvpro-samples/nvpro_core/tree/master/nvvk) framework vulkan context creation ([context_vk](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvk/context_vk.cpp)) uses validation layers by default. In addition, the while creating the Vulkan instance, the helper class creates the callback mechanism to catch various messages.
+Even with the help of a great debugging tool like [Nsight Graphics](https://developer.nvidia.com/nsight-graphics), debugging Vulkan shaders can be very challenging. [Debug Printf](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md) feature enables  to put Debug Print statements into shaders to debug them. This sample shows how it is added to [nvpro-sample](https://github.com/nvpro-samples) simple applications.
 
-Look for [`Context::debugMessengerCallback()`](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvk/context_vk.cpp#L122) for the callback and `Context::initDebugUtils()` for the creation.
+
+
 
 ## Enabling Debug_printf
 
-In `main()`, we will need a new extension [`VK_KHR_shader_non_semantic_info`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_shader_non_semantic_info.html) and enabling validation features through [`VkValidationFeaturesEXT`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkValidationFeaturesEXT.html). In this sample, we are only enabling **debug printf** and not disabling any features.
+In `main()`, we will need a new extension [`VK_KHR_shader_non_semantic_info`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_shader_non_semantic_info.html) (prior to Vulkan 1.3) and enabling validation features through [`VkValidationFeaturesEXT`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkValidationFeaturesEXT.html). In this sample, we are only enabling **debug printf** and not disabling any features.
 
 ````cpp
   // #debug_printf
@@ -38,6 +39,46 @@ Then you can use `debugPrintfEXT()` to print messages, but please note the [limi
 ````cpp
 debugPrintfEXT("HERE");
 ````
+
+## Catching Messages
+
+To get messages, a Messenger need to be created with `INFO` flag to get the severty level that the printf send its messages. 
+
+```
+  // Creating the callback
+  VkDebugUtilsMessengerEXT           dbg_messenger{};
+  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+  dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
+  dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
+  dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
+  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getContext()->m_instance, &dbg_messenger_create_info, nullptr, &dbg_messenger));
+  ```
+
+The callback for the messages, have been written like this. Note that we are stripping the incomming string, to make the message more clear.
+
+```
+  // #debug_printf
+  // Vulkan message callback - for receiving the printf in the shader
+  // Note: there is already a callback in nvvk::Context, but by defaut it is not printing INFO severity
+  //       this callback will catch the message and will make it clean for display.
+  auto dbg_messenger_callback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                   const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
+    // Get rid of all the extra message we don't need
+    std::string clean_msg = callbackData->pMessage;
+    clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
+    nvprintf(clean_msg.c_str());  // <- This will end up in the Logger
+    return VK_FALSE;              // to continue
+  };
+  ``` 
+
+  **NOTE** Do not forget to detroy the messenger at the end of the application.
+
+  ```
+    // #debug_printf : Removing the callback
+  vkDestroyDebugUtilsMessengerEXT(app->getContext()->m_instance, dbg_messenger, nullptr);
+  ```
+
+
 
 ## Interactive Debug
 

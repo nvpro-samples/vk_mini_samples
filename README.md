@@ -82,9 +82,12 @@ If you are new to this repository, the first samples to read to better understan
 | [aftermath](samples/aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/aftermath/docs/aftermath_th.jpg) |
 | [image_ktx](samples/image_ktx) | Display KTX image and apply tonemap post processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) |
 | [image_viewer](samples/image_viewer) | Load an image, allow to zoom and pan under mouse cursor | ![](samples/image_viewer/docs/image_viewer_th.jpg) |
+| [mm_displacement](samples/mm_displacement) | Micro-mesh displacement  | ![](samples/mm_displacement/docs/micromesh_th.jpg) |
+| [mm_opacity](samples/mm_opacity) | Micromap opacity  | ![](samples/mm_opacity/docs/opacity_th.jpg) |
 | [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing  | ![](samples/msaa/docs/msaa_th.jpg) |
 | [shader_printf](samples/shader_printf) | Add printf to shader and display in a log window  | ![](samples/shader_printf/docs/printf_th.jpg) |
 | [raytrace](samples/raytrace) | Simple ray tracer using metalic-roughness shading, reflection and shadows and simple sky shader.  | ![](samples/raytrace/docs/raytrace_th.jpg) |
+| [shading execution reorder](samples/ser_pathtrace) | Known also as SER, this shows how to reorder execution rays to gain a better usage of the GPU.  | ![](samples/ser_pathtrace/docs/ser_2_th.jpg) |
 | [simple_polygons](samples/simple_polygons) | Rasterizing multiple polygonal objects.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) |
 | [offscreen](samples/offscreen) | Render without window context and save image to disk.  | ![](samples/offscreen/docs/offline_th.jpg) |
 | [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) |
@@ -92,5 +95,5 @@ If you are new to this repository, the first samples to read to better understan
 
 ## LICENSE
 
-Copyright 2022 NVIDIA CORPORATION. Released under Apache License,
+Copyright 2023 NVIDIA CORPORATION. Released under Apache License,
 Version 2.0. See "LICENSE" file for details.

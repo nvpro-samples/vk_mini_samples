@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2022 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 450
 
 layout(location = 0) in vec2 inPosition;
-layout(location = 1) in vec2 inUv;
 
 void main()
 {

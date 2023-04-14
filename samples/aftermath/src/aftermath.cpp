@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2022 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +26,7 @@
        - Download the NSight Aftermath SDK
        - Put the include/ and lib/ under aftermath/aftermath_sdk
        - Delete CMake cache and rerun Cmake
-
+       - ** The CMake `NSIGHT_AFTERMATH_SDK` variable can also be set to a different directory **
 */
 
 
@@ -286,10 +286,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if (!m_gBuffers)
+    if(!m_gBuffers)
       return;
 
-    const     nvvk::DebugUtil::ScopedCmdLabel s_dbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel s_dbg = m_dutil->DBG_SCOPE(cmd);
 #if defined(USE_NSIGHT_AFTERMATH)
     m_frameNumber++;
 
@@ -304,10 +304,10 @@ public:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
-    const     float         view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
-    const nvmath::vec2f&   clip              = CameraManip.getClipPlanes();
-    const     nvmath::mat4f matv              = CameraManip.getMatrix();
-    const     nvmath::mat4f matp              = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
+    const float view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
+    const nvmath::vec2f& clip     = CameraManip.getClipPlanes();
+    const nvmath::mat4f  matv     = CameraManip.getMatrix();
+    const nvmath::mat4f  matp     = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
 
     FrameInfo finfo{};
     finfo.time[0] = static_cast<float>(ImGui::GetTime());
@@ -399,8 +399,8 @@ private:
   void updateDescriptorSet()
   {
     // Writing to descriptors
-    const     VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
-    const     VkDescriptorBufferInfo dbi_val{m_bValues.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo dbi_val{m_bValues.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
@@ -449,15 +449,15 @@ private:
       m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
       // Dummy buffer of values
-      const       std::vector<float> values = {0.5F};
+      const std::vector<float> values = {0.5F};
       m_bValues = m_alloc->createBuffer(cmd, values, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
       m_dutil->DBG_NAME(m_bValues.buffer);
 
       // Create dummy texture
       {
-        const         VkImageCreateInfo    create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R8G8B8A8_UNORM);
-        const         VkSamplerCreateInfo  sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        std::vector<uint8_t> image_data = {255, 0, 255, 255};
+        const VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R8G8B8A8_UNORM);
+        const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        std::vector<uint8_t>      image_data = {255, 0, 255, 255};
         m_texture = m_alloc->createTexture(cmd, image_data.size() * sizeof(uint8_t), image_data.data(), create_info, sampler_info);
         m_dutil->DBG_NAME(m_texture.image);
         m_dutil->DBG_NAME(m_texture.descriptor.sampler);
@@ -519,6 +519,7 @@ int main(int argc, char** argv)
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;
   spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+  spec.vkSetup.enableAftermath = false; // We want our integration
 
 #ifdef USE_NSIGHT_AFTERMATH
   // Enable NV_device_diagnostic_checkpoints extension to be able to use Aftermath event markers.

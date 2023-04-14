@@ -13,19 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2022 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 /*
- This sample shows how shaders can be loaded and reloaded from disk
+Note: This is primarily to show how to compile shaders on the fly.
+
+This sample replicate in a simple form, the execution of shaders like 
+ the ones found on https://www.shadertoy.com/. shows how shaders can be loaded and reloaded from disk.
+ - Many uniforms can be accessed: iResolution, iTimes, iFrame, iChannelTime, iMouse, ... 
+ - The BufferA can be persisted between frames, same as with ShaderToy and its result
+   is stored in iChannel0
+
 */
+
+
 // clang-format off
 #define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
 // clang-format on
 
 #include <array>
+#include <filesystem>
+
 #include <vulkan/vulkan_core.h>
 #include "nvmath/nvmath.h"
 #include <imgui.h>
@@ -77,6 +88,16 @@ public:
   TinyShaderToy()           = default;
   ~TinyShaderToy() override = default;
 
+  std::vector<std::string> getShaderDirs()
+  {
+    return {
+        NVPSystem::exePath() + std::string(PROJECT_RELDIRECTORY) + std::string("shaders"),  //
+        NVPSystem::exePath() + std::string(PROJECT_NAME) + std::string("/shaders"),         //
+        NVPSystem::exePath()                                                                //
+    };
+  }
+
+
   void onAttach(nvvkhl::Application* app) override
   {
     m_app    = app;
@@ -87,9 +108,9 @@ public:
 
     // glsl compiler
     m_glslC = std::make_unique<nvvkhl::GlslCompiler>();
-    m_glslC->addInclude(NVPSystem::exePath() + std::string(PROJECT_RELDIRECTORY) + std::string("shaders"));
-    m_glslC->addInclude(NVPSystem::exePath());
-    m_glslC->addInclude(NVPSystem::exePath() + std::string(PROJECT_NAME) + std::string("/shaders"));
+    // Add search paths
+    for(const auto& path : getShaderDirs())
+      m_glslC->addInclude(path);
 
     const std::string err_msg = compileShaders();
     if(!err_msg.empty())
@@ -118,6 +139,19 @@ public:
     {  // Setting panel
       ImGui::Begin("Settings");
       ImGui::Text("Edit the fragment shader, then click:");
+
+      ImGui::Text("Open");
+      ImGui::SameLine();
+      if(ImGui::Button("Image"))
+      {
+        openFile("image.glsl");
+      }
+      ImGui::SameLine();
+      if(ImGui::Button("Buffer A"))
+      {
+        openFile("buffer_a.glsl");
+      }
+
       if(ImGui::Button("Reload Shaders"))
       {
         error_msg = compileShaders();
@@ -265,8 +299,8 @@ private:
     m_app->setViewport(cmd);
 
     // Writing descriptor
-    const VkDescriptorImageInfo             in_desc  = m_gBuffers->getDescriptorImageInfo(inImage);
-    const VkDescriptorImageInfo             out_desc = m_gBuffers->getDescriptorImageInfo(outImage);
+    const VkDescriptorImageInfo       in_desc  = m_gBuffers->getDescriptorImageInfo(inImage);
+    const VkDescriptorImageInfo       out_desc = m_gBuffers->getDescriptorImageInfo(outImage);
     std::vector<VkWriteDescriptorSet> writes;
     writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
     writes.push_back(m_dset->makeWrite(0, 1, &out_desc));
@@ -320,7 +354,7 @@ private:
     m_glslC->options()->SetTargetSpirv(shaderc_spirv_version::shaderc_spirv_version_1_2);
     m_glslC->options()->SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
     m_glslC->options()->SetGenerateDebugInfo();
-    m_glslC->options()->SetOptimizationLevel(shaderc_optimization_level_performance);
+    m_glslC->options()->SetOptimizationLevel(shaderc_optimization_level_zero);
   }
 
   std::string compileShaders()
@@ -400,6 +434,29 @@ private:
     }
   }
 
+  // Opening a file
+  void openFile(const std::string& file)
+  {
+    namespace fs = std::filesystem;
+    std::string directoryPath;
+    for(const auto& dir : getShaderDirs())
+    {
+      fs::path p = fs::path(dir) / fs::path(file);
+      if(fs::exists(p))
+      {
+        directoryPath = p.string();
+        break;
+      }
+    }
+
+#ifdef _WIN32  // For Windows
+    std::string command = "start " + std::string(directoryPath);
+    system(command.c_str());
+#elif defined __linux__  // For Linux
+    std::string command = "xdg-open " + std::string(directoryPath);
+    system(command.c_str());
+#endif 
+  }
 
   void detroyResources()
   {
