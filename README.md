@@ -62,7 +62,7 @@ The `init()` function will create the Vulkan context using `nvvk::Context`, crea
 
 #### Run
 
-The `run()` function is an infinite loop until the close event is trigger. Within the loop, each engine will be called with:
+The `run()` function is an infinite loop until the close event is triggered. Within the loop, each engine will be called with:
 
 * onResize : Called when the viewport size is changing
 * onUIRender : Called for anything related to UI
