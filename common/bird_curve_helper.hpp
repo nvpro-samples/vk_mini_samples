@@ -63,7 +63,7 @@ public:
 
   DisplacementBlocks createDisplacementBlocks(uint32_t level);  // Return the displacement blocks: block of indices for unorm11 uncompressed
 
-  static void BirdCurveHelper::micro2bary(uint32_t index, uint32_t subdivisionLevel, nvmath::vec3f& uv0, nvmath::vec3f& uv1, nvmath::vec3f& uv2);
+  static void micro2bary(uint32_t index, uint32_t subdivisionLevel, nvmath::vec3f& uv0, nvmath::vec3f& uv1, nvmath::vec3f& uv2);
 
 private:
   void init(const nvmath::vec3f& w, const nvmath::vec3f& u, const nvmath::vec3f& v);
