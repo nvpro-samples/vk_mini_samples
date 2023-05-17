@@ -299,7 +299,7 @@ int main(int argc, char** argv)
     // Get rid of all the extra message we don't need
     std::string clean_msg = callbackData->pMessage;
     clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
-    nvprintf(clean_msg.c_str());  // <- This will end up in the Logger
+    nvprintf("%s", clean_msg.c_str());  // <- This will end up in the Logger
     return VK_FALSE;              // to continue
   };
 
