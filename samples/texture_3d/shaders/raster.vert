@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
  *
@@ -17,34 +16,29 @@
  * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
+#version 450
 
-#pragma once
-#include <string>
-#include "nvh/nvprint.hpp"
-#include "nvh/timesampler.hpp"
+#extension GL_GOOGLE_include_directive : enable
 
+#include "device_host.h"
 
-//--------------------------------------------------------------------------------------------------
-// Print the time a function takes and indent nested functions
-//
-struct NestingScopedTimer
+layout(location = 0) in vec3 inPosition;
+
+layout(location = 0) out vec3 outFragPos;
+
+layout(set = 0, binding = 0) uniform FrameInfo_
 {
-  explicit NestingScopedTimer(std::string str)
-      : m_name(std::move(str))
-  {
-    LOGI("%s%s:\n", indent().c_str(), m_name.c_str());
-    ++s_depth;
-  }
-
-  ~NestingScopedTimer()
-  {
-    --s_depth;
-    LOGI("%s|-> (%.3f ms)\n", indent().c_str(), m_sw.elapsed());
-  }
-
-  static std::string indent();
-
-  std::string                m_name;
-  nvh::Stopwatch             m_sw;
-  static thread_local size_t s_depth;
+  FrameInfo frameInfo;
 };
+
+layout(push_constant) uniform PushConstant_
+{
+  PushConstant pushC;
+};
+
+void main()
+{
+  vec4 pos    = pushC.transfo * vec4(inPosition.xyz, 1.0);
+  gl_Position = frameInfo.proj * frameInfo.view * vec4(pos);
+  outFragPos = pos.xyz;
+}

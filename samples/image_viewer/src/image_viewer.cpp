@@ -258,7 +258,7 @@ public:
 
       // Display the G-Buffer image
       if(m_gBuffers)
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();

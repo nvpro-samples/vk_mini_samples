@@ -159,12 +159,12 @@ vec3 pathTrace(Ray r, inout uint seed)
 
     // Add dummy divergence
     // This sample shader is too simple to show the benefits of sorting
-    // rays, with this we create some artificial workload depending on the 
+    // rays, with this we create some artificial workload depending on the
     // material ID
 
-    vec3 dummy = payload.nrm;
+    vec3 dummy     = payload.nrm;
     uint dummyLoop = (iInfo.materialID * 128) & (1024 - 1);
-    for (uint i = 0; i < dummyLoop; i++)
+    for(uint i = 0; i < dummyLoop; i++)
     {
       dummy = sin(dummy);
     }
@@ -265,8 +265,8 @@ void main()
   // Debug - Heatmap
   if(pc.heatmap == 1)
   {
-    uint64_t end  = clockRealtimeEXT();
-    uint duration = uint(end - start);
+    uint64_t end      = clockRealtimeEXT();
+    uint     duration = uint(end - start);
 
     // log maximum of current frame
     uint statsIndex = uint(pc.frame) & 1;
@@ -275,10 +275,10 @@ void main()
     uint maxDuration = heatStats.maxDuration[statsIndex ^ 1];
 
     // lower ceiling to see some more red ;)
-    float    high = float(maxDuration) * 0.50;
+    float high = float(maxDuration) * 0.50;
 
-    float    val  = clamp(float(duration) / high, 0.0F, 1.0F);
-    pixel_color   = temperature(val);
+    float val   = clamp(float(duration) / high, 0.0F, 1.0F);
+    pixel_color = temperature(val);
 
     first_frame = true;
     // Wrap & SM visualization

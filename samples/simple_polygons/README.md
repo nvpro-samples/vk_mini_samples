@@ -7,7 +7,7 @@ Simple raster example, using a camera, various geometries and instances, basic l
 
 ## onAttach
 
-The `onAttach` function will create the VMA allocator, the scene, a collection of primitives, materials and instances refering the meshes. It creates the Vulkan representation of the scene by creating multiple buffers of vertices and indices in `createVkBuffers` and the pipeline to display.
+The `onAttach` function will create the VMA allocator, the scene, a collection of primitives, materials and instances referring the meshes. It creates the Vulkan representation of the scene by creating multiple buffers of vertices and indices in `createVkBuffers` and the pipeline to display.
 
 ## onUIRender
 

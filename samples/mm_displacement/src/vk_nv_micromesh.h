@@ -29,6 +29,7 @@
 #pragma once
 
 #include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_beta.h>
 
 // for name, value in test:gmatch("(VK_[%w_]+) = ([%w_]+),") do print("#define "..name.."  ((VkStructureType)"..value..")") end
 

@@ -80,9 +80,9 @@ struct TextureKtx
       : m_ctx(c)
       , m_alloc(a)
   {
-    nv_ktx::KTXImage      ktx_image;
-    const     nv_ktx::ReadSettings  ktx_read_settings;
-    nv_ktx::ErrorWithText maybe_error = ktx_image.readFromFile(filename.c_str(), ktx_read_settings);
+    nv_ktx::KTXImage           ktx_image;
+    const nv_ktx::ReadSettings ktx_read_settings;
+    nv_ktx::ErrorWithText      maybe_error = ktx_image.readFromFile(filename.c_str(), ktx_read_settings);
     if(maybe_error.has_value())
     {
       LOGE("KTX Error: %s\n", maybe_error->c_str());
@@ -109,9 +109,8 @@ struct TextureKtx
   // Create the image, the sampler and the image view + generate the mipmap level for all
   void create(nv_ktx::KTXImage& ktximage)
   {
-    const     VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    const     VkFormat            format      = ktximage.format;
-    const     VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
+    const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    const VkFormat            format = ktximage.format;
 
     nvvk::CommandPool cpool(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
     auto*             cmd = cpool.createCommandBuffer();
@@ -123,8 +122,8 @@ struct TextureKtx
 
     // Creating image level 0
     std::vector<char>& data         = ktximage.subresource();
-    const     VkDeviceSize       buffer_size  = data.size();
-    const     nvvk::Image        result_image = m_alloc->createImage(cmd, buffer_size, data.data(), img_create_info);
+    const VkDeviceSize buffer_size  = data.size();
+    const nvvk::Image  result_image = m_alloc->createImage(cmd, buffer_size, data.data(), img_create_info);
 
     // Create all mip-levels
     nvvk::cmdBarrierImageLayout(cmd, result_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -134,14 +133,14 @@ struct TextureKtx
       img_create_info.extent.width  = std::max(1U, ktximage.mip_0_width >> mip);
       img_create_info.extent.height = std::max(1U, ktximage.mip_0_height >> mip);
 
-      const       VkOffset3D               offset{};
+      const VkOffset3D         offset{};
       VkImageSubresourceLayers subresource{};
       subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       subresource.layerCount = 1;
       subresource.mipLevel   = mip;
 
       std::vector<char>& mipresource = ktximage.subresource(mip, 0, 0);
-      const       VkDeviceSize       buffer_size = mipresource.size();
+      const VkDeviceSize buffer_size = mipresource.size();
       if(img_create_info.extent.width > 0 && img_create_info.extent.height > 0)
       {
         staging->cmdToImage(cmd, result_image.image, offset, img_create_info.extent, subresource, buffer_size,
@@ -151,8 +150,8 @@ struct TextureKtx
     nvvk::cmdBarrierImageLayout(cmd, result_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     // Texture
-    const     VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(result_image.image, img_create_info);
-    m_texture                     = m_alloc->createTexture(result_image, iv_info, sampler_info);
+    const VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(result_image.image, img_create_info);
+    m_texture                           = m_alloc->createTexture(result_image, iv_info, sampler_info);
     m_dutil->DBG_NAME(m_texture.image);
     m_dutil->DBG_NAME(m_texture.descriptor.sampler);
 
@@ -190,8 +189,8 @@ public:
     m_dset       = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
-    const     std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
-    const     std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
+    const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
+    const std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
     assert(!img_file.empty());
     m_texture = std::make_shared<TextureKtx>(m_app->getContext().get(), m_alloc.get(), img_file);
     assert(m_texture->valid());
@@ -210,7 +209,11 @@ public:
     }
   }
 
-  void onDetach() override { destroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onUIMenu() override
   {
@@ -275,7 +278,7 @@ public:
 
       // Display the G-Buffer0 image
       if(m_gBuffers)
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -284,12 +287,12 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if (!m_gBuffers)
+    if(!m_gBuffers)
       return;
 
-    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const     float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
 
     // Update Frame buffer uniform buffer
     FrameInfo            finfo{};
@@ -324,7 +327,7 @@ private:
 
   void renderScene(VkCommandBuffer cmd)
   {
-    const    nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     // Drawing the scene in GBuffer-1
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(1)},
@@ -357,7 +360,7 @@ private:
 
   void renderPost(VkCommandBuffer cmd)
   {
-    const  nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     if(g_use_tm_compute)
     {
@@ -389,13 +392,14 @@ private:
     m_dset->initPool(2);  // two frames - allow to change on the fly
 
     // Writing to descriptors
-    const VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
     writes.emplace_back(m_dset->makeWrite(0, BKtxTex, &m_texture->descriptorImage()));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
-    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                      sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;

@@ -102,7 +102,11 @@ public:
     createRtxPipeline();
   }
 
-  void onDetach() override { destroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onResize(uint32_t width, uint32_t height) override
   {
@@ -121,9 +125,8 @@ public:
       PropertyEditor::entry("Metallic", [&] { return ImGui::SliderFloat("#1", &m_pushConst.metallic, 0.0F, 1.0F); });
       PropertyEditor::entry("Roughness", [&] { return ImGui::SliderFloat("#1", &m_pushConst.roughness, 0.0F, 1.0F); });
       PropertyEditor::entry("Intensity", [&] { return ImGui::SliderFloat("#1", &m_pushConst.intensity, 0.0F, 10.0F); });
-      PropertyEditor::entry("Depth", [&] {
-        return ImGui::SliderInt("#1", &m_pushConst.maxDepth, 0, MAXRAYRECURSIONDEPTH);
-      });
+      PropertyEditor::entry("Depth",
+                            [&] { return ImGui::SliderInt("#1", &m_pushConst.maxDepth, 0, MAXRAYRECURSIONDEPTH); });
       PropertyEditor::end();
       ImGui::Separator();
       ImGui::Text("Sun Orientation");
@@ -487,7 +490,7 @@ private:
     ray_pipeline_info.pStages                      = stages.data();
     ray_pipeline_info.groupCount                   = static_cast<uint32_t>(shader_groups.size());
     ray_pipeline_info.pGroups                      = shader_groups.data();
-    ray_pipeline_info.maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH;  // Ray depth 
+    ray_pipeline_info.maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH;  // Ray depth
     ray_pipeline_info.layout                       = p.layout;
     vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &ray_pipeline_info, nullptr, &p.plines[0]);
     m_dutil->DBG_NAME(p.plines[0]);
@@ -558,7 +561,6 @@ private:
   vec2                             m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
   ProceduralSkyShaderParameters    m_skyParams{};
@@ -592,7 +594,6 @@ private:
   PushConstant     m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int              m_frame{0};
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
   nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper

@@ -77,7 +77,11 @@ public:
     createGeometryBuffers();
   }
 
-  void onDetach() override { detroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onUIMenu() override
   {
@@ -121,9 +125,9 @@ public:
       // Pick the mouse coordinate if the mouse is down
       if(ImGui::GetIO().MouseDown[0])
       {
-        const         nvmath::vec2f mouse_pos   = ImGui::GetMousePos();         // Current mouse pos in window
-        const         nvmath::vec2f corner      = ImGui::GetCursorScreenPos();  // Corner of the viewport
-        m_pushConstant.mouseCoord = mouse_pos - corner;
+        const nvmath::vec2f mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+        const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
+        m_pushConstant.mouseCoord     = mouse_pos - corner;
       }
       else
       {
@@ -142,10 +146,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if (!m_gBuffers)
+    if(!m_gBuffers)
       return;
 
-    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
     nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()}, m_gBuffers->getDepthImageView(),
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
@@ -157,7 +161,7 @@ public:
                        sizeof(PushConstant), &m_pushConstant);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    const     VkDeviceSize offsets{0};
+    const VkDeviceSize offsets{0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
     vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
@@ -175,7 +179,8 @@ private:
   void createPipeline()
   {
 
-    const     VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                      sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
@@ -228,7 +233,7 @@ private:
     }
   }
 
-  void detroyResources()
+  void destroyResources()
   {
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
@@ -299,8 +304,8 @@ int main(int argc, char** argv)
     // Get rid of all the extra message we don't need
     std::string clean_msg = callbackData->pMessage;
     clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
-    nvprintf(clean_msg.c_str());  // <- This will end up in the Logger
-    return VK_FALSE;              // to continue
+    nvprintf("%s", clean_msg.c_str());  // <- This will end up in the Logger
+    return VK_FALSE;                    // to continue
   };
 
   // Creating the callback

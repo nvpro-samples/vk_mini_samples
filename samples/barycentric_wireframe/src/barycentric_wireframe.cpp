@@ -19,7 +19,10 @@
 //////////////////////////////////////////////////////////////////////////
 /*
 
- This sample creates a 3D cube and render using the builtin camera
+ This sample shows how to draw wireframe on top of solid geometry in a 
+ single pass, using gl_BaryCoordEXT (same as gl_BaryCoordNV)
+
+ https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_fragment_shader_barycentric.html
 
 */
 //////////////////////////////////////////////////////////////////////////
@@ -51,24 +54,41 @@
 #include "_autogen/raster.vert.h"
 #include "shaders/device_host.h"
 #include "nvvk/images_vk.hpp"
+#include "imgui_helper.h"
+
+
+// thickness;color;thicknessVar;smoothing;screenSpace;backFaceColor;enableDash;dashRepeats;dashLength;onlyWire;
+std::vector<WireframeSettings> presets{
+    {1.0F, {0.8F, 0.F, 0.F}, {1.0F, 1.0F}, 1.0F, 1, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 0},       // default
+    {1.0F, {0.F, 0.8F, 0.F}, {1.0F, 1.0F}, 0.5F, 1, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 1},       // Wire dot
+    {0.1F, {0.9F, 0.9F, 0.F}, {0.0F, 1.0F}, 0.1F, 0, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 0},      // Star
+    {0.1F, {0.7F, 0.0F, 0.01F}, {0.7F, 0.0F}, 0.1F, 0, {0.07F, 0.0F, 0.0F}, 1, 10, 0.8F, 1},  // Flake
+    {0.3F, {1.F, 1.0F, 1.F}, {1.F, 1.F}, 2.F, 1, {0.06F, 0.06F, 0.06F}, 0, 8, 0.4F, 0},       // Thin
+    {0.5F, {.8F, .8F, .8F}, {1.F, 1.F}, 1.F, 1, {0.1F, 0.1F, 0.1F}, 1, 1, 1.F, 1},            // Wire line
+    {0.5F, {.8F, .8F, .8F}, {1.F, 1.F}, 1.F, 1, {0.1F, 0.1F, 0.1F}, 1, 20, 0.5F, 1},          // Stipple
+};
 
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
-class SimplePolygons : public nvvkhl::IAppElement
+class BaryWireframe : public nvvkhl::IAppElement
 {
 public:
-  SimplePolygons()           = default;
-  ~SimplePolygons() override = default;
+  BaryWireframe()           = default;
+  ~BaryWireframe() override = default;
 
   void onAttach(nvvkhl::Application* app) override
   {
+    nvh::ScopedTimer st(__FUNCTION__);
+
     m_app    = app;
     m_device = m_app->getDevice();
 
     m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
     m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+
+    m_settings = presets[0];
 
     createScene();
     createVkBuffers();
@@ -91,18 +111,40 @@ public:
     {  // Setting menu
       ImGui::Begin("Settings");
       ImGuiH::CameraWidget();
-      ImGui::End();
+
+      // Objects
+      const char* items[] = {"Sphere", "Cube", "Tetrahedron", "Octahedron", "Icosahedron", "Cone"};
+      int         flag    = ImGuiSliderFlags_Logarithmic;
+      float       maxT    = m_settings.screenSpace ? 10.0F : 0.3f;
+      using PE            = ImGuiH::PropertyEditor;
+      PE::begin();
+      PE::entry("Geometry", [&] { return ImGui::Combo("##1", &m_currentObject, items, IM_ARRAYSIZE(items)); });
+      PE::entry("Screen Space", [&] { return ImGui::Checkbox("##2", (bool*)&m_settings.screenSpace); });
+      PE::entry("Only Wire", [&] { return ImGui::Checkbox("##8", (bool*)&m_settings.onlyWire); });
+      PE::entry("Color", [&] { return ImGui::ColorEdit3("##3", &m_settings.color.x); });
+      PE::entry("Back Color", [&] { return ImGui::ColorEdit3("##4", &m_settings.backFaceColor.x); });
+      PE::entry("Thickness", [&] { return ImGui::SliderFloat("##5", &m_settings.thickness, 0.F, maxT, "%.3f", flag); });
+      PE::entry("Edge Variation", [&] { return ImGui::SliderFloat2("##6", &m_settings.thicknessVar.x, 0.F, 1.F); });
+      PE::entry("Smoothing", [&] { return ImGui::SliderFloat("##7", &m_settings.smoothing, 0.F, 2.F); });
+      PE::entry("Stipple", [&] { return ImGui::Checkbox("", (bool*)&m_settings.enableStipple); });
+      PE::entry("Repeats", [&] { return ImGui::SliderInt("##1", &m_settings.stippleRepeats, 0, 20); });
+      PE::entry("Length", [&] { return ImGui::SliderFloat("##2", &m_settings.stippleLength, 0.F, 1.F); });
+      PE::end();
+      PE::begin();
+      {
+        static int  item_current = 0;
+        const char* items[]      = {"Default", "Wireframe dot", "Star", "Flake", " Thin", "Wireframe line", "Stipple"};
+        if(PE::entry("Preset", [&] { return ImGui::Combo("##1", &item_current, items, IM_ARRAYSIZE(items)); }))
+          m_settings = presets[item_current];
+      }
+      PE::end();
+
+      ImGui::End();  // "Settings"
     }
 
     {  // Rendering Viewport
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
-
-      // Deal with mouse interaction only if the window has focus
-      if(ImGui::IsWindowHovered(ImGuiFocusedFlags_RootWindow) && ImGui::IsMouseDoubleClicked(0))
-      {
-        rasterPicking();
-      }
 
       // Display the G-Buffer image
       ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
@@ -119,7 +161,7 @@ public:
 
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const float   aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float   aspect_ratio = m_gBuffers->getAspectRatio();
     nvmath::vec3f eye;
     nvmath::vec3f center;
     nvmath::vec3f up;
@@ -133,6 +175,8 @@ public:
     finfo.camPos              = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
+    vkCmdUpdateBuffer(cmd, m_bSettings.buffer, 0, sizeof(WireframeSettings), &m_settings);
+
     // Drawing the primitives in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
                                      m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -144,12 +188,13 @@ public:
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0, 1, m_dset->getSets(), 0, nullptr);
     const VkDeviceSize offsets{0};
-    for(const nvh::Node& n : m_nodes)
+    auto&              n = m_nodes[m_currentObject];
     {
       PrimitiveMeshVk& m = m_meshVk[n.mesh];
       // Push constant information
-      m_pushConst.transfo = n.localMatrix();
-      m_pushConst.color   = m_materials[n.material].color;
+      m_pushConst.transfo    = n.localMatrix();
+      m_pushConst.color      = m_materials[n.material].color;
+      m_pushConst.clearColor = m_clearColor.float32;
       vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                          sizeof(PushConstant), &m_pushConst);
 
@@ -164,6 +209,7 @@ public:
 private:
   void createScene()
   {
+    nvh::ScopedTimer st(__FUNCTION__);
     // Meshes
     m_meshes.emplace_back(nvh::sphere());
     m_meshes.emplace_back(nvh::cube());
@@ -184,19 +230,20 @@ private:
     // Instances
     for(int i = 0; i < num_meshes; i++)
     {
-      nvh::Node& n  = m_nodes.emplace_back();
-      n.mesh        = i;
-      n.material    = i;
-      n.translation = vec3(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
+      nvh::Node& n = m_nodes.emplace_back();
+      n.mesh       = i;
+      n.material   = i;
     }
 
     CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({-0.5F, 0.0F, 5.0F}, {-0.5F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    CameraManip.setLookat({0.0F, 1.0F, 2.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
   }
 
   void createPipeline()
   {
-    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    nvh::ScopedTimer st(__FUNCTION__);
+    m_dset->addBinding(BIND_FRAME_INFO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(BIND_SETTINGS, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
     m_dset->initLayout();
     m_dset->initPool(1);
 
@@ -206,8 +253,10 @@ private:
 
     // Writing to descriptors
     const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo      dbi_setting{m_bSettings.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, BIND_FRAME_INFO, &dbi_unif));
+    writes.emplace_back(m_dset->makeWrite(0, BIND_SETTINGS, &dbi_setting));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -233,17 +282,17 @@ private:
     pgen.clearShaders();
   }
 
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const VkExtent2D& size)
   {
-    m_viewSize = size;
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
-                                                   VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
-                                                   m_colorFormat, m_depthFormat);
+    nvh::ScopedTimer st(std::string(__FUNCTION__) + std::string(": ") + std::to_string(size.width) + std::string(", ")
+                        + std::to_string(size.height));
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
   }
 
   void createVkBuffers()
   {
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    nvh::ScopedTimer st(__FUNCTION__);
+    VkCommandBuffer  cmd = m_app->createTempCmdBuffer();
     m_meshVk.resize(m_meshes.size());
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
@@ -258,8 +307,9 @@ private:
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_frameInfo.buffer);
 
-    m_pixelBuffer = m_alloc->createBuffer(sizeof(float) * 4, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    m_bSettings = m_alloc->createBuffer(sizeof(WireframeSettings), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    m_dutil->DBG_NAME(m_bSettings.buffer);
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
@@ -275,116 +325,10 @@ private:
       m_alloc->destroy(m.indices);
     }
     m_alloc->destroy(m_frameInfo);
-    m_alloc->destroy(m_pixelBuffer);
+    m_alloc->destroy(m_bSettings);
 
     m_dset->deinit();
     m_gBuffers.reset();
-  }
-
-  //--------------------------------------------------------------------------------------------------
-  // Find the 3D position under the mouse cursor and set the camera interest to this position
-  //
-  void rasterPicking()
-  {
-    nvmath::vec2f       mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
-    const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
-    mouse_pos                     = mouse_pos - corner;           // Mouse pos relative to center of viewport
-
-    const float          aspect_ratio = m_viewSize.x / m_viewSize.y;
-    const nvmath::vec2f& clip         = CameraManip.getClipPlanes();
-    const nvmath::mat4f  view         = CameraManip.getMatrix();
-    const nvmath::mat4f  proj         = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
-
-    // Find the distance under the cursor
-    const float d = getDepth(static_cast<int>(mouse_pos.x), static_cast<int>(mouse_pos.y));
-
-    if(d < 1.0F)  // Ignore infinite
-    {
-      const nvmath::vec3f hit_pos = unprojectScreenPosition({mouse_pos.x, mouse_pos.y, d}, view, proj);
-
-      // Set the interest position
-      nvmath::vec3f eye, center, up;
-      CameraManip.getLookat(eye, center, up);
-      CameraManip.setLookat(eye, hit_pos, up, false);
-    }
-  }
-
-  //--------------------------------------------------------------------------------------------------
-  // Read the depth buffer at the X,Y coordinates
-  // Note: depth format is VK_FORMAT_D32_SFLOAT
-  //
-  float getDepth(int x, int y)
-  {
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-
-    // Transit the depth buffer image in eTransferSrcOptimal
-    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, range);
-
-    // Copy the pixel under the cursor
-    VkBufferImageCopy copy_region{};
-    copy_region.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-    copy_region.imageOffset      = {x, y, 0};
-    copy_region.imageExtent      = {1, 1, 1};
-    vkCmdCopyImageToBuffer(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_pixelBuffer.buffer,
-                           1, &copy_region);
-
-    // Put back the depth buffer as  it was
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, range);
-    m_app->submitAndWaitTempCmdBuffer(cmd);
-
-
-    // Grab the value
-    float value{1.0F};
-    void* mapped = m_alloc->map(m_pixelBuffer);
-    switch(m_gBuffers->getDepthFormat())
-    {
-      case VK_FORMAT_X8_D24_UNORM_PACK32:
-      case VK_FORMAT_D24_UNORM_S8_UINT: {
-        uint32_t ivalue{0};
-        memcpy(&ivalue, mapped, sizeof(uint32_t));
-        const uint32_t mask = (1 << 24) - 1;
-        ivalue              = ivalue & mask;
-        value               = float(ivalue) / float(mask);
-      }
-      break;
-      case VK_FORMAT_D32_SFLOAT: {
-        memcpy(&value, mapped, sizeof(float));
-      }
-      break;
-      default:
-        assert(!"Wrong Format");
-    }
-    m_alloc->unmap(m_pixelBuffer);
-
-    return value;
-  }
-
-  //--------------------------------------------------------------------------------------------------
-  // Return the 3D position of the screen 2D + depth
-  //
-  nvmath::vec3f unprojectScreenPosition(const nvmath::vec3f& screenPos, const nvmath::mat4f& view, const nvmath::mat4f& proj)
-  {
-    // Transformation of normalized coordinates between -1 and 1
-    const VkExtent2D size = m_gBuffers->getSize();
-    nvmath::vec4f    win_norm;
-    win_norm.x = screenPos.x / static_cast<float>(size.width) * 2.0F - 1.0F;
-    win_norm.y = screenPos.y / static_cast<float>(size.height) * 2.0F - 1.0F;
-    win_norm.z = screenPos.z;
-    win_norm.w = 1.0;
-
-    // Transform to world space
-    const nvmath::mat4f mat       = proj * view;
-    const nvmath::mat4f mat_inv   = nvmath::invert(mat);
-    nvmath::vec4f       world_pos = mat_inv * win_norm;
-    world_pos.w                   = 1.0F / world_pos.w;
-    world_pos.x                   = world_pos.x * world_pos.w;
-    world_pos.y                   = world_pos.y * world_pos.w;
-    world_pos.z                   = world_pos.z * world_pos.w;
-
-    return nvmath::vec3f(world_pos);
   }
 
 
@@ -395,7 +339,6 @@ private:
   std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  nvmath::vec2f                    m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
@@ -411,7 +354,6 @@ private:
   };
   std::vector<PrimitiveMeshVk> m_meshVk;
   nvvk::Buffer                 m_frameInfo;
-  nvvk::Buffer                 m_pixelBuffer;
 
   std::vector<VkSampler> m_samplers;
 
@@ -427,6 +369,10 @@ private:
   // Pipeline
   PushConstant m_pushConst{};                        // Information sent to the shader
   VkPipeline   m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  int          m_currentObject    = 0;
+
+  WireframeSettings m_settings;
+  nvvk::Buffer      m_bSettings;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -440,6 +386,10 @@ int main(int argc, char** argv)
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;
 
+  static VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeat{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
+  spec.vkSetup.addDeviceExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, false, &baryFeat);
+
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
@@ -451,7 +401,7 @@ int main(int argc, char** argv)
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());
-  app->addElement(std::make_shared<SimplePolygons>());
+  app->addElement(std::make_shared<BaryWireframe>());
 
   app->run();
   app.reset();

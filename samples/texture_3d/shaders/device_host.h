@@ -13,27 +13,48 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2021 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "nesting_scoped_timer.hpp"
+#ifdef __cplusplus
+using mat4 = nvmath::mat4f;
+using vec4 = nvmath::vec4f;
+using vec3 = nvmath::vec3f;
+#else
+#define static
+#define inline
+#endif
 
-
-thread_local size_t NestingScopedTimer::s_depth = 0;
-
-
-std::string NestingScopedTimer::indent()
+struct PushConstant
 {
-  size_t      num   = s_depth;
-  std::string input = "| ";
+  mat4  transfo;
+  vec4  color;
+  float threshold;
+  int   steps;
+};
 
-  std::string ret;
-  ret.reserve(input.size() * num);
-  while(0 < num--)
-  {
-    ret += input;
-  }
+struct FrameInfo
+{
+  mat4 proj;
+  mat4 view;
+  vec3 camPos;
+  vec3 toLight;
+  int  headlight;
+};
 
-  return ret;
+struct PerlinSettings
+{
+  int   octave;
+  float power;
+  float frequency;
+};
+
+inline PerlinSettings PerlinDefaultValues()
+{
+  PerlinSettings perlin;
+  perlin.power     = 1.0F;
+  perlin.octave    = 3;
+  perlin.frequency = 1.0F;
+  return perlin;
 }

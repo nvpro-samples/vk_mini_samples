@@ -72,7 +72,6 @@
 
 #include "dmm_process.hpp"
 #include "bird_curve_helper.hpp"
-#include "nesting_scoped_timer.hpp"
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -139,8 +138,8 @@ public:
     createVkBuffers();
     // #MICROMESH
     {
-      const NestingScopedTimer stimer("Create Micromesh");
-      VkCommandBuffer          cmd = m_app->createTempCmdBuffer();
+      nvh::ScopedTimer stimer("Create Micromesh");
+      VkCommandBuffer  cmd = m_app->createTempCmdBuffer();
       m_micromap->createMicromapData(cmd, m_meshes[0], m_settings.subdivlevel, m_settings.terrain);
       m_micromap->createMicromapBuffers(cmd, m_meshes[0], m_settings.dispBiasScale);
       m_app->submitAndWaitTempCmdBuffer(cmd);
@@ -151,7 +150,11 @@ public:
     createRtxPipeline();
   }
 
-  void onDetach() override { destroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onResize(uint32_t width, uint32_t height) override
   {
@@ -208,7 +211,7 @@ public:
 
       if(level_changed || bias_scale_changed)
       {
-        const NestingScopedTimer stimer("Create Micromesh");
+        nvh::ScopedTimer stimer("Create Micromesh");
         vkDeviceWaitIdle(m_device);
         VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
@@ -446,7 +449,7 @@ private:
   //
   void createBottomLevelAS()
   {
-    const NestingScopedTimer stimer("Create BLAS");
+    nvh::ScopedTimer stimer("Create BLAS");
     // BLAS - Storing each primitive in a geometry
     std::vector<nvvk::RaytracingBuilderKHR::BlasInput> all_blas;
     all_blas.reserve(m_meshes.size());
@@ -521,7 +524,7 @@ private:
   //
   void createTopLevelAS()
   {
-    const NestingScopedTimer stimer("Create TLAS");
+    nvh::ScopedTimer stimer("Create TLAS");
 
     std::vector<VkAccelerationStructureInstanceKHR> tlas;
     tlas.reserve(m_nodes.size());
@@ -543,7 +546,7 @@ private:
     // #MICROMESH
     const VkBuildAccelerationStructureFlagsKHR build_flags =
         VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
-        | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DISPLACEMENT_MICROMAP_INSTANCE_NV;
+        | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DISPLACEMENT_MICROMAP_UPDATE_NV;
 
     m_rtBuilder.buildTlas(tlas, build_flags);
   }
@@ -718,7 +721,6 @@ private:
   nvmath::vec2f                    m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffer;                                      // G-Buffers: color + depth
   ProceduralSkyShaderParameters    m_skyParams{};
@@ -752,7 +754,6 @@ private:
   PushConstant     m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int              m_frame{0};
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
   nvvk::SBTWrapper           m_sbt;  // Shader binding table wrapper

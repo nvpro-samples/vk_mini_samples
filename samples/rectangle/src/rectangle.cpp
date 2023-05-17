@@ -62,7 +62,11 @@ public:
     createGeometryBuffers();
   }
 
-  void onDetach() override { detroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onUIMenu() override
   {
@@ -108,9 +112,9 @@ public:
       {
         std::array<char, 256> buf{};
 
-        const         int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
-                           static_cast<int>(m_viewSize.width), static_cast<int>(m_viewSize.height),
-                           static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
+        const int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
+                                 static_cast<int>(m_viewSize.width), static_cast<int>(m_viewSize.height),
+                                 static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         assert(ret > 0);
         glfwSetWindowTitle(m_app->getWindowHandle(), buf.data());
         dirty_timer = 0;
@@ -131,7 +135,7 @@ public:
     if(!m_gBuffers)
       return;
 
-    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()}, m_gBuffers->getDepthImageView(),
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
@@ -141,7 +145,7 @@ public:
     m_app->setViewport(cmd);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    const     VkDeviceSize offsets{0};
+    const VkDeviceSize offsets{0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
     vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
@@ -158,7 +162,7 @@ private:
 
   void createPipeline()
   {
-    const     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    const VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -208,7 +212,7 @@ private:
     }
   }
 
-  void detroyResources()
+  void destroyResources()
   {
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);

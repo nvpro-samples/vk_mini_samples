@@ -58,7 +58,7 @@ void main()
 
   // Calling the main function
   mainImage(fragColor, gl_FragCoord.xy);
-  
+
   // Inverting fragCoord from OpenGL
   vec2 fragCoord = gl_FragCoord.xy;
   fragCoord.y    = iResolution.y - gl_FragCoord.y;

@@ -211,7 +211,11 @@ public:
     updateDescriptorSet();
   }
 
-  void onDetach() override { detroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
 
@@ -470,7 +474,7 @@ private:
     CameraManip.setLookat({0, 0, 1}, {0, 0, 0}, {0, 1, 0});
   }
 
-  void detroyResources()
+  void destroyResources()
   {
     m_alloc->destroy(m_bFrameInfo);
     m_alloc->destroy(m_bValues);
@@ -519,7 +523,7 @@ int main(int argc, char** argv)
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;
   spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  spec.vkSetup.enableAftermath = false; // We want our integration
+  spec.vkSetup.enableAftermath = false;  // We want our integration
 
 #ifdef USE_NSIGHT_AFTERMATH
   // Enable NV_device_diagnostic_checkpoints extension to be able to use Aftermath event markers.

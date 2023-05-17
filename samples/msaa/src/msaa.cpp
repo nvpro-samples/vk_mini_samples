@@ -75,7 +75,11 @@ public:
     createPipeline();
   }
 
-  void onDetach() override { destroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onUIMenu() override
   {
@@ -121,7 +125,7 @@ public:
                                                VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
                                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &image_format_properties);
       // sampleCounts is 3, 7 or 15, following line find n, in 2^n == sampleCounts+1
-      const       int max_sample_items = static_cast<int>(log2(static_cast<float>(image_format_properties.sampleCounts)) + 1.0F);
+      const int max_sample_items = static_cast<int>(log2(static_cast<float>(image_format_properties.sampleCounts)) + 1.0F);
       // Same for the current VkSampleCountFlag, which is a power of two
       int                        item_combo = static_cast<int>(log2(static_cast<float>(m_msaaSamples)));
       std::array<const char*, 7> items      = {"1", "2", "4", "8", "16", "32", "64"};
@@ -163,9 +167,9 @@ public:
       {
         std::array<char, 256> buf{};
 
-        const         int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
-                           static_cast<int>(m_viewSize.x), static_cast<int>(m_viewSize.y),
-                           static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
+        const int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
+                                 static_cast<int>(m_viewSize.x), static_cast<int>(m_viewSize.y),
+                                 static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         assert(ret > 0);
         glfwSetWindowTitle(m_app->getWindowHandle(), buf.data());
         dirty_timer = 0;
@@ -178,9 +182,9 @@ public:
     if(!m_gBuffers)
       return;
 
-    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const     float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float   view_aspect_ratio = m_viewSize.x / m_viewSize.y;
     nvmath::vec3f eye;
     nvmath::vec3f center;
     nvmath::vec3f up;
@@ -218,7 +222,7 @@ public:
 
     vkCmdEndRendering(cmd);
     // Make sure it is finished
-    const     VkImageMemoryBarrier image_memory_barrier =
+    const VkImageMemoryBarrier image_memory_barrier =
         nvvk::makeImageMemoryBarrier(m_gBuffers->getColorImage(), VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                                      VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
@@ -230,7 +234,7 @@ private:
   {
     // Meshes
     m_meshes.emplace_back(nvh::cone(0.05F));
-    const     int num_instances = 50;
+    const int num_instances = 50;
 
     // Instances
     for(int i = 0; i < num_instances; i++)
@@ -249,7 +253,7 @@ private:
     for(int i = 0; i < num_instances; i++)
     {
       const vec3 freq = vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      const       vec3       v    = static_cast<vec3>(nvmath::sin(freq) * 0.5F + 0.5F);
+      const vec3 v    = static_cast<vec3>(nvmath::sin(freq) * 0.5F + 0.5F);
       m_materials.push_back({vec4(v, 1.0F)});
     }
 
@@ -260,16 +264,16 @@ private:
 
   void renderScene(VkCommandBuffer cmd)
   {
-    const     nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     m_app->setViewport(cmd);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
-    const     VkDeviceSize offsets{0};
+    const VkDeviceSize offsets{0};
     for(const nvh::Node& n : m_nodes)
     {
-      const       PrimitiveMeshVk& m           = m_meshVk[n.mesh];
-      auto             num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
+      const PrimitiveMeshVk& m           = m_meshVk[n.mesh];
+      auto                   num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
 
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
@@ -290,12 +294,13 @@ private:
     m_dset->initPool(2);  // two frames - allow to change on the fly
 
     // Writing to descriptors
-    const     VkDescriptorBufferInfo            dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
-    const     VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                      sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
@@ -357,7 +362,7 @@ private:
       create_info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;  // #MSAA - Optimization
       m_msaaColor = m_alloc->createImage(create_info);
       m_dutil->setObjectName(m_msaaColor.image, "msaaColor");
-      const       VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(m_msaaColor.image, create_info);
+      const VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(m_msaaColor.image, create_info);
       vkCreateImageView(m_device, &iv_info, nullptr, &m_msaaColorIView);
     }
 

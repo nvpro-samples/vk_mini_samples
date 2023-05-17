@@ -53,8 +53,8 @@ class OfflineRender
 {
 public:
   explicit OfflineRender(nvvk::Context* ctx)
-    : m_ctx (ctx)
-  { 
+      : m_ctx(ctx)
+  {
     m_alloc   = std::make_unique<nvvkhl::AllocVma>(ctx);
     m_cmdPool = std::make_unique<nvvk::CommandPool>(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
   }
@@ -69,7 +69,7 @@ public:
     const nvh::ScopedTimer s_timer("Offline rendering");
 
     std::array<VkClearValue, 2> clear_values{};
-    clear_values[0].color        = {0.1F, 0.1F, 0.4F, 0.F};
+    clear_values[0].color        = {{0.1F, 0.1F, 0.4F, 0.F}};
     clear_values[1].depthStencil = {1.0F, 0};
 
     // Preparing the rendering
@@ -82,17 +82,18 @@ public:
 
     vkCmdBeginRendering(cmd, &r_info);
 
-    const     nvmath::vec2f size_f = {static_cast<float>(m_gBuffers->getSize().width), static_cast<float>(m_gBuffers->getSize().height)};
+    const nvmath::vec2f size_f = {static_cast<float>(m_gBuffers->getSize().width),
+                                  static_cast<float>(m_gBuffers->getSize().height)};
 
     // Viewport and scissor
-    const     VkViewport viewport{0.0F, 0.0F, size_f.x, size_f.y, 0.0F, 1.0F};
+    const VkViewport viewport{0.0F, 0.0F, size_f.x, size_f.y, 0.0F, 1.0F};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-    const     VkRect2D scissor{{0, 0}, m_gBuffers->getSize()};
+    const VkRect2D scissor{{0, 0}, m_gBuffers->getSize()};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     // Rendering the full-screen pixel shader
-    PushConstant push_c;
+    PushConstant push_c{};
     push_c.aspectRatio = size_f.x / size_f.y;
     push_c.iTime       = anim_time;
 
@@ -111,11 +112,11 @@ public:
   //
   void saveImage(const std::string& outFilename)
   {
-    const     nvh::ScopedTimer s_timer("Save Image\n");
+    const nvh::ScopedTimer s_timer("Save Image\n");
 
     // Create a temporary buffer to hold the pixels of the image
-    const     VkBufferUsageFlags usage{VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    const     VkDeviceSize       buffer_size  = 4 * sizeof(uint8_t) * m_gBuffers->getSize().width * m_gBuffers->getSize().height;
+    const VkBufferUsageFlags usage{VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const VkDeviceSize buffer_size  = 4 * sizeof(uint8_t) * m_gBuffers->getSize().width * m_gBuffers->getSize().height;
     nvvk::Buffer       pixel_buffer = m_alloc->createBuffer(buffer_size, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
     imageToBuffer(m_gBuffers->getColorImage(), pixel_buffer.buffer);
@@ -138,12 +139,12 @@ public:
   //
   void imageToBuffer(const VkImage& imgIn, const VkBuffer& pixelBufferOut)
   {
-    const     nvh::ScopedTimer s_timer(" - Image To Buffer");
+    const nvh::ScopedTimer s_timer(" - Image To Buffer");
 
     VkCommandBuffer cmd = m_cmdPool->createCommandBuffer();
 
     // Make the image layout eTransferSrcOptimal to copy to buffer
-    const     VkImageSubresourceRange subresource_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const VkImageSubresourceRange subresource_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresource_range);
 
     // Copy the image to the buffer
@@ -163,10 +164,10 @@ public:
   //
   void createPipeline()
   {
-    const     nvh::ScopedTimer s_timer("Create Pipeline");
+    const nvh::ScopedTimer s_timer("Create Pipeline");
 
     // Pipeline Layout: The layout of the shader needs only Push Constants: we are using parameters, time and aspect ratio
-    const     VkPushConstantRange        push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange  push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
     VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges    = &push_constants;
@@ -193,7 +194,7 @@ public:
   //
   void createFramebuffer(const VkExtent2D& size)
   {
-    const     nvh::ScopedTimer s_timer("Create Framebuffer");
+    const nvh::ScopedTimer s_timer("Create Framebuffer");
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_ctx->m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
   }
 
@@ -223,7 +224,7 @@ private:
 int main(int argc, char** argv)
 {
   // Logging to file
-  const   std::string logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
+  const std::string logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
   nvprintSetLogFileName(logfile.c_str());
 
   float       anim_time{0.0F};

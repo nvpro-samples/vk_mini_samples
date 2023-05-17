@@ -59,8 +59,8 @@ std::size_t makeHash(const nvmath::vec3f& v)
 {
   return hashVal(v.x, v.y, v.z);
 }
-auto hash  = [&](const nvmath::vec3f& v) { return makeHash(v); };
-auto equal = [&](const nvmath::vec3f& l, const nvmath::vec3f& r) { return l == r; };
+auto hash  = [](const nvmath::vec3f& v) { return makeHash(v); };
+auto equal = [](const nvmath::vec3f& l, const nvmath::vec3f& r) { return l == r; };
 
 
 static std::unordered_map<nvmath::vec3f, uint32_t, decltype(hash), decltype(equal)> buildMap(const BirdCurveHelper::BaryCoordinates& bary_coords)
@@ -167,7 +167,7 @@ void BirdCurveHelper::birdLevel(int                  level,
                                 const nvmath::vec3f& u,
                                 const nvmath::vec3f& v)
 {
-  m_triBary[level - 1].push_back({w, u, v});  // Adding triangle barycentric coordinates
+  m_triBary[level - 1ULL].push_back({w, u, v});  // Adding triangle barycentric coordinates
 
   if(level >= m_birdValues.size())
     return;
@@ -320,7 +320,7 @@ static inline float __uint_as_float(uint32_t x)
   {
     float    f;
     uint32_t i;
-  } var;
+  } var{};
   var.i = x;
   return var.f;
 }

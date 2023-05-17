@@ -105,7 +105,11 @@ public:
     m_tonemapper->createComputePipeline();
   }
 
-  void onDetach() override { destroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onResize(uint32_t width, uint32_t height) override
   {
@@ -269,7 +273,7 @@ private:
     //m_meshes.emplace_back(nvh::octahedron());
     //m_meshes.emplace_back(nvh::icosahedron());
     //m_meshes.emplace_back(nvh::cone());
-    int num_meshes = static_cast<int>(m_meshes.size());
+    // int num_meshes = static_cast<int>(m_meshes.size());
 
     // Materials (colorful)
     m_materials.reserve(num_materials);
@@ -285,7 +289,7 @@ private:
     };
 
     // Instances
-    m_nodes.reserve(num_obj * num_obj * num_obj);
+    m_nodes.reserve(static_cast<size_t>(num_obj * num_obj) * num_obj);
     bool skip{false};
     for(int k = 0; k < num_obj; k++)
     {
@@ -419,7 +423,7 @@ private:
     sceneDesc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bPrimInfo.buffer);
     sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bInstInfoBuffer.buffer);
     m_bSceneDesc              = m_alloc->createBuffer(cmd, sizeof(SceneDescription), &sceneDesc,
-                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     m_dutil->DBG_NAME(m_bSceneDesc.buffer);
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
@@ -625,7 +629,7 @@ private:
   void pushDescriptorSet(VkCommandBuffer cmd)
   {
     // Write to descriptors
-    VkAccelerationStructureKHR                   tlas = m_rtBuilder.getAccelerationStructure();
+    VkAccelerationStructureKHR tlas = m_rtBuilder.getAccelerationStructure();
     VkWriteDescriptorSetAccelerationStructureKHR descASInfo{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     descASInfo.accelerationStructureCount = 1;
     descASInfo.pAccelerationStructures    = &tlas;
@@ -720,7 +724,6 @@ private:
   nvmath::vec2f                    m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
   ProceduralSkyShaderParameters    m_skyParams{};
@@ -759,9 +762,9 @@ private:
   int              m_maxFrames{10000};
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  nvvk::SBTWrapper                                m_sbt;  // Shading binding table wrapper
-  nvvk::RaytracingBuilderKHR                      m_rtBuilder;
-  nvvkhl::PipelineContainer                       m_rtPipe;
+  nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper
+  nvvk::RaytracingBuilderKHR m_rtBuilder;
+  nvvkhl::PipelineContainer  m_rtPipe;
 };
 
 //////////////////////////////////////////////////////////////////////////

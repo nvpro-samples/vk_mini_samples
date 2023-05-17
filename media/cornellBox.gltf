@@ -507,174 +507,12 @@
       "type": "perspective"
     }
   ],
-  "extensions": {
-    "NV_materials_mdl": {
-      "modules": [
-        "mdl::base",
-        "mdl::gltf_support",
-        "mdl::nvidia::core_definitions",
-        "mdl::state"
-      ],
-      "shaders": [
-        {
-          "arguments": {
-            "texture": 0
-          },
-          "definition": "mdl::base::environment_spherical(texture_2d)",
-          "name": "env_shd"
-        },
-        {
-          "arguments": {
-            "metallic_factor": 0.0
-          },
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "cube_instance_material"
-        },
-        {
-          "arguments": {
-            "metallic_factor": 0.0
-          },
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "cube_instance_2_material"
-        },
-        {
-          "arguments": {
-            "base_color_factor": [
-              0.054592281579971313,
-              1.0,
-              0.0
-            ]
-          },
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "gltf_material_mat"
-        },
-        {
-          "arguments": {
-            "base_color_factor": [
-              1.0,
-              0.0,
-              0.00010718735575210303
-            ],
-            "metallic_factor": 0.0
-          },
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "cube_instance_5_material"
-        },
-        {
-          "arguments": {
-            "emissive_factor": [
-              10.0,
-              10.0,
-              10.0
-            ],
-            "metallic_factor": 0.0,
-            "roughness_factor": 0.0
-          },
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "cube_instance_8_material"
-        },
-        {
-          "arguments": {
-            "normal=": 7
-          },
-          "definition": "mdl::nvidia::core_definitions::flex_material",
-          "hash": [
-            "0xcdccb2f5",
-            "0xccfa4281",
-            "0x41aa45c6",
-            "0x53936269"
-          ],
-          "name": "cube_instance_14_material"
-        },
-        {
-          "definition": "mdl::state::normal()",
-          "name": "mdl::state::normal_801"
-        },
-        {
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "cube_instance_16_material"
-        },
-        {
-          "arguments": {
-            "normal=": 10
-          },
-          "definition": "mdl::nvidia::core_definitions::thick_glass",
-          "hash": [
-            "0x45a51489",
-            "0x068b105e",
-            "0xcfed7f3b",
-            "0x1b45b4f8"
-          ],
-          "name": "sphere_instance_material"
-        },
-        {
-          "definition": "mdl::state::normal()",
-          "name": "mdl::state::normal_804"
-        },
-        {
-          "arguments": {
-            "roughness_factor": 0.0
-          },
-          "definition": "mdl::gltf_support::gltf_material",
-          "hash": [
-            "0x2b557fab",
-            "0x5f2f13b5",
-            "0x5dbe3123",
-            "0x469f59c1"
-          ],
-          "name": "sphere_instance_22_material"
-        }
-      ]
-    }
-  },
   "extensionsUsed": [
-    "NV_materials_mdl",
     "KHR_lights_punctual"
   ],
   "materials": [
     {
-      "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 1
-        }
-      },
+      "doubleSided": true,      
       "name": "cube_instance_material",
       "pbrMetallicRoughness": {
         "metallicFactor": 0.0
@@ -682,11 +520,6 @@
     },
     {
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 2
-        }
-      },
       "name": "cube_instance_2_material",
       "pbrMetallicRoughness": {
         "metallicFactor": 0.0
@@ -694,11 +527,6 @@
     },
     {
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 3
-        }
-      },
       "name": "gltf_material_mat",
       "pbrMetallicRoughness": {
         "baseColorFactor": [
@@ -711,11 +539,6 @@
     },
     {
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 4
-        }
-      },
       "name": "cube_instance_5_material",
       "pbrMetallicRoughness": {
         "baseColorFactor": [
@@ -734,11 +557,6 @@
         3.0,
         3.0
       ],
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 5
-        }
-      },
       "name": "cube_instance_8_material",
       "pbrMetallicRoughness": {
         "metallicFactor": 0.0,
@@ -747,11 +565,6 @@
     },
     {
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 6
-        }
-      },
       "name": "cube_instance_14_material",
       "pbrMetallicRoughness": {
         "baseColorFactor": [
@@ -764,21 +577,11 @@
     },
     {
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 8
-        }
-      },
       "name": "cube_instance_16_material"
     },
     {
       "alphaMode": "BLEND",
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 9
-        }
-      },
       "name": "sphere_instance_material",
       "pbrMetallicRoughness": {
         "baseColorFactor": [
@@ -792,11 +595,6 @@
     },
     {
       "doubleSided": true,
-      "extensions": {
-        "NV_materials_mdl": {
-          "mdl_shader": 11
-        }
-      },
       "name": "sphere_instance_22_material",
       "pbrMetallicRoughness": {
         "roughnessFactor": 0.0

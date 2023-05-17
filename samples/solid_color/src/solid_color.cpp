@@ -72,7 +72,11 @@ public:
     createTexture();
   };
 
-  void onDetach() override { destroyResources(); };
+  void onDetach() override
+  {
+    NVVK_CHECK(vkDeviceWaitIdle(m_app->getDevice()));
+    destroyResources();
+  };
 
 
   void onUIRender() override

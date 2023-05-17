@@ -31,13 +31,13 @@
 #include "mm_process.hpp"
 #include "bird_curve_helper.hpp"
 #include "bit_packer.hpp"
-#include "nesting_scoped_timer.hpp"
 #include "nvh/alignment.hpp"
 #include <array>
+#include "nvh/timesampler.hpp"
 
 MicromapProcess::MicromapProcess(nvvk::Context* ctx, nvvk::ResourceAllocator* allocator)
-    : m_alloc(allocator)
-    , m_device(ctx->m_device)
+    : m_device(ctx->m_device)
+    , m_alloc(allocator)
 {
   // Requesting ray tracing properties
   VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
@@ -63,7 +63,7 @@ MicromapProcess::~MicromapProcess()
 // - Create the vector of VkMicromapTriangleEXT
 bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius, uint16_t micromapFormat)
 {
-  NestingScopedTimer stimer("Create Micromap Data");
+  nvh::ScopedTimer stimer("Create Micromap Data");
 
   vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
   m_alloc->destroy(m_scratchBuffer);
@@ -101,7 +101,7 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
   {
     // Allocate the array to push on the GPU.
     std::vector<uint8_t> packed_data(storage_byte * num_tri);
-    memset(packed_data.data(), 0U, storage_byte * num_tri * sizeof(uint8_t));
+    memset(packed_data.data(), 0U, static_cast<unsigned long long>(storage_byte) * num_tri * sizeof(uint8_t));
 
     // Loop over all triangles of the mesh
     for(uint32_t tri_index = 0U; tri_index < num_tri; tri_index++)
@@ -191,7 +191,7 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
 //
 bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micromapType)
 {
-  NestingScopedTimer stimer("Build Micromap");
+  nvh::ScopedTimer stimer("Build Micromap");
 
   // Find the size required
   VkMicromapBuildSizesInfoEXT size_info{VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT};
@@ -268,7 +268,7 @@ uint32_t triangleCircleItersection(const std::array<nvmath::vec3f, 3>& p, const 
   // Vertices within circle
   int           hit = 0;
   nvmath::vec3f c[3];
-  float         csqr[3];
+  float         csqr[3]{};
   for(int i = 0; i < 3; i++)
   {
     c[i]    = center - p[i];
@@ -302,7 +302,7 @@ uint32_t triangleCircleItersection(const std::array<nvmath::vec3f, 3>& p, const 
 
 
   // Circle intersects edges
-  float k[3];
+  float k[3]{};
   for(int i = 0; i < 3; i++)
   {
     k[i] = nvmath::dot(edges[i], c[i]);
@@ -330,7 +330,7 @@ uint32_t triangleCircleItersection(const std::array<nvmath::vec3f, 3>& p, const 
 //   the radius boundary.
 MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius)
 {
-  NestingScopedTimer stimer("Create Displacements");
+  nvh::ScopedTimer stimer("Create Displacements");
 
   MicroOpacity displacements;  // Return of displacement values for all triangles
 
@@ -357,7 +357,7 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
         triangle.subdivLevel = subdivLevel;
 
         // TODO: check if the triangle is completely in or out to avoid subdividing it
-        uint32_t hit = triangleCircleItersection({t0, t1, t2}, center, radius);
+        // uint32_t hit = triangleCircleItersection({t0, t1, t2}, center, radius);
 
         for(uint32_t index = 0; index < num_micro_tri; index++)
         {

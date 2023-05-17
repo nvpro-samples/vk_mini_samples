@@ -72,7 +72,6 @@
 
 #include "mm_process.hpp"
 #include "bird_curve_helper.hpp"
-#include "nesting_scoped_timer.hpp"
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -125,8 +124,8 @@ public:
     createVkBuffers();
     // #MICROMAP
     {
-      const NestingScopedTimer stimer("Create MICROMAP");
-      VkCommandBuffer          cmd = m_app->createTempCmdBuffer();
+      nvh::ScopedTimer stimer("Create MICROMAP");
+      VkCommandBuffer  cmd = m_app->createTempCmdBuffer();
       m_micromap->createMicromapData(cmd, m_meshes[0], m_settings.subdivlevel, m_settings.radius, m_settings.micromapFormat);
       m_app->submitAndWaitTempCmdBuffer(cmd);
       m_micromap->cleanBuildData();
@@ -136,7 +135,11 @@ public:
     createRtxPipeline();
   }
 
-  void onDetach() override { destroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onResize(uint32_t width, uint32_t height) override
   {
@@ -184,7 +187,7 @@ public:
 
       if(subdiv_changed)
       {
-        const NestingScopedTimer stimer("Create MICROMAP");
+        nvh::ScopedTimer stimer("Create MICROMAP");
         vkDeviceWaitIdle(m_device);
 
         VkCommandBuffer cmd = m_app->createTempCmdBuffer();
@@ -237,7 +240,7 @@ public:
   {
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const     float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
 
     // Update the uniform buffer containing frame info
     FrameInfo            finfo{};
@@ -307,8 +310,8 @@ private:
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_bMeshes.resize(m_meshes.size());
 
-    const     VkBufferUsageFlags rt_usage_flag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    const VkBufferUsageFlags rt_usage_flag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                             | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
     std::vector<PrimMeshInfo> prim_info;
@@ -414,7 +417,7 @@ private:
   //
   void createBottomLevelAS()
   {
-    const     NestingScopedTimer stimer("Create BLAS");
+    nvh::ScopedTimer stimer("Create BLAS");
     // BLAS - Storing each primitive in a geometry
     std::vector<nvvk::RaytracingBuilderKHR::BlasInput> all_blas;
     all_blas.reserve(m_meshes.size());
@@ -426,8 +429,8 @@ private:
 
     for(uint32_t p_idx = 0; p_idx < m_meshes.size(); p_idx++)
     {
-      const       VkDeviceAddress vertex_address = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].vertices.buffer);
-      const       VkDeviceAddress index_address  = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].indices.buffer);
+      const VkDeviceAddress vertex_address = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].vertices.buffer);
+      const VkDeviceAddress index_address  = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].indices.buffer);
 
       nvvk::RaytracingBuilderKHR::BlasInput geo = primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address);
 
@@ -437,7 +440,7 @@ private:
 
       if(m_settings.enableOpacity)
       {
-        const         VkDeviceAddress indexT_address = nvvk::getBufferDeviceAddress(m_device, m_micromap->indexBuffer().buffer);
+        const VkDeviceAddress indexT_address = nvvk::getBufferDeviceAddress(m_device, m_micromap->indexBuffer().buffer);
 
         opacity_geometry_micromap.indexType                 = VK_INDEX_TYPE_UINT32;
         opacity_geometry_micromap.indexBuffer.deviceAddress = indexT_address;
@@ -454,7 +457,7 @@ private:
       all_blas.push_back({geo});
     }
 
-    const     VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    const VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
     m_rtBuilder.buildBlas(all_blas, flags);
   }
 
@@ -463,13 +466,13 @@ private:
   //
   void createTopLevelAS()
   {
-    const     NestingScopedTimer stimer("Create TLAS");
+    nvh::ScopedTimer stimer("Create TLAS");
 
     std::vector<VkAccelerationStructureInstanceKHR> tlas;
     tlas.reserve(m_nodes.size());
     for(const nvh::Node& node : m_nodes)
     {
-      const       VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
+      const VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
       //flags |= VK_GEOMETRY_INSTANCE_FORCE_OPACITY_MICROMAP_2_STATE_EXT; // #MICROMAP
 
       VkAccelerationStructureInstanceKHR ray_inst{};
@@ -483,9 +486,9 @@ private:
     }
 
     // #MICROMAP
-    const     VkBuildAccelerationStructureFlagsKHR build_flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                                                       | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
-                                                       | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_OPACITY_MICROMAP_UPDATE_EXT;
+    const VkBuildAccelerationStructureFlagsKHR build_flags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
+        | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_OPACITY_MICROMAP_UPDATE_EXT;
 
     m_rtBuilder.buildTlas(tlas, build_flags);
   }
@@ -571,7 +574,7 @@ private:
     shader_groups.push_back(group);
 
     // Push constant: we want to be able to update constants used by the shaders
-    const     VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant)};
 
     VkPipelineLayoutCreateInfo pipeline_layout_create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipeline_layout_create_info.pushConstantRangeCount = 1;
@@ -612,10 +615,10 @@ private:
     VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     desc_as_info.accelerationStructureCount = 1;
     desc_as_info.pAccelerationStructures    = &tlas;
-    const     VkDescriptorImageInfo  image_info{{}, m_gBuffer->getColorImageView(), VK_IMAGE_LAYOUT_GENERAL};
-    const     VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
-    const     VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
-    const     VkDescriptorBufferInfo scene_desc{m_bSceneDesc.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorImageInfo  image_info{{}, m_gBuffer->getColorImageView(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo scene_desc{m_bSceneDesc.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_rtSet->makeWrite(0, BRtTlas, &desc_as_info));
@@ -666,7 +669,6 @@ private:
   nvmath::vec2f                    m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffer;                                      // G-Buffers: color + depth
   ProceduralSkyShaderParameters    m_skyParams{};
@@ -700,7 +702,6 @@ private:
   PushConstant     m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int              m_frame{0};
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
   VkPhysicalDeviceOpacityMicromapPropertiesEXT m_mmProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_EXT};

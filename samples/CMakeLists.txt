@@ -42,14 +42,27 @@ function(DefaultBasicMakefile)
     # Shaders in project
     set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
     file(GLOB SHD_HDR  ${SHD_DIR}/*.glsl ${SHD_DIR}/*.h)
-    file(GLOB SHD_SRC ${SHD_DIR}/*.vert ${SHD_DIR}/*.frag ${SHD_DIR}/*.rgen ${SHD_DIR}/*.rchit ${SHD_DIR}/*.rmiss ${SHD_DIR}/*.rahit)
+    file(GLOB SHD_SRC 
+        ${SHD_DIR}/*.vert 
+        ${SHD_DIR}/*.frag 
+        ${SHD_DIR}/*.tesc
+        ${SHD_DIR}/*.tese
+        ${SHD_DIR}/*.geom
+        ${SHD_DIR}/*.comp
+        ${SHD_DIR}/*.rgen 
+        ${SHD_DIR}/*.rchit 
+        ${SHD_DIR}/*.rmiss 
+        ${SHD_DIR}/*.rahit
+        ${SHD_DIR}/*.rint
+        ${SHD_DIR}/*.rcall
+    )
 
     # Compiling shaders to Spir-V header
     compile_glsl(
         SOURCE_FILES ${SHD_SRC}
         HEADER_FILES ${SHD_HDR}
         DST "${CMAKE_CURRENT_SOURCE_DIR}/_autogen" 
-        VULKAN_TARGET "vulkan1.2"
+        VULKAN_TARGET "vulkan1.3"
         HEADER ON
         DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
         FLAGS -I${SHD_DIR} -I${NVPRO_CORE_DIR} -g
@@ -68,6 +81,7 @@ endfunction()
 
 
 add_subdirectory(aftermath)
+add_subdirectory(barycentric_wireframe)
 add_subdirectory(image_ktx)
 add_subdirectory(image_viewer)
 add_subdirectory(mm_displacement)
@@ -81,3 +95,4 @@ add_subdirectory(ser_pathtrace)
 add_subdirectory(simple_polygons)
 add_subdirectory(solid_color)
 add_subdirectory(tiny_shader_toy)
+add_subdirectory(texture_3d)

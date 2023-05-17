@@ -43,9 +43,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     i2 *= 1.7;
     i4 += 0.05 + 0.1 * time * i1;
   }
-  float r   = sin(uv.x - time) * 0.5 + 0.5;
-  float b   = sin(uv.y + time) * 0.5 + 0.5;
-  float g   = sin((uv.x + uv.y + sin(time * 0.5)) * 0.5) * 0.5 + 0.5;
-  
+  float r = sin(uv.x - time) * 0.5 + 0.5;
+  float b = sin(uv.y + time) * 0.5 + 0.5;
+  float g = sin((uv.x + uv.y + sin(time * 0.5)) * 0.5) * 0.5 + 0.5;
+
   fragColor = vec4(r, g, b, 1.0);
 }

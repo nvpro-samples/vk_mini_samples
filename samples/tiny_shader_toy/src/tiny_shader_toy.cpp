@@ -126,7 +126,11 @@ public:
     createGeometryBuffers();
   }
 
-  void onDetach() override { detroyResources(); }
+  void onDetach() override
+  {
+    vkDeviceWaitIdle(m_device);
+    destroyResources();
+  }
 
   void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
 
@@ -455,10 +459,10 @@ private:
 #elif defined __linux__  // For Linux
     std::string command = "xdg-open " + std::string(directoryPath);
     system(command.c_str());
-#endif 
+#endif
   }
 
-  void detroyResources()
+  void destroyResources()
   {
     vkDestroyPipeline(m_device, m_pipelineImg, nullptr);
     vkDestroyPipeline(m_device, m_pipelineBufA, nullptr);

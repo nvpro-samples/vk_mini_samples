@@ -22,22 +22,18 @@
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/noise.hpp>  // Perlin noise
-
-#include "vk_nv_micromesh.h"  // prototype
-
-#include "nvmath/nvmath.h"
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/error_vk.hpp"
-#include "nvh/parallel_work.hpp"
-
 #include "dmm_process.hpp"
 #include "bird_curve_helper.hpp"
-#include "nesting_scoped_timer.hpp"
 #include "bit_packer.hpp"
+#include "nvh/parallel_work.hpp"
+#include "nvh/timesampler.hpp"
+#include "nvvk/buffers_vk.hpp"
+#include "nvvk/error_vk.hpp"
+#include "vk_nv_micromesh.h"
 
 MicromapProcess::MicromapProcess(nvvk::Context* ctx, nvvk::ResourceAllocator* allocator)
-    : m_alloc(allocator)
-    , m_device(ctx->m_device)
+    : m_device(ctx->m_device)
+    , m_alloc(allocator)
 {
 }
 
@@ -61,7 +57,7 @@ MicromapProcess::~MicromapProcess()
 // - Create the vector of VkMicromapTriangleEXT
 bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, const Terrain& terrain)
 {
-  NestingScopedTimer stimer("Create Micromap Data");
+  nvh::ScopedTimer stimer("Create Micromap Data");
 
   vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
   m_alloc->destroy(m_scratchBuffer);
@@ -170,7 +166,7 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
 //
 bool MicromapProcess::buildMicromap(VkCommandBuffer cmd)
 {
-  NestingScopedTimer stimer("Build Micromap");
+  nvh::ScopedTimer stimer("Build Micromap");
 
   // Find the size required
   VkMicromapBuildSizesInfoEXT size_info{VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT};
@@ -299,7 +295,7 @@ void MicromapProcess::barrier(VkCommandBuffer cmd)
 // -
 MicromapProcess::MicroDistances MicromapProcess::createDisplacements(const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, const Terrain& terrain)
 {
-  NestingScopedTimer stimer("Create Displacements");
+  nvh::ScopedTimer stimer("Create Displacements");
 
   MicroDistances displacements;  // Return of displacement values for all triangles
 
