@@ -35,6 +35,8 @@
 #include <vulkan/vulkan_core.h>
 
 #define VMA_IMPLEMENTATION
+#define IMGUI_DEFINE_MATH_OPERATORS
+
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/commands_vk.hpp"

@@ -26,6 +26,8 @@
 
 
 #define VMA_IMPLEMENTATION
+#define IMGUI_DEFINE_MATH_OPERATORS
+
 #include "backends/imgui_impl_vulkan.h"
 #include "glm/gtc/noise.hpp"
 #include "nvh/primitives.hpp"

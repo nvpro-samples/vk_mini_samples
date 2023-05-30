@@ -43,6 +43,7 @@ This sample replicate in a simple form, the execution of shaders like
 #include <shaderc/shaderc.hpp>
 
 #define VMA_IMPLEMENTATION
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/backends/imgui_impl_vulkan.h"
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"

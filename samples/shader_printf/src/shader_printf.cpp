@@ -37,6 +37,8 @@
 #include <array>
 #include <vulkan/vulkan_core.h>
 #include "nvmath/nvmath.h"
+
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
 
 #define VMA_IMPLEMENTATION
