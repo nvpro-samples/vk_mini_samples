@@ -155,7 +155,7 @@ public:
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
+      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
       vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
@@ -165,12 +165,12 @@ private:
   void createScene()
   {
     // Meshes
-    m_meshes.emplace_back(nvh::sphere());
-    m_meshes.emplace_back(nvh::cube());
-    m_meshes.emplace_back(nvh::tetrahedron());
-    m_meshes.emplace_back(nvh::octahedron());
-    m_meshes.emplace_back(nvh::icosahedron());
-    m_meshes.emplace_back(nvh::cone());
+    m_meshes.emplace_back(nvh::createSphereMesh());
+    m_meshes.emplace_back(nvh::createCube());
+    m_meshes.emplace_back(nvh::createTetrahedron());
+    m_meshes.emplace_back(nvh::createOctahedron());
+    m_meshes.emplace_back(nvh::createIcosahedron());
+    m_meshes.emplace_back(nvh::createConeMesh());
     const int num_meshes = static_cast<int>(m_meshes.size());
 
     // Materials (colorful)
@@ -187,7 +187,7 @@ private:
       nvh::Node& n  = m_nodes.emplace_back();
       n.mesh        = i;
       n.material    = i;
-      n.translation = vec3(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
+      n.translation = nvmath::vec3f(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
     }
 
     CameraManip.setClipPlanes({0.1F, 100.0F});
@@ -249,7 +249,7 @@ private:
     {
       PrimitiveMeshVk& m = m_meshVk[i];
       m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }

@@ -310,7 +310,7 @@ public:
 private:
   void createScene()
   {
-    m_meshes.emplace_back(nvh::sphere());
+    m_meshes.emplace_back(nvh::createSphereUv());
     m_materials.push_back({vec4(1)});
     nvh::Node& n = m_nodes.emplace_back();
     n.mesh       = 0;
@@ -351,7 +351,7 @@ private:
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
+      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
       vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
     }
 
@@ -423,8 +423,6 @@ private:
         {2, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, t))},     // TexCoord
     });
 
-    const std::vector<uint32_t> code = {std::begin(raster_vert), std::end(raster_vert)};
-
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
     pgen.addShader(std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)}, VK_SHADER_STAGE_VERTEX_BIT);
     pgen.addShader(std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)}, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -450,7 +448,7 @@ private:
     {
       PrimitiveMeshVk& m = m_meshVk[i];
       m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }

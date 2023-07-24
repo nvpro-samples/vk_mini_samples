@@ -268,7 +268,7 @@ private:
 
     // Meshes
     //m_meshes.emplace_back(nvh::cube(obj_size, obj_size, obj_size));
-    m_meshes.emplace_back(nvh::sphere(obj_size));
+    m_meshes.emplace_back(nvh::createSphereMesh(obj_size));
     //m_meshes.emplace_back(nvh::tetrahedron());
     //m_meshes.emplace_back(nvh::octahedron());
     //m_meshes.emplace_back(nvh::icosahedron());
@@ -321,7 +321,7 @@ private:
 
     // Adding a plane & material
     m_materials.push_back({vec4(.7F, .7F, .7F, 1.0F)});
-    m_meshes.emplace_back(nvh::plane(10, 100, 100));
+    m_meshes.emplace_back(nvh::createPlane(10, 100, 100));
     auto& n       = m_nodes.emplace_back();
     n.mesh        = static_cast<int>(m_meshes.size()) - 1;
     n.material    = static_cast<int>(m_materials.size()) - 1;
@@ -372,7 +372,7 @@ private:
     {
       auto& m    = m_bMeshes[i];
       m.vertices = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rtUsageFlag);
-      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].indices, rtUsageFlag);
+      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rtUsageFlag);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
 
@@ -435,7 +435,7 @@ private:
   //
   nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const nvh::PrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
   {
-    uint32_t maxPrimitiveCount = static_cast<uint32_t>(prim.indices.size() / 3);
+    uint32_t maxPrimitiveCount = static_cast<uint32_t>(prim.triangles.size());
 
     // Describe buffer as array of VertexObj.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};

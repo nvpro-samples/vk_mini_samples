@@ -40,7 +40,8 @@
 #include "nvvkhl/shaders/ggx.glsl"
 #include "nvvkhl/shaders/ray_util.glsl"
 #include "nvvkhl/shaders/pbr_mat_struct.h"
-#include "nvvkhl/shaders/pbr_eval.glsl"
+#include "nvvkhl/shaders/bsdf_structs.h"
+#include "nvvkhl/shaders/bsdf_functions.h"
 
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
@@ -171,25 +172,45 @@ vec3 pathTrace(Ray r, inout uint seed)
 
     pbrMat.albedo.xyz += dummy * 0.01;
 
+    vec3 contrib = vec3(0);
 
     // Evaluation of direct light (sun)
-    vec3 contrib = pbrEval(pbrMat, V, L, pdf) * pc.intensity;
-    contrib *= throughput;
-
-    // Sampling
-    vec3 ray_direction;
-    vec3 rand_val = vec3(rand(seed), rand(seed), rand(seed));
-    vec3 brdf     = pbrSample(pbrMat, V, ray_direction, pdf, rand_val);
-
-    // Make sure the next ray is usable
-    if(pdf > 0.0F)
+    bool nextEventValid = (dot(L, payload.nrm) > 0.0f);
+    if(nextEventValid)
     {
-      throughput *= brdf * max(dot(payload.nrm, L), 0.0F) / pdf;
+      BsdfEvaluateData evalData;
+      evalData.ior1 = vec3(1.0);
+      evalData.ior2 = vec3(1.0);
+      evalData.k1   = -r.direction;
+      evalData.k2   = normalize(skyInfo.directionToLight);
+      bsdfEvaluate(evalData, pbrMat);
+
+      const vec3 w = pc.intensity.xxx;
+      contrib += w * evalData.bsdf_diffuse;
+      contrib += w * evalData.bsdf_glossy;
+      contrib *= throughput;
     }
-    else
+
+
+    // Sample BSDF
     {
-      break;
+      BsdfSampleData sampleData;
+      sampleData.ior1 = vec3(1.0F);    // IOR current medium
+      sampleData.ior2 = vec3(1.0F);    // IOR other side
+      sampleData.k1   = -r.direction;  // outgoing direction
+      sampleData.xi   = vec4(rand(seed), rand(seed), rand(seed), rand(seed));
+
+      bsdfSample(sampleData, pbrMat);
+      if(sampleData.event_type == BSDF_EVENT_ABSORB)
+      {
+        break;  // Need to add the contribution ?
+      }
+
+      throughput *= sampleData.bsdf_over_pdf;
+      r.origin    = offsetRay(payload.pos, payload.nrm);
+      r.direction = sampleData.k2;
     }
+
 
     // Russian-Roulette (minimizing live state)
     float rrPcont = min(max(throughput.x, max(throughput.y, throughput.z)) + 0.001F, 0.95F);
@@ -197,16 +218,15 @@ vec3 pathTrace(Ray r, inout uint seed)
       break;                // paths with low throughput that won't contribute
     throughput /= rrPcont;  // boost the energy of the non-terminated paths
 
-    // Next ray
-    r.direction = ray_direction;
-    r.origin    = offsetRay(payload.pos, payload.nrm);
-
     // We are adding the contribution to the radiance only if the ray is not occluded by an object.
-    Ray  shadowRay = Ray(r.origin, L);
-    bool inShadow  = traceShadow(shadowRay, INFINITE);
-    if(!inShadow)
+    if(nextEventValid)
     {
-      radiance += contrib;
+      Ray  shadowRay = Ray(r.origin, L);
+      bool inShadow  = traceShadow(shadowRay, INFINITE);
+      if(!inShadow)
+      {
+        radiance += contrib;
+      }
     }
   }
 

@@ -335,7 +335,7 @@ public:
     }
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-    auto index_count = static_cast<uint32_t>(m_meshes[0].indices.size());
+    auto index_count = static_cast<uint32_t>(m_meshes[0].triangles.size() * 3);
     vkCmdDrawIndexed(cmd, index_count, 1, 0, 0, 0);
 
     vkCmdEndRendering(cmd);
@@ -436,14 +436,14 @@ private:
 
   void createVkResources()
   {
-    m_meshes.emplace_back(nvh::sphere(0.5F, 20, 20));
+    m_meshes.emplace_back(nvh::createSphereUv(0.5F, 20, 20));
 
     {
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
       // Create buffer of the mesh
       m_vertices = m_alloc->createBuffer(cmd, m_meshes[0].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices  = m_alloc->createBuffer(cmd, m_meshes[0].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      m_indices  = m_alloc->createBuffer(cmd, m_meshes[0].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME(m_vertices.buffer);
       m_dutil->DBG_NAME(m_indices.buffer);
 

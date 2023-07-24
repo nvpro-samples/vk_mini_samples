@@ -142,6 +142,7 @@ public:
         vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         m_dset->deinit();
+        m_dset->init(m_device);
         createMsaaBuffers(m_viewSize);
         createPipeline();
       }
@@ -233,7 +234,7 @@ private:
   void createScene()
   {
     // Meshes
-    m_meshes.emplace_back(nvh::cone(0.05F));
+    m_meshes.emplace_back(nvh::createConeMesh(0.05F));
     const int num_instances = 50;
 
     // Instances
@@ -252,9 +253,9 @@ private:
     // Materials (colorful)
     for(int i = 0; i < num_instances; i++)
     {
-      const vec3 freq = vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      const vec3 v    = static_cast<vec3>(nvmath::sin(freq) * 0.5F + 0.5F);
-      m_materials.push_back({vec4(v, 1.0F)});
+      const nvmath::vec3f freq = nvmath::vec3f(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
+      const nvmath::vec3f v    = static_cast<nvmath::vec3f>(nvmath::sin(freq) * 0.5F + 0.5F);
+      m_materials.push_back({nvmath::vec4f(v, 1.0F)});
     }
 
 
@@ -273,7 +274,7 @@ private:
     for(const nvh::Node& n : m_nodes)
     {
       const PrimitiveMeshVk& m           = m_meshVk[n.mesh];
-      auto                   num_indices = static_cast<uint32_t>(m_meshes[n.mesh].indices.size());
+      auto                   num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
 
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
@@ -397,7 +398,7 @@ private:
     {
       PrimitiveMeshVk& m = m_meshVk[i];
       m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }

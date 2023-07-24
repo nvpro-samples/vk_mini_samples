@@ -462,9 +462,11 @@ private:
 
   void runCompute(VkCommandBuffer cmd, const VkExtent3D& size)
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
-    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PerlinSettings),
-                       &m_settings.perlin);
+    uint32_t       realSize = m_settings.getSize();
+    auto           sdbg     = m_dutil->DBG_SCOPE(cmd);
+    PerlinSettings perlin   = m_settings.perlin;
+    perlin.frequency /= float(realSize);
+    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PerlinSettings), &perlin);
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_dsetCompute->getPipeLayout(), 0,
                               static_cast<uint32_t>(m_dsetCompWrites.size()), m_dsetCompWrites.data());
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
@@ -491,9 +493,9 @@ private:
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
     // Creating the Cube on the GPU
-    nvh::PrimitiveMesh mesh = nvh::cube();
+    nvh::PrimitiveMesh mesh = nvh::createCube();
     m_vertices              = m_alloc->createBuffer(cmd, mesh.vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    m_indices               = m_alloc->createBuffer(cmd, mesh.indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    m_indices               = m_alloc->createBuffer(cmd, mesh.triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     m_dutil->DBG_NAME(m_vertices.buffer);
     m_dutil->DBG_NAME(m_indices.buffer);
 
@@ -546,10 +548,10 @@ private:
 private:
   // Local data
   nvvk::Texture   m_texture;
-  VkDevice        m_device        = VK_NULL_HANDLE;
-  VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
-  VkPipeline      m_computePipeline{VK_NULL_HANDLE};  // The graphic pipeline to render
-  bool            m_dirty = false;
+  VkDevice        m_device          = VK_NULL_HANDLE;
+  VkDescriptorSet m_descriptorSet   = VK_NULL_HANDLE;
+  VkPipeline      m_computePipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  bool            m_dirty           = false;
 
   std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
   std::unique_ptr<nvvk::DebugUtil>              m_dutil;

@@ -312,7 +312,7 @@ private:
   {
     // Adding a plane & material
     m_materials.push_back({vec4(.7F, .7F, .7F, 1.0F)});
-    m_meshes.emplace_back(nvh::plane(3, 1.0F, 1.0F));
+    m_meshes.emplace_back(nvh::createPlane(3, 1.0F, 1.0F));
     nvh::Node& n  = m_nodes.emplace_back();
     n.mesh        = static_cast<int>(m_meshes.size()) - 1;
     n.material    = static_cast<int>(m_materials.size()) - 1;
@@ -351,7 +351,7 @@ private:
     {
       PrimitiveMeshVk& m = m_bMeshes[i];
       m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rt_usage_flag);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, rt_usage_flag);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rt_usage_flag);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
 
@@ -412,7 +412,7 @@ private:
                                                                    VkDeviceAddress           vertexAddress,
                                                                    VkDeviceAddress           indexAddress)
   {
-    auto max_primitive_count = static_cast<uint32_t>(prim.indices.size() / 3);
+    auto max_primitive_count = static_cast<uint32_t>(prim.triangles.size());
 
     // Describe buffer as array of VertexObj.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};

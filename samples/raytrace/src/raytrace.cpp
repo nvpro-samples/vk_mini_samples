@@ -190,12 +190,12 @@ private:
   void createScene()
   {
     // Meshes
-    m_meshes.emplace_back(nvh::sphere());
-    m_meshes.emplace_back(nvh::cube());
-    m_meshes.emplace_back(nvh::tetrahedron());
-    m_meshes.emplace_back(nvh::octahedron());
-    m_meshes.emplace_back(nvh::icosahedron());
-    m_meshes.emplace_back(nvh::cone());
+    m_meshes.emplace_back(nvh::createSphereMesh());
+    m_meshes.emplace_back(nvh::createCube());
+    m_meshes.emplace_back(nvh::createTetrahedron());
+    m_meshes.emplace_back(nvh::createOctahedron());
+    m_meshes.emplace_back(nvh::createIcosahedron());
+    m_meshes.emplace_back(nvh::createConeMesh());
     const int num_meshes = static_cast<int>(m_meshes.size());
 
     // Materials (colorful)
@@ -217,7 +217,7 @@ private:
 
     // Adding a plane & material
     m_materials.push_back({vec4(.7F, .7F, .7F, 1.0F)});
-    m_meshes.emplace_back(nvh::plane(10, 100, 100));
+    m_meshes.emplace_back(nvh::createPlane(10, 100, 100));
     nvh::Node& n  = m_nodes.emplace_back();
     n.mesh        = static_cast<int>(m_meshes.size()) - 1;
     n.material    = static_cast<int>(m_materials.size()) - 1;
@@ -262,7 +262,7 @@ private:
     {
       PrimitiveMeshVk& m = m_bMeshes[i];
       m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rt_usage_flag);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].indices, rt_usage_flag);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rt_usage_flag);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
 
@@ -321,7 +321,7 @@ private:
   //
   nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const nvh::PrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
   {
-    const auto max_primitive_count = static_cast<uint32_t>(prim.indices.size() / 3);
+    const auto max_primitive_count = static_cast<uint32_t>(prim.triangles.size());
 
     // Describe buffer as array of VertexObj.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};

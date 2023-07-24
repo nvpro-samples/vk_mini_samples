@@ -226,7 +226,7 @@ void MicromapProcess::createMicromapBuffers(VkCommandBuffer cmd, const nvh::Prim
   m_alloc->destroy(m_displacementDirections);
   m_alloc->destroy(m_displacementBiasAndScale);
 
-  auto num_tri = static_cast<uint32_t>(mesh.indices.size() / 3U);
+  auto num_tri = static_cast<uint32_t>(mesh.triangles.size());
 
   // Direction vectors
   {
@@ -248,7 +248,7 @@ void MicromapProcess::createMicromapBuffers(VkCommandBuffer cmd, const nvh::Prim
   {
     // Making the bias-scale uniform across all triangle vertices
     std::vector<nvmath::vec2f> bias_scale;
-    bias_scale.reserve(num_tri * 3ULL);
+    bias_scale.reserve(num_tri);
     for(uint32_t i = 0; i < num_tri; i++)
     {
       bias_scale.emplace_back(biasScale);
@@ -303,7 +303,7 @@ MicromapProcess::MicroDistances MicromapProcess::createDisplacements(const nvh::
   BirdCurveHelper                         barycentrics(subdivLevel);
   const BirdCurveHelper::BaryCoordinates& bvalues = barycentrics.getVertexCoord(subdivLevel);
 
-  auto num_tri = static_cast<uint32_t>(mesh.indices.size() / 3);
+  auto num_tri = static_cast<uint32_t>(mesh.triangles.size());
   displacements.rawTriangles.resize(num_tri);
 
   // Find the distances in parallel
@@ -312,9 +312,9 @@ MicromapProcess::MicroDistances MicromapProcess::createDisplacements(const nvh::
       num_tri,
       [&](uint64_t tri_index) {
         // Retrieve the UV of the triangle
-        nvmath::vec2f t0 = mesh.vertices[mesh.indices[tri_index * 3 + 0]].t;
-        nvmath::vec2f t1 = mesh.vertices[mesh.indices[tri_index * 3 + 1]].t;
-        nvmath::vec2f t2 = mesh.vertices[mesh.indices[tri_index * 3 + 2]].t;
+        nvmath::vec2f t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].t;
+        nvmath::vec2f t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].t;
+        nvmath::vec2f t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].t;
 
         // Working on this triangle
         RawTriangle& triangle = displacements.rawTriangles[tri_index];

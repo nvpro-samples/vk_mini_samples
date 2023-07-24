@@ -135,7 +135,7 @@ void main()
 {
   float v     = 0.0F;
   float scale = perlinSettings.power;
-  float freq  = perlinSettings.frequency / (gl_NumWorkGroups.x * gl_WorkGroupSize.x);
+  float freq  = perlinSettings.frequency;
 
   for(int oct = 0; oct < perlinSettings.octave; oct++)
   {

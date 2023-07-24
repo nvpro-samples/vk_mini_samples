@@ -336,7 +336,7 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
 
   const auto num_micro_tri = BirdCurveHelper::getNumMicroTriangles(subdivLevel);
 
-  auto num_tri = static_cast<uint32_t>(mesh.indices.size() / 3);
+  auto num_tri = static_cast<uint32_t>(mesh.triangles.size());
   displacements.rawTriangles.resize(num_tri);
 
   const nvmath::vec3f center{0.0F, 0.0F, 0.0F};
@@ -347,9 +347,9 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
       num_tri,
       [&](uint64_t tri_index) {
         // Retrieve the positions of the triangle
-        nvmath::vec3f t0 = mesh.vertices[mesh.indices[tri_index * 3 + 0]].p;
-        nvmath::vec3f t1 = mesh.vertices[mesh.indices[tri_index * 3 + 1]].p;
-        nvmath::vec3f t2 = mesh.vertices[mesh.indices[tri_index * 3 + 2]].p;
+        nvmath::vec3f t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].p;
+        nvmath::vec3f t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].p;
+        nvmath::vec3f t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].p;
 
         // Working on this triangle
         RawTriangle& triangle = displacements.rawTriangles[tri_index];
