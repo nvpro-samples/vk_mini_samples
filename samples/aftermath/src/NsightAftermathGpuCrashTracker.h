@@ -49,7 +49,7 @@ public:
   void initialize();
 
   // Track a shader compiled with -g
-  void addShaderBinary(std::vector<uint32_t>& data);
+  void addShaderBinary(const std::vector<uint32_t>& data);
 
   // Track an optimized shader with additional debug information
   void addShaderBinaryWithDebugInfo(std::vector<uint32_t>& data, std::vector<uint32_t>& strippedData);

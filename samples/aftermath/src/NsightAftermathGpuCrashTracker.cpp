@@ -334,7 +334,7 @@ void GpuCrashTracker::shaderSourceDebugInfoLookupCallback(const GFSDK_Aftermath_
 }
 
 
-void GpuCrashTracker::addShaderBinary(std::vector<uint32_t>& data)
+void GpuCrashTracker::addShaderBinary(const std::vector<uint32_t>& data)
 {
 
   // Create shader hash for the shader
