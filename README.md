@@ -40,6 +40,12 @@ cmake ..
 git submodule update --init --recursive --checkout --force
 ```
 
+### HLSL or SLANG
+
+The samples can use two other shading languages besides GLSL, [HLSL](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl) and [SLANG](https://github.com/shader-slang/slang). To switch between them, select one of option: USE_HLSL or USE_SLANG. Then regenerate CMake and the solution will be updated with compatible projects and their shaders.
+
+![img](docs/use_shaders.png)
+
 ### Extra SDK
 
 Some samples depend on other SDKs. They are only required if you intend to build these projects.
@@ -72,7 +78,7 @@ The `run()` function is an infinite loop until the close event is triggered. Wit
 
 At the end of each loop the frame is rendered with `frameRender()` then the frame is presented with `framePresent()`.  
 
-### Basic Samples
+### Samples
 
 If you are new to this repository, the first samples to read to better understand the framwork are [solid color](samples/solid_color) and [rectangle](samples/rectangle).
 
@@ -100,12 +106,12 @@ If you are new to this repository, the first samples to read to better understan
 
 ## HLSL
 
-The two main shading languages that can be used with Vulkan are:
+The two main shading languages that are used with Vulkan are:
 
 * GLSL (OpenGL Shading Language)
 * HLSL (High Level Shading Language)
 
-Both GLSL and HLSL are supported by the samples. To switch between then, open CMake and under **HLSL**, toggle the **USE_HLSL**.
+Both GLSL and HLSL are supported by the samples. To switch between then, open CMake and under **USE**, toggle the **USE_HLSL**.
 
 Note: it is also possible to use a different `dxc` binary. By default, it uses the one coming with the Vulkan SDK, but there is the option to use the one of your choice. Open `Vulkan` and change the path to `Vulkan_dxc_EXECUTABLE`. If you do not see `Vulkan`, make sure the `Advanced` option is selected.
 
@@ -139,9 +145,9 @@ Note: To compile all samples with dxc, the [Preview Release for June 2023](https
 
 ## Slang
 
-Some samples have been converted to use Slang.
+Some samples have also been converted to use Slang. When configurating CMake, it should download automatically one of the release. To change the version of the Slang compiler, select the path to `SLANG_EXE` in CMake. 
 
-To use Slang, download the latest release and set an environment variable `SLANG_SDK` to the root of the SDK. In CMake, check USE_SLANG then re-configure and re-generate.
+To use Slang, check USE_SLANG then re-configure and re-generate.
 
 ### Resources
 
