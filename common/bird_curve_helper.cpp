@@ -177,7 +177,7 @@ void BirdCurveHelper::birdLevel(int                  level,
   nvmath::vec3f uv = (u + v) * 0.5F;
   nvmath::vec3f uw = (w + u) * 0.5F;
 
-  if(triPointUp)  // Store mid-points only triangles pointing up
+  if(triPointUp)          // Store mid-points only triangles pointing up
   {
     if(counterClockwise)  // Sub-triangle 0 - 2
     {

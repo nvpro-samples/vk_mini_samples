@@ -20,6 +20,10 @@
 using mat4 = nvmath::mat4f;
 using vec4 = nvmath::vec4f;
 using vec3 = nvmath::vec3f;
+#elif defined(__hlsl) || defined(__slang)
+#define mat4 float4x4
+#define vec4 float4
+#define vec3 float3
 #endif  // __cplusplus
 
 

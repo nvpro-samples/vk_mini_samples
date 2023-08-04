@@ -52,11 +52,27 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
-#include "_autogen/raster.frag.h"
-#include "_autogen/raster.vert.h"
 #include "shaders/device_host.h"
 #include "nvvk/images_vk.hpp"
 #include "imgui_helper.h"
+
+#if USE_HLSL 
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+#elif defined(USE_SLANG)
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+#define USE_HLSL 0
+#else
+#include "_autogen/raster.frag.h"
+#include "_autogen/raster.vert.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+#endif  // USE_HLSL
 
 
 // thickness;color;thicknessVar;smoothing;screenSpace;backFaceColor;enableDash;dashRepeats;dashLength;onlyWire;
@@ -213,7 +229,7 @@ private:
   {
     nvh::ScopedTimer st(__FUNCTION__);
     // Meshes
-    m_meshes.emplace_back(nvh::createSphereMesh());
+    m_meshes.emplace_back(nvh::createSphereUv());
     m_meshes.emplace_back(nvh::createCube());
     m_meshes.emplace_back(nvh::createTetrahedron());
     m_meshes.emplace_back(nvh::createOctahedron());
@@ -276,8 +292,8 @@ private:
     });
 
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_dset->getPipeLayout(), prend_info, pstate);
-    pgen.addShader(std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)}, VK_SHADER_STAGE_VERTEX_BIT);
-    pgen.addShader(std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)}, VK_SHADER_STAGE_FRAGMENT_BIT);
+    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
+    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
 
     m_graphicsPipeline = pgen.createPipeline();
     m_dutil->setObjectName(m_graphicsPipeline, "Graphics");

@@ -11,7 +11,7 @@ Each sample have its own documentation written in [Markdown](https://github.gith
 Clone this repository
 
 ```bash
-git clone https://github.com/nvpro-samples/vk_samples.git
+git clone https://github.com/nvpro-samples/vk_mini_samples.git
 ```
 
 1. Deploy.bat : pull and update all dependencies.
@@ -22,13 +22,13 @@ git clone https://github.com/nvpro-samples/vk_samples.git
 
 ``` bash
 git clone --recursive --shallow-submodules https://github.com/nvpro-samples/nvpro_core.git
-git clone https://github.com/nvpro-samples/vk_samples.git
+git clone https://github.com/nvpro-samples/vk_mini_samples.git
 ```
 
 Generate solution
 
 ``` bash
-cd vk_samples
+cd vk_mini_samples
 mkdir build
 cd build
 cmake ..
@@ -52,9 +52,10 @@ Some samples depend on other SDKs. They are only required if you intend to build
 
 ### Application Class
 
-The examples are for most using the [Application class](application/application_vk/src/application.hpp). This class is a modified version of the Dear ImGui Vulkan example. It is creating the window, based on GLFW, creates and initialize the UI, but also creates the swapchain with ImGui framework.
+The examples uses many helper from nvpro_core: https://github.com/nvpro-samples/nvpro_core repository. The core of each sample uses the [Application class](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvkhl/application.hpp) to create a window, initialize the UI, and create a swapchain with the ImGui framework. The `Application` class is a modified version of the Dear ImGui Vulkan example.
 
-Samples are attached to the application class as Engines. While the application runs, the sample will be called to render its UI, or to perform rendering operation in the current frame.
+Samples are attached to the `Application` class as `Engines`. While the application is running, the sample will be called to render its UI or to perform rendering operations in the current frame.
+
 
 #### Init
 
@@ -86,13 +87,71 @@ If you are new to this repository, the first samples to read to better understan
 | [mm_opacity](samples/mm_opacity) | Micromap opacity  | ![](samples/mm_opacity/docs/opacity_th.jpg) |
 | [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing  | ![](samples/msaa/docs/msaa_th.jpg) |
 | [shader_printf](samples/shader_printf) | Add printf to shader and display in a log window  | ![](samples/shader_printf/docs/printf_th.jpg) |
-| [raytrace](samples/raytrace) | Simple ray tracer using metalic-roughness shading, reflection and shadows and simple sky shader.  | ![](samples/raytrace/docs/raytrace_th.jpg) |
+| [ray_trace](samples/ray_trace) | Simple ray tracer using metalic-roughness shading, reflection and shadows and simple sky shader.  | ![](samples/ray_trace/docs/raytrace_th.jpg) |
 | [shading execution reorder](samples/ser_pathtrace) | Known also as SER, this shows how to reorder execution rays to gain a better usage of the GPU.  | ![](samples/ser_pathtrace/docs/ser_2_th.jpg) |
 | [simple_polygons](samples/simple_polygons) | Rasterizing multiple polygonal objects.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) |
 | [offscreen](samples/offscreen) | Render without window context and save image to disk.  | ![](samples/offscreen/docs/offline_th.jpg) |
 | [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) |
 | [barycentric_wireframe](samples/barycentric_wireframe) | Draw wifreframe in a a single pass using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) |
 | [texture 3d](samples/texture_3d) | Create a 3D texture and do ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) |
+| [position fetch](samples/ray_tracing_position_fetch) | Using VK_KHR_ray_tracing_position_fetch. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) |
+| [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) |
+
+
+## HLSL
+
+The two main shading languages that can be used with Vulkan are:
+
+* GLSL (OpenGL Shading Language)
+* HLSL (High Level Shading Language)
+
+Both GLSL and HLSL are supported by the samples. To switch between then, open CMake and under **HLSL**, toggle the **USE_HLSL**.
+
+Note: it is also possible to use a different `dxc` binary. By default, it uses the one coming with the Vulkan SDK, but there is the option to use the one of your choice. Open `Vulkan` and change the path to `Vulkan_dxc_EXECUTABLE`. If you do not see `Vulkan`, make sure the `Advanced` option is selected.
+
+Note: To compile all samples with dxc, the [Preview Release for June 2023](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2306-preview) is needed.
+
+| Feature       | GLSL            | HLSL | 
+| --------      | -------         | -------|
+| Ease of use   | Easier to learn | More difficult to learn |
+| Feature set   | Less powerful   | More powerful |
+| Support       | More widely supported | Less widely supported |
+
+### Resources:
+* [HLSL to SPIR-V Feature Mapping Manual](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst)
+* [HLSL Ray Tracing](https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html)
+* [HLSL to SPIR-V Feature Mapping](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst)
+* [Porting GLSL variables to HLSL](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-variables-to-hlsl)
+* [Porting GLSL types to HLSL](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-types-to-hlsl)
+* [Porting GLSL pre-defined global variables to HLSL](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-pre-defined-global-variables-to-hlsl)
+* [Mapping between HLSL and GLSL](https://anteru.net/blog/2016/mapping-between-HLSL-and-GLSL/)
+
+### Spir-V intrinsics
+
+* [GL_EXT_spirv_intrinsics](https://github.com/microsoft/DirectXShaderCompiler/wiki/GL_EXT_spirv_intrinsics-for-SPIR-V-code-gen)
+* [KHR Extensions](https://github.com/KhronosGroup/SPIRV-Registry/tree/main/extensions/KHR)
+* [JSON](https://github.com/KhronosGroup/SPIRV-Headers/blob/main/include/spirv/unified1/spirv.json)
+
+### Releases: 
+* [DX Compiler Preview Release for June 2023](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2306-preview)
+* [All releases](https://github.com/microsoft/DirectXShaderCompiler/releases)
+
+
+## Slang
+
+Some samples have been converted to use Slang.
+
+To use Slang, download the latest release and set an environment variable `SLANG_SDK` to the root of the SDK. In CMake, check USE_SLANG then re-configure and re-generate.
+
+### Resources
+
+* Github: https://github.com/shader-slang/slang
+* Releases: https://github.com/shader-slang/slang/releases
+* Getting Started: https://shader-slang.com/getting-started.html
+* User Guide: http://shader-slang.com/slang/user-guide/index.html
+* Various Documentations: https://github.com/shader-slang/slang/tree/master/docs
+
+
 
 ## LICENSE
 

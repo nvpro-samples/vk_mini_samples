@@ -56,9 +56,29 @@
 #include "shaders/device_host.h"
 #include "nvvkhl/shaders/dh_sky.h"
 
+#if USE_HLSL
+#include "_autogen/pathtrace_rgenMain.spirv.h"
+#include "_autogen/pathtrace_rchitMain.spirv.h"
+#include "_autogen/pathtrace_rmissMain.spirv.h"
+const auto& rgen_shd  = std::vector<char>{std::begin(pathtrace_rgenMain), std::end(pathtrace_rgenMain)};
+const auto& rchit_shd = std::vector<char>{std::begin(pathtrace_rchitMain), std::end(pathtrace_rchitMain)};
+const auto& rmiss_shd = std::vector<char>{std::begin(pathtrace_rmissMain), std::end(pathtrace_rmissMain)};
+#elif USE_SLANG
+#include "_autogen/pathtrace_rgenMain.spirv.h"
+#include "_autogen/pathtrace_rchitMain.spirv.h"
+#include "_autogen/pathtrace_rmissMain.spirv.h"
+const auto& rgen_shd  = std::vector<uint32_t>{std::begin(pathtrace_rgenMain), std::end(pathtrace_rgenMain)};
+const auto& rchit_shd = std::vector<uint32_t>{std::begin(pathtrace_rchitMain), std::end(pathtrace_rchitMain)};
+const auto& rmiss_shd = std::vector<uint32_t>{std::begin(pathtrace_rmissMain), std::end(pathtrace_rmissMain)};
+#else
 #include "_autogen/pathtrace.rchit.h"
 #include "_autogen/pathtrace.rgen.h"
 #include "_autogen/pathtrace.rmiss.h"
+const auto& rgen_shd  = std::vector<uint32_t>{std::begin(pathtrace_rgen), std::end(pathtrace_rgen)};
+const auto& rchit_shd = std::vector<uint32_t>{std::begin(pathtrace_rchit), std::end(pathtrace_rchit)};
+const auto& rmiss_shd = std::vector<uint32_t>{std::begin(pathtrace_rmiss), std::end(pathtrace_rmiss)};
+#endif
+
 #include "nvvk/specialization.hpp"
 #include "nvvk/images_vk.hpp"
 
@@ -268,7 +288,7 @@ private:
 
     // Meshes
     //m_meshes.emplace_back(nvh::cube(obj_size, obj_size, obj_size));
-    m_meshes.emplace_back(nvh::createSphereMesh(obj_size));
+    m_meshes.emplace_back(nvh::createSphereUv(obj_size));
     //m_meshes.emplace_back(nvh::tetrahedron());
     //m_meshes.emplace_back(nvh::octahedron());
     //m_meshes.emplace_back(nvh::icosahedron());
@@ -360,32 +380,21 @@ private:
   // Create all Vulkan buffer data
   void createVkBuffers()
   {
-    auto* cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_bMeshes.resize(m_meshes.size());
 
     auto rtUsageFlag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
-    std::vector<PrimMeshInfo> primInfo;
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
-      auto& m    = m_bMeshes[i];
-      m.vertices = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rtUsageFlag);
-      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rtUsageFlag);
+      PrimitiveMeshVk& m = m_bMeshes[i];
+      m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rtUsageFlag);
+      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rtUsageFlag);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
-
-      // To find the buffers of the mesh (buffer reference)
-      PrimMeshInfo info{};
-      info.vertexAddress = nvvk::getBufferDeviceAddress(m_device, m.vertices.buffer);
-      info.indexAddress  = nvvk::getBufferDeviceAddress(m_device, m.indices.buffer);
-      primInfo.emplace_back(info);
     }
-
-    // Creating the buffer of all primitive information
-    m_bPrimInfo = m_alloc->createBuffer(cmd, primInfo, rtUsageFlag);
-    m_dutil->DBG_NAME(m_bPrimInfo.buffer);
 
     // Create the buffer of the current frame, changing at each frame
     m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -416,15 +425,6 @@ private:
 
     m_bMaterials = m_alloc->createBuffer(cmd, m_materials, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     m_dutil->DBG_NAME(m_bMaterials.buffer);
-
-    // Buffer references of all scene elements
-    SceneDescription sceneDesc{};
-    sceneDesc.materialAddress = nvvk::getBufferDeviceAddress(m_device, m_bMaterials.buffer);
-    sceneDesc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bPrimInfo.buffer);
-    sceneDesc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bInstInfoBuffer.buffer);
-    m_bSceneDesc              = m_alloc->createBuffer(cmd, sizeof(SceneDescription), &sceneDesc,
-                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    m_dutil->DBG_NAME(m_bSceneDesc.buffer);
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
@@ -520,19 +520,20 @@ private:
     m_rtSet->deinit();
     m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
-    auto& p = m_rtPipe;
-    auto& d = m_rtSet;
-    p.plines.resize(1);
+    m_rtPipe.plines.resize(1);
 
     // This descriptor set, holds the top level acceleration structure and the output image
     // Create Binding Set
-    d->addBinding(BRtTlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-    d->addBinding(BRtOutImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    d->addBinding(BRtFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    d->addBinding(BRtSceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    d->addBinding(BRtSkyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    d->addBinding(BRtHeatStats, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    d->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
+    m_rtSet->addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_heatStats, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_materials, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_instances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_vertex, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_index, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
+    m_rtSet->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
 
     nvvk::Specialization specialization;
     specialization.add(0, m_useSER ? 1 : 0);
@@ -549,19 +550,22 @@ private:
     VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stage.pName = "main";  // All the same entry point
     // Raygen
-    stage.module              = nvvk::createShaderModule(m_device, pathtrace_rgen, sizeof(pathtrace_rgen));
+    stage.module              = nvvk::createShaderModule(m_device, rgen_shd);
+    stage.pName               = USE_HLSL ? "rgenMain" : "main";
     stage.stage               = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
     stage.pSpecializationInfo = specialization.getSpecialization();
     stages[eRaygen]           = stage;
 
     m_dutil->setObjectName(stage.module, "Raygen");
     // Miss
-    stage.module  = nvvk::createShaderModule(m_device, pathtrace_rmiss, sizeof(pathtrace_rmiss));
+    stage.module  = nvvk::createShaderModule(m_device, rmiss_shd);
+    stage.pName   = USE_HLSL ? "rmissMain" : "main";
     stage.stage   = VK_SHADER_STAGE_MISS_BIT_KHR;
     stages[eMiss] = stage;
     m_dutil->setObjectName(stage.module, "Miss");
     // Hit Group - Closest Hit
-    stage.module              = nvvk::createShaderModule(m_device, pathtrace_rchit, sizeof(pathtrace_rchit));
+    stage.module              = nvvk::createShaderModule(m_device, rchit_shd);
+    stage.pName               = USE_HLSL ? "rchitMain" : "main";
     stage.stage               = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     stage.pSpecializationInfo = specialization.getSpecialization();
     stages[eClosestHit]       = stage;
@@ -600,11 +604,11 @@ private:
     pipelineLayoutCreateInfo.pPushConstantRanges    = &pushConstant;
 
     // Descriptor sets: one specific to ray tracing, and one shared with the rasterization pipeline
-    std::vector<VkDescriptorSetLayout> rtDescSetLayouts = {d->getLayout()};  // , m_pContainer[eGraphic].dstLayout};
-    pipelineLayoutCreateInfo.setLayoutCount             = static_cast<uint32_t>(rtDescSetLayouts.size());
-    pipelineLayoutCreateInfo.pSetLayouts                = rtDescSetLayouts.data();
-    vkCreatePipelineLayout(m_device, &pipelineLayoutCreateInfo, nullptr, &p.layout);
-    m_dutil->DBG_NAME(p.layout);
+    std::vector<VkDescriptorSetLayout> rtDescSetLayouts = {m_rtSet->getLayout()};  // , m_pContainer[eGraphic].dstLayout};
+    pipelineLayoutCreateInfo.setLayoutCount = static_cast<uint32_t>(rtDescSetLayouts.size());
+    pipelineLayoutCreateInfo.pSetLayouts    = rtDescSetLayouts.data();
+    vkCreatePipelineLayout(m_device, &pipelineLayoutCreateInfo, nullptr, &m_rtPipe.layout);
+    m_dutil->DBG_NAME(m_rtPipe.layout);
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
     VkRayTracingPipelineCreateInfoKHR rayPipelineInfo{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
@@ -613,12 +617,12 @@ private:
     rayPipelineInfo.groupCount                   = static_cast<uint32_t>(shaderGroups.size());
     rayPipelineInfo.pGroups                      = shaderGroups.data();
     rayPipelineInfo.maxPipelineRayRecursionDepth = 2;  // Ray depth
-    rayPipelineInfo.layout                       = p.layout;
-    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &rayPipelineInfo, nullptr, &p.plines[0]);
-    m_dutil->DBG_NAME(p.plines[0]);
+    rayPipelineInfo.layout                       = m_rtPipe.layout;
+    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &rayPipelineInfo, nullptr, &m_rtPipe.plines[0]);
+    m_dutil->DBG_NAME(m_rtPipe.plines[0]);
 
     // Creating the SBT
-    m_sbt.create(p.plines[0], rayPipelineInfo);
+    m_sbt.create(m_rtPipe.plines[0], rayPipelineInfo);
 
     // Removing temp modules
     for(auto& s : stages)
@@ -636,16 +640,30 @@ private:
     VkDescriptorImageInfo  imageInfo{{}, m_gBuffers->getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL};
     VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
-    VkDescriptorBufferInfo sceneDesc{m_bSceneDesc.buffer, 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo dbi_heatstats{m_bHeatStats.buffer, 0, VK_WHOLE_SIZE};
+    VkDescriptorBufferInfo mat_desc{m_bMaterials.buffer, 0, VK_WHOLE_SIZE};
+    VkDescriptorBufferInfo inst_desc{m_bInstInfoBuffer.buffer, 0, VK_WHOLE_SIZE};
+
+    std::vector<VkDescriptorBufferInfo> vertex_desc;
+    std::vector<VkDescriptorBufferInfo> index_desc;
+    vertex_desc.reserve(m_bMeshes.size());
+    index_desc.reserve(m_bMeshes.size());
+    for(auto& m : m_bMeshes)
+    {
+      vertex_desc.push_back({m.vertices.buffer, 0, VK_WHOLE_SIZE});
+      index_desc.push_back({m.indices.buffer, 0, VK_WHOLE_SIZE});
+    }
 
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtTlas, &descASInfo));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtOutImage, &imageInfo));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtFrameInfo, &dbi_unif));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtSceneDesc, &sceneDesc));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtSkyParam, &dbi_sky));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtHeatStats, &dbi_heatstats));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &descASInfo));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &imageInfo));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_frameInfo, &dbi_unif));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_skyParam, &dbi_sky));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_heatStats, &dbi_heatstats));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_materials, &mat_desc));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_instances, &inst_desc));
+    writes.emplace_back(m_rtSet->makeWriteArray(0, B_vertex, vertex_desc.data()));
+    writes.emplace_back(m_rtSet->makeWriteArray(0, B_index, index_desc.data()));
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipe.layout, 0,
                               static_cast<uint32_t>(writes.size()), writes.data());
   }
@@ -662,17 +680,17 @@ private:
   //
   bool updateFrame()
   {
-    static nvmath::mat4f ref_cam_matrix;
-    static float         ref_fov{CameraManip.getFov()};
+    static float ref_fov{0};
+    static float ref_cam_matrix[16];
 
     const auto& m   = CameraManip.getMatrix();
     const auto  fov = CameraManip.getFov();
 
-    if(memcmp(&ref_cam_matrix.a00, &m.a00, sizeof(nvmath::mat4f)) != 0 || ref_fov != fov)
+    if(memcmp(&ref_cam_matrix[0], &m.a00, sizeof(nvmath::mat4f)) != 0 || ref_fov != fov)
     {
       resetFrame();
-      ref_cam_matrix = m;
-      ref_fov        = fov;
+      memcpy(&ref_cam_matrix[0], &m.a00, sizeof(nvmath::mat4f));
+      ref_fov = fov;
     }
 
     if(m_frame >= m_maxFrames)
@@ -695,8 +713,6 @@ private:
       m_alloc->destroy(m.indices);
     }
     m_alloc->destroy(m_bFrameInfo);
-    m_alloc->destroy(m_bPrimInfo);
-    m_alloc->destroy(m_bSceneDesc);
     m_alloc->destroy(m_bInstInfoBuffer);
     m_alloc->destroy(m_bMaterials);
     m_alloc->destroy(m_bSkyParams);
@@ -736,8 +752,6 @@ private:
   };
   std::vector<PrimitiveMeshVk> m_bMeshes;
   nvvk::Buffer                 m_bFrameInfo;
-  nvvk::Buffer                 m_bPrimInfo;
-  nvvk::Buffer                 m_bSceneDesc;  // SceneDescription
   nvvk::Buffer                 m_bInstInfoBuffer;
   nvvk::Buffer                 m_bMaterials;
   nvvk::Buffer                 m_bSkyParams;
@@ -746,10 +760,6 @@ private:
   bool m_useSER{false};
 
   // Data and setting
-  struct Material
-  {
-    vec4 color{1.F};
-  };
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;
   std::vector<Material>           m_materials;
@@ -790,6 +800,10 @@ auto main(int argc, char** argv) -> int
   spec.vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
   spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
   spec.vkSetup.addDeviceExtension("VK_NV_ray_tracing_invocation_reorder");
+#if USE_HLSL  // DXC is automatically adding the extension
+  VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+#endif  // USE_HLSL
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

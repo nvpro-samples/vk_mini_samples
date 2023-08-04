@@ -248,7 +248,7 @@ void MicromapProcess::createMicromapBuffers(VkCommandBuffer cmd, const nvh::Prim
   {
     // Making the bias-scale uniform across all triangle vertices
     std::vector<nvmath::vec2f> bias_scale;
-    bias_scale.reserve(num_tri);
+    bias_scale.reserve(num_tri * 3ULL);
     for(uint32_t i = 0; i < num_tri; i++)
     {
       bias_scale.emplace_back(biasScale);

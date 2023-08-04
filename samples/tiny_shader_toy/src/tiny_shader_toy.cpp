@@ -69,8 +69,10 @@ struct InputUniforms
   float         iTimeDelta{0};
   int           iFrame{0};
   int           iFrameRate{1};
-  nvmath::vec3f iChannelResolution[1]{};
   float         iChannelTime[1]{};
+  nvmath::vec3f iChannelResolution[1]{};
+  int           pad1;
+  int           pad2;
 };
 
 
@@ -183,7 +185,7 @@ public:
       {
         m_frame        = 0;
         m_time         = 0;
-        m_inputUniform = {};
+        m_inputUniform = InputUniforms{};
       }
       ImGui::Separator();
       ImGui::Text("Resolution: %.0f, %.0f", m_inputUniform.iResolution.x, m_inputUniform.iResolution.y);
@@ -248,6 +250,7 @@ private:
 
   void createPipelineLayout()
   {
+    size_t                    size           = sizeof(InputUniforms);
     const VkPushConstantRange push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
 
     m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);

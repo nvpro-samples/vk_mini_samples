@@ -65,13 +65,39 @@
 #include "shaders/device_host.h"
 #include "nvvkhl/shaders/dh_sky.h"
 
-#include "_autogen/raytrace.rchit.h"
-#include "_autogen/raytrace.rahit.h"
-#include "_autogen/raytrace.rgen.h"
-#include "_autogen/raytrace.rmiss.h"
-
 #include "mm_process.hpp"
 #include "bird_curve_helper.hpp"
+
+//#undef USE_HLSL
+
+#if USE_HLSL
+#include "_autogen/raytrace_rgenMain.spirv.h"
+#include "_autogen/raytrace_rchitMain.spirv.h"
+#include "_autogen/raytrace_rmissMain.spirv.h"
+#include "_autogen/raytrace_rahitMain.spirv.h"
+const auto& rgen_shd  = std::vector<char>{std::begin(raytrace_rgenMain), std::end(raytrace_rgenMain)};
+const auto& rchit_shd = std::vector<char>{std::begin(raytrace_rchitMain), std::end(raytrace_rchitMain)};
+const auto& rmiss_shd = std::vector<char>{std::begin(raytrace_rmissMain), std::end(raytrace_rmissMain)};
+const auto& rahit_shd = std::vector<char>{std::begin(raytrace_rahitMain), std::end(raytrace_rahitMain)};
+#elif USE_SLANG
+#include "_autogen/raytrace_rgenMain.spirv.h"
+#include "_autogen/raytrace_rchitMain.spirv.h"
+#include "_autogen/raytrace_rmissMain.spirv.h"
+#include "_autogen/raytrace_rahitMain.spirv.h"
+const auto& rgen_shd  = std::vector<uint32_t>{std::begin(raytrace_rgenMain), std::end(raytrace_rgenMain)};
+const auto& rchit_shd = std::vector<uint32_t>{std::begin(raytrace_rchitMain), std::end(raytrace_rchitMain)};
+const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmissMain), std::end(raytrace_rmissMain)};
+const auto& rahit_shd = std::vector<uint32_t>{std::begin(raytrace_rahitMain), std::end(raytrace_rahitMain)};
+#else
+#include "_autogen/raytrace.rchit.h"
+#include "_autogen/raytrace.rgen.h"
+#include "_autogen/raytrace.rmiss.h"
+#include "_autogen/raytrace.rahit.h"
+const auto& rgen_shd  = std::vector<uint32_t>{std::begin(raytrace_rgen), std::end(raytrace_rgen)};
+const auto& rchit_shd = std::vector<uint32_t>{std::begin(raytrace_rchit), std::end(raytrace_rchit)};
+const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmiss), std::end(raytrace_rmiss)};
+const auto& rahit_shd = std::vector<uint32_t>{std::begin(raytrace_rahit), std::end(raytrace_rahit)};
+#endif
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -314,7 +340,6 @@ private:
                                              | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
-    std::vector<PrimMeshInfo> prim_info;
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
       PrimitiveMeshVk& m = m_bMeshes[i];
@@ -322,17 +347,7 @@ private:
       m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rt_usage_flag);
       m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
-
-      // To find the buffers of the mesh (buffer reference)
-      PrimMeshInfo info{};
-      info.vertexAddress = nvvk::getBufferDeviceAddress(m_device, m.vertices.buffer);
-      info.indexAddress  = nvvk::getBufferDeviceAddress(m_device, m.indices.buffer);
-      prim_info.emplace_back(info);
     }
-
-    // Creating the buffer of all primitive information
-    m_bPrimInfo = m_alloc->createBuffer(cmd, prim_info, rt_usage_flag);
-    m_dutil->DBG_NAME(m_bPrimInfo.buffer);
 
     // Create the buffer of the current frame, changing at each frame
     m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -346,12 +361,13 @@ private:
 
     // Primitive instance information
     std::vector<InstanceInfo> inst_info;
+    inst_info.reserve(m_nodes.size());
     for(const nvh::Node& node : m_nodes)
     {
       InstanceInfo info{};
       info.transform  = node.localMatrix();
       info.materialID = node.material;
-      inst_info.emplace_back(info);
+      inst_info.push_back(info);
     }
     m_bInstInfoBuffer =
         m_alloc->createBuffer(cmd, inst_info, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
@@ -359,15 +375,6 @@ private:
 
     m_bMaterials = m_alloc->createBuffer(cmd, m_materials, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     m_dutil->DBG_NAME(m_bMaterials.buffer);
-
-    // Buffer references of all scene elements
-    SceneDescription scene_desc{};
-    scene_desc.materialAddress = nvvk::getBufferDeviceAddress(m_device, m_bMaterials.buffer);
-    scene_desc.primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bPrimInfo.buffer);
-    scene_desc.instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bInstInfoBuffer.buffer);
-    m_bSceneDesc               = m_alloc->createBuffer(cmd, sizeof(SceneDescription), &scene_desc,
-                                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    m_dutil->DBG_NAME(m_bSceneDesc.buffer);
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
@@ -380,7 +387,7 @@ private:
                                                                    VkDeviceAddress           vertexAddress,
                                                                    VkDeviceAddress           indexAddress)
   {
-    auto max_primitive_count = static_cast<uint32_t>(prim.triangles.size());
+    const auto max_primitive_count = static_cast<uint32_t>(prim.triangles.size());
 
     // Describe buffer as array of VertexObj.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
@@ -503,11 +510,14 @@ private:
 
     // This descriptor set, holds the top level acceleration structure and the output image
     // Create Binding Set
-    m_rtSet->addBinding(BRtTlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(BRtOutImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(BRtFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(BRtSceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(BRtSkyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_materials, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_instances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_vertex, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_index, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
     m_rtSet->initLayout();
     m_rtSet->initPool(1);
 
@@ -527,22 +537,26 @@ private:
     VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stage.pName = "main";  // All the same entry point
     // Raygen
-    stage.module    = nvvk::createShaderModule(m_device, raytrace_rgen, sizeof(raytrace_rgen));
+    stage.module    = nvvk::createShaderModule(m_device, rgen_shd);
+    stage.pName     = USE_HLSL ? "rgenMain" : "main";
     stage.stage     = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
     stages[eRaygen] = stage;
     m_dutil->setObjectName(stage.module, "Raygen");
     // Miss
-    stage.module  = nvvk::createShaderModule(m_device, raytrace_rmiss, sizeof(raytrace_rmiss));
+    stage.module  = nvvk::createShaderModule(m_device, rmiss_shd);
+    stage.pName   = USE_HLSL ? "rmissMain" : "main";
     stage.stage   = VK_SHADER_STAGE_MISS_BIT_KHR;
     stages[eMiss] = stage;
     m_dutil->setObjectName(stage.module, "Miss");
     // Hit Group - Closest Hit
-    stage.module        = nvvk::createShaderModule(m_device, raytrace_rchit, sizeof(raytrace_rchit));
+    stage.module        = nvvk::createShaderModule(m_device, rchit_shd);
+    stage.pName         = USE_HLSL ? "rchitMain" : "main";
     stage.stage         = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     stages[eClosestHit] = stage;
     m_dutil->setObjectName(stage.module, "Closest Hit");
     // Hit Group - Any Hit
-    stage.module    = nvvk::createShaderModule(m_device, raytrace_rahit, sizeof(raytrace_rahit));
+    stage.module    = nvvk::createShaderModule(m_device, rahit_shd);
+    stage.pName     = USE_HLSL ? "rahitMain" : "main";
     stage.stage     = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
     stages[eAnyHit] = stage;
     m_dutil->setObjectName(stage.module, "Any Hit");
@@ -618,14 +632,38 @@ private:
     const VkDescriptorImageInfo  image_info{{}, m_gBuffer->getColorImageView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorBufferInfo scene_desc{m_bSceneDesc.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo mat_desc{m_bMaterials.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo inst_desc{m_bInstInfoBuffer.buffer, 0, VK_WHOLE_SIZE};
+
+    std::vector<VkDescriptorBufferInfo> vertex_desc;
+    std::vector<VkDescriptorBufferInfo> index_desc;
+    vertex_desc.reserve(m_bMeshes.size());
+    index_desc.reserve(m_bMeshes.size());
+    for(auto& m : m_bMeshes)
+    {
+      vertex_desc.push_back({m.vertices.buffer, 0, VK_WHOLE_SIZE});
+      index_desc.push_back({m.indices.buffer, 0, VK_WHOLE_SIZE});
+    }
 
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtTlas, &desc_as_info));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtOutImage, &image_info));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtFrameInfo, &dbi_unif));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtSceneDesc, &scene_desc));
-    writes.emplace_back(m_rtSet->makeWrite(0, BRtSkyParam, &dbi_sky));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &desc_as_info));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &image_info));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_frameInfo, &dbi_unif));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_skyParam, &dbi_sky));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_materials, &mat_desc));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_instances, &inst_desc));
+    writes.emplace_back(m_rtSet->makeWriteArray(0, B_vertex, vertex_desc.data()));
+    writes.emplace_back(m_rtSet->makeWriteArray(0, B_index, index_desc.data()));
+
+    writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &desc_as_info));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &image_info));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_frameInfo, &dbi_unif));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_skyParam, &dbi_sky));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_materials, &mat_desc));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_instances, &inst_desc));
+    writes.emplace_back(m_rtSet->makeWriteArray(0, B_vertex, vertex_desc.data()));
+    writes.emplace_back(m_rtSet->makeWriteArray(0, B_index, index_desc.data()));
+
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
@@ -640,8 +678,6 @@ private:
       m_alloc->destroy(m.indices);
     }
     m_alloc->destroy(m_bFrameInfo);
-    m_alloc->destroy(m_bPrimInfo);
-    m_alloc->destroy(m_bSceneDesc);
     m_alloc->destroy(m_bInstInfoBuffer);
     m_alloc->destroy(m_bMaterials);
     m_alloc->destroy(m_bSkyParams);
@@ -681,8 +717,6 @@ private:
   };
   std::vector<PrimitiveMeshVk> m_bMeshes;
   nvvk::Buffer                 m_bFrameInfo;
-  nvvk::Buffer                 m_bPrimInfo;
-  nvvk::Buffer                 m_bSceneDesc;  // SceneDescription
   nvvk::Buffer                 m_bInstInfoBuffer;
   nvvk::Buffer                 m_bMaterials;
   nvvk::Buffer                 m_bSkyParams;
@@ -731,6 +765,10 @@ int main(int argc, char** argv)
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
   spec.vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
+#if USE_HLSL  // DXC is automatically adding the extension
+  VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+#endif  // USE_HLSL
   spec.vkSetup.addDeviceExtension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
 
   // #MICROMAP

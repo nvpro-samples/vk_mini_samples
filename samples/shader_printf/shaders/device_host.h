@@ -19,6 +19,8 @@
 
 #ifdef __cplusplus
 using vec2 = nvmath::vec2f;
+#elif defined(__hlsl) || defined(__slang)
+#define vec2 float2
 #endif  // __cplusplus
 
 

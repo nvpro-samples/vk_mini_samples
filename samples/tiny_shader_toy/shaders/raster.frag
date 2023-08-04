@@ -32,8 +32,8 @@ layout(push_constant) uniform _InputUniforms
   float iTimeDelta;
   int   iFrame;
   int   iFrameRate;
-  vec3  iChannelResolution[1];
   float iChannelTime[1];
+  vec3  iChannelResolution[1];
 };
 
 layout(set = 0, binding = 0) uniform sampler2D iChannel0;

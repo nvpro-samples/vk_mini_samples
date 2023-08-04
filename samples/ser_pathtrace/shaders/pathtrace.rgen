@@ -46,16 +46,14 @@
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
 
-layout(buffer_reference, scalar) readonly buffer Materials { vec4 m[]; };
-layout(buffer_reference, scalar) readonly buffer InstanceInfos { InstanceInfo i[]; };
 
-
-layout(set = 0, binding = BRtTlas) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = BRtOutImage, rgba32f) uniform image2D image;
-layout(set = 0, binding = BRtFrameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
-layout(set = 0, binding = BRtSkyParam) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
-layout(set = 0, binding = BRtSceneDesc) readonly buffer SceneDesc_ { SceneDescription sceneDesc; };
-layout(set = 0, binding = BRtHeatStats) buffer HeatStats_ { HeatStats heatStats; };
+layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
+layout(set = 0, binding = B_frameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
+layout(set = 0, binding = B_skyParam) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_heatStats) buffer HeatStats_ { HeatStats heatStats; };
+layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
+layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
 
 // clang-format on
 
@@ -126,9 +124,6 @@ vec3 pathTrace(Ray r, inout uint seed)
   vec3 radiance   = vec3(0.0F);
   vec3 throughput = vec3(1.0F);
 
-  Materials materials = Materials(sceneDesc.materialAddress);
-
-
   for(int depth = 0; depth < pc.maxDepth; depth++)
   {
     traceRay(r);
@@ -141,8 +136,7 @@ vec3 pathTrace(Ray r, inout uint seed)
     }
 
     // Retrieve the Instance buffer information
-    InstanceInfos iInfo_ = InstanceInfos(sceneDesc.instInfoAddress);
-    InstanceInfo  iInfo  = iInfo_.i[payload.instanceIndex];
+    InstanceInfo  iInfo  = instanceInfo.i[payload.instanceIndex];
 
     float pdf = 0.0F;
     vec3  V   = -r.direction;
@@ -179,10 +173,8 @@ vec3 pathTrace(Ray r, inout uint seed)
     if(nextEventValid)
     {
       BsdfEvaluateData evalData;
-      evalData.ior1 = vec3(1.0);
-      evalData.ior2 = vec3(1.0);
-      evalData.k1   = -r.direction;
-      evalData.k2   = normalize(skyInfo.directionToLight);
+      evalData.k1 = -r.direction;
+      evalData.k2 = normalize(skyInfo.directionToLight);
       bsdfEvaluate(evalData, pbrMat);
 
       const vec3 w = pc.intensity.xxx;
@@ -195,10 +187,8 @@ vec3 pathTrace(Ray r, inout uint seed)
     // Sample BSDF
     {
       BsdfSampleData sampleData;
-      sampleData.ior1 = vec3(1.0F);    // IOR current medium
-      sampleData.ior2 = vec3(1.0F);    // IOR other side
-      sampleData.k1   = -r.direction;  // outgoing direction
-      sampleData.xi   = vec4(rand(seed), rand(seed), rand(seed), rand(seed));
+      sampleData.k1 = -r.direction;  // outgoing direction
+      sampleData.xi = vec4(rand(seed), rand(seed), rand(seed), rand(seed));
 
       bsdfSample(sampleData, pbrMat);
       if(sampleData.event_type == BSDF_EVENT_ABSORB)

@@ -45,9 +45,30 @@
 #include "nvvkhl/shaders/dh_comp.h"
 #include "shaders/device_host.h"
 
+
+#if USE_HLSL
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+#include "_autogen/perlin_computeMain.spirv.h"
+const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+const auto& comp_shd = std::vector<char>{std::begin(perlin_computeMain), std::end(perlin_computeMain)};
+#elif USE_SLANG
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+#include "_autogen/perlin_computeMain.spirv.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_computeMain), std::end(perlin_computeMain)};
+#else
 #include "_autogen/perlin.comp.h"
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_comp), std::end(perlin_comp)};
+#endif
+
 #include "imgui_helper.h"
 #include "imgui_camera_widget.h"
 
@@ -120,8 +141,7 @@ public:
     PE::entry("Color", [&] { return ImGui::ColorEdit3("##1", &m_settings.surfaceColor.x); });
     redoTexture |= PE::entry("Filter Mode", [&] { return ImGui::Combo("##6", (int*)&s.magFilter, "Nearest\0Linear\0"); });
     redoTexture |= PE::entry("Address Mode", [&] {
-      return ImGui::Combo("##6", (int*)&s.addressMode,
-                          "Repeat\0Mirror Repeat\0Clamp to Edge\0Clamp to Border\0Mirror Clamp to Edge\0");
+      return ImGui::Combo("##6", (int*)&s.addressMode, "Repeat\0Mirror Repeat\0Clamp to Edge\0Clamp to Border\0Mirror Clamp to Edge\0");
     });
     PE::entry("Head light", [&] { return ImGui::Checkbox("##1", (bool*)&m_settings.headlight); });
     ImGui::BeginDisabled(m_settings.headlight);
@@ -144,8 +164,7 @@ public:
         [&] { return ImGui::SliderFloat("##2", &s.perlin.frequency, 0.1F, 5.F, "%.3f", ImGuiSliderFlags_Logarithmic); },
         "Number of time the noise is sampled in the domain.");
     m_dirty |= PE::entry(
-        "Gpu Creation", [&] { return ImGui::Checkbox("##4", &s.useGpu); },
-        "Use compute shader to generate the texture data");
+        "Gpu Creation", [&] { return ImGui::Checkbox("##4", &s.useGpu); }, "Use compute shader to generate the texture data");
     PE::end();
     /// ----
     ImGui::Text("Ray Marching");
@@ -446,8 +465,8 @@ private:
 
     VkPipelineShaderStageCreateInfo stage_info{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stage_info.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    stage_info.module = nvvk::createShaderModule(m_device, perlin_comp, sizeof(perlin_comp));
-    stage_info.pName  = "main";
+    stage_info.module = nvvk::createShaderModule(m_device, comp_shd);
+    stage_info.pName  = USE_HLSL ? "computeMain" : "main";
 
     VkComputePipelineCreateInfo comp_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     comp_info.layout = d->getPipeLayout();
@@ -536,8 +555,8 @@ private:
     });
 
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_dsetRaster->getPipeLayout(), prend_info, pstate);
-    pgen.addShader(std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)}, VK_SHADER_STAGE_VERTEX_BIT);
-    pgen.addShader(std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)}, VK_SHADER_STAGE_FRAGMENT_BIT);
+    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
+    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
 
     m_graphicsPipeline = pgen.createPipeline();
     m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
@@ -559,8 +578,8 @@ private:
   std::unique_ptr<nvvk::DescriptorSetContainer> m_dsetCompute;  // Holding the descriptor set information
   std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers;     // G-Buffers: color + depth
 
-  nvvk::Buffer m_vertices;  // Buffer of the vertices
-  nvvk::Buffer m_indices;   // Buffer of the indices
+  nvvk::Buffer m_vertices;                                      // Buffer of the vertices
+  nvvk::Buffer m_indices;                                       // Buffer of the indices
   nvvk::Buffer m_frameInfo;
 
   nvvkhl::Application*                    m_app = nullptr;

@@ -26,6 +26,11 @@ using vec4 = nvmath::vec4f;
 using vec3 = nvmath::vec3f;
 using vec2 = nvmath::vec2f;
 using uint = uint32_t;
+#elif defined(__hlsl) || defined(__slang)
+#define mat4 float4x4
+#define vec4 float4
+#define vec3 float3
+#define vec2 float2
 #endif  // __cplusplus
 
 
@@ -68,53 +73,21 @@ struct Vertex
   vec2 t;
 };
 
-struct PrimMeshInfo
-{
-  uint64_t vertexAddress;
-  uint64_t indexAddress;
-};
-
 struct InstanceInfo
 {
   mat4 transform;
   int  materialID;
 };
 
-struct SceneDescription
+struct Material
 {
-  uint64_t materialAddress;
-  uint64_t instInfoAddress;
-  uint64_t primInfoAddress;
+  vec4 color;
 };
+
 
 struct HeatStats
 {
   uint maxDuration[2];
-};
-
-struct GltfShadeMaterial
-{
-  vec4 pbrBaseColorFactor;
-  vec3 emissiveFactor;
-  int  pbrBaseColorTexture;
-
-  int   normalTexture;
-  float normalTextureScale;
-  int   shadingModel;
-  float pbrRoughnessFactor;
-
-  float pbrMetallicFactor;
-  int   pbrMetallicRoughnessTexture;
-  int   khrSpecularGlossinessTexture;
-  int   khrDiffuseTexture;
-
-  vec4  khrDiffuseFactor;
-  vec3  khrSpecularFactor;
-  float khrGlossinessFactor;
-
-  int   emissiveTexture;
-  int   alphaMode;
-  float alphaCutoff;
 };
 
 #endif  // HOST_DEVICE_H

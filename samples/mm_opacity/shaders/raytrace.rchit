@@ -38,15 +38,20 @@ hitAttributeEXT vec2 attribs;
 // clang-format off
 layout(location = 0) rayPayloadInEXT HitPayload payload;
 
-layout(buffer_reference, scalar) readonly buffer Vertices  { Vertex v[]; };
-layout(buffer_reference, scalar) readonly buffer Indices   { uvec3 i[]; };
-layout(buffer_reference, scalar) readonly buffer PrimMeshInfos { PrimMeshInfo i[]; };
-layout(buffer_reference, scalar) readonly buffer Materials { vec4 m[]; };
+//layout(buffer_reference, scalar) readonly buffer Vertices  { Vertex v[]; };
+//layout(buffer_reference, scalar) readonly buffer Indices   { uvec3 i[]; };
+// layout(buffer_reference, scalar) readonly buffer PrimMeshInfos { PrimMeshInfo i[]; };
+// layout(buffer_reference, scalar) readonly buffer InstanceInfos { InstanceInfo i[]; };
+// layout(buffer_reference, scalar) readonly buffer Materials { vec4 m[]; };
 
-layout(set = 0, binding = BRtTlas ) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = BRtFrameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
-layout(set = 0, binding = BRtSceneDesc) readonly buffer SceneDesc_ { SceneDescription sceneDesc; };
-layout(set = 0, binding = BRtSkyParam) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_tlas ) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = B_frameInfo, scalar) uniform FrameInfo_ { FrameInfo frameInfo; };
+// layout(set = 0, binding = B_sceneDesc, scalar) readonly buffer SceneDesc_ { SceneDescription sceneDesc; };
+layout(set = 0, binding = B_skyParam,  scalar) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
+layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
+layout(set = 0, binding = B_vertex, scalar) buffer Vertex_ { Vertex v[]; } vertices[];
+layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[];
 
 layout(push_constant) uniform RtxPushConstant_ { PushConstant pc; };
 // clang-format on
@@ -63,24 +68,24 @@ struct HitState
 
 //-----------------------------------------------------------------------
 // Return hit position and normal in world space
-HitState getHitState(PrimMeshInfo pinfo)
+HitState getHitState(int meshID)
 {
   HitState hit;
 
   // Vextex and indices of the primitive
-  Vertices vertices = Vertices(pinfo.vertexAddress);
-  Indices  indices  = Indices(pinfo.indexAddress);
+  //Vertices vertices = Vertices(pinfo.vertexAddress);
+  //Indices  indices  = Indices(pinfo.indexAddress);
 
   // Barycentric coordinate on the triangle
   const vec3 barycentrics = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
   // Getting the 3 indices of the triangle (local)
-  uvec3 triangleIndex = indices.i[gl_PrimitiveID];
+  uvec3 triangleIndex = indices[meshID].i[gl_PrimitiveID];
 
   // All vertex attributes of the triangle.
-  Vertex v0 = vertices.v[triangleIndex.x];
-  Vertex v1 = vertices.v[triangleIndex.y];
-  Vertex v2 = vertices.v[triangleIndex.z];
+  Vertex v0 = vertices[meshID].v[triangleIndex.x];
+  Vertex v1 = vertices[meshID].v[triangleIndex.y];
+  Vertex v2 = vertices[meshID].v[triangleIndex.z];
 
   // Position
   const vec3 pos0     = v0.position.xyz;
@@ -140,8 +145,8 @@ vec3 ggxEvaluate(vec3 V, vec3 N, vec3 L, vec3 albedo, float metallic, float roug
 }
 
 //-----------------------------------------------------------------------
-#define gl_HitKindFrontFacingMicroTriangleNV 252
-#define gl_HitKindBackFacingMicroTriangleNV 253
+#define gl_HitKindFrontFacingMicroTriangleNV 222
+#define gl_HitKindBackFacingMicroTriangleNV 223
 //-----------------------------------------------------------------------
 
 // utility for temperature
@@ -189,14 +194,18 @@ void main()
   bool visible = shadowRay(P, L);
 
   // Retrieve the Primitive mesh buffer information
-  PrimMeshInfos pInfo_ = PrimMeshInfos(sceneDesc.primInfoAddress);
-  PrimMeshInfo  pinfo  = pInfo_.i[gl_InstanceCustomIndexEXT];
+  //PrimMeshInfos pInfo_ = PrimMeshInfos(sceneDesc.primInfoAddress);
+  //PrimMeshInfo  pinfo  = pInfo_.i[gl_InstanceCustomIndexEXT];
 
-  HitState hit = getHitState(pinfo);
+  // Retrieve the Instance buffer information
+  // InstanceInfos iInfo_ = InstanceInfos(sceneDesc.instInfoAddress);
+  // InstanceInfo iInfo = iInfo_.i[gl_InstanceID];
+  InstanceInfo iInfo = instanceInfo.i[gl_InstanceID];
 
+  HitState hit = getHitState(gl_InstanceCustomIndexEXT);
 
-  Materials materials = Materials(sceneDesc.materialAddress);
-  vec3      albedo    = materials.m[gl_InstanceCustomIndexEXT].xyz;
+  //Materials materials = Materials(sceneDesc.materialAddress);
+  vec3 albedo = materials.m[iInfo.materialID].xyz;
 
   // Color at hit point
   vec3 color = ggxEvaluate(V, hit.nrm, L, albedo, pc.metallic, pc.roughness);

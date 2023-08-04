@@ -35,11 +35,10 @@ hitAttributeEXT vec2 attribs;
 // clang-format off
 layout(location = 0) rayPayloadInEXT HitPayload payload;
 
-layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };
-layout(buffer_reference, scalar) readonly buffer Indices { uvec3 i[]; };
-layout(buffer_reference, scalar) readonly buffer PrimMeshInfos { PrimMeshInfo i[]; };
+layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
+layout(set = 0, binding = B_vertex, scalar) buffer Vertex_ { Vertex v[]; } vertices[];
+layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[];
 
-layout(set = 0, binding = BRtSceneDesc) readonly buffer SceneDesc_ { SceneDescription sceneDesc; };
 // clang-format on
 
 layout(constant_id = 0) const int USE_SER = 0;
@@ -55,24 +54,23 @@ struct HitState
 
 //-----------------------------------------------------------------------
 // Return hit position and normal in world space
-HitState getHitState(PrimMeshInfo pinfo)
+HitState getHitState()
 {
   HitState hit;
 
-  // Vextex and indices of the primitive
-  Vertices vertices = Vertices(pinfo.vertexAddress);
-  Indices  indices  = Indices(pinfo.indexAddress);
+  uint meshID = gl_InstanceCustomIndexEXT;
+  uint triID  = gl_PrimitiveID;
 
   // Barycentric coordinate on the triangle
   const vec3 barycentrics = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
   // Getting the 3 indices of the triangle (local)
-  uvec3 triangleIndex = indices.i[gl_PrimitiveID];
+  uvec3 triangleIndex = indices[meshID].i[triID];
 
   // All vertex attributes of the triangle.
-  Vertex v0 = vertices.v[triangleIndex.x];
-  Vertex v1 = vertices.v[triangleIndex.y];
-  Vertex v2 = vertices.v[triangleIndex.z];
+  Vertex v0 = vertices[meshID].v[triangleIndex.x];
+  Vertex v1 = vertices[meshID].v[triangleIndex.y];
+  Vertex v2 = vertices[meshID].v[triangleIndex.z];
 
   // Position
   const vec3 pos0     = v0.position.xyz;
@@ -101,10 +99,7 @@ HitState getHitState(PrimMeshInfo pinfo)
 void main()
 {
   // Retrieve the Primitive mesh buffer information
-  PrimMeshInfos pInfo_ = PrimMeshInfos(sceneDesc.primInfoAddress);
-  PrimMeshInfo  pinfo  = pInfo_.i[gl_InstanceCustomIndexEXT];
-
-  HitState hit = getHitState(pinfo);
+  HitState hit = getHitState();
 
   payload.hitT          = gl_HitTEXT;
   payload.pos           = hit.pos;

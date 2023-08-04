@@ -40,5 +40,5 @@ void main()
 {
   vec4 pos    = pushC.transfo * vec4(inPosition.xyz, 1.0);
   gl_Position = frameInfo.proj * frameInfo.view * vec4(pos);
-  outFragPos = pos.xyz;
+  outFragPos  = pos.xyz;
 }

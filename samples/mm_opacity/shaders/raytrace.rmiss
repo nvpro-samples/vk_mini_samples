@@ -30,7 +30,7 @@
 
 layout(location = 0) rayPayloadInEXT HitPayload payload;
 
-layout(set = 0, binding = BRtSkyParam) uniform SkyInfo_
+layout(set = 0, binding = B_skyParam) uniform SkyInfo_
 {
   ProceduralSkyShaderParameters skyInfo;
 };

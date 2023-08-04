@@ -54,10 +54,46 @@
 
 #include "shaders/device_host.h"
 
+template <typename T>
+std::vector<uint32_t> changeMemoryLayout(const std::vector<T>& input)
+{
+  const size_t inputSize  = sizeof(T);
+  const size_t uint32Size = sizeof(uint32_t);
+  const size_t totalSize  = input.size() * inputSize;
 
+
+  // Check if the input vector size is a multiple of sizeof(uint32_t)
+  if(totalSize % uint32Size != 0)
+  {
+    std::cout << "Error: Input vector size is not a multiple of sizeof(uint32_t)!" << std::endl;
+    return std::vector<uint32_t>();
+  }
+
+  // Calculate the number of uint32_t elements needed
+  const size_t numElements = totalSize / uint32Size;
+
+  // Create a vector with the correct size
+  std::vector<uint32_t> output(numElements);
+
+  // Copy the data from the input vector by reinterpreting the memory layout
+  std::memcpy(output.data(), input.data(), totalSize);
+
+  return output;
+}
+
+#if USE_HLSL
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+const auto& vert_shd8 = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd8 = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+const auto  vert_shd  = changeMemoryLayout(vert_shd8);
+const auto  frag_shd  = changeMemoryLayout(frag_shd8);
+#else
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
-
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+#endif  // USE_HLSL
 
 #include "GLFW/glfw3.h"
 
@@ -344,9 +380,9 @@ public:
 private:
   void createPipeline()
   {
-    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dset->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dset->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
     m_dset->initLayout();
     m_dset->initPool(2);  // two frames - allow to change on the fly
 
@@ -369,13 +405,10 @@ private:
 
     });
 
-    auto vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
-    auto frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
-
     // Shader sources, pre-compiled to Spir-V (see Makefile)
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipe.layout, prend_info, pstate);
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT);
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT);
+    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
+    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
     m_pipe.plines.push_back(pgen.createPipeline());
     m_dutil->DBG_NAME(m_pipe.plines[0]);
     pgen.clearShaders();
@@ -391,10 +424,10 @@ private:
     {
       nvvk::Specialization specialization;
       specialization.add(0, i);
-      pgen.addShader(std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)}, VK_SHADER_STAGE_VERTEX_BIT).pSpecializationInfo =
+      pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main").pSpecializationInfo =
           specialization.getSpecialization();
-      pgen.addShader(std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)}, VK_SHADER_STAGE_FRAGMENT_BIT)
-          .pSpecializationInfo = specialization.getSpecialization();
+      pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main").pSpecializationInfo =
+          specialization.getSpecialization();
       m_pipe.plines.push_back(pgen.createPipeline());
       m_dutil->setObjectName(m_pipe.plines.back(), "Crash " + std::to_string(i));
       pgen.clearShaders();

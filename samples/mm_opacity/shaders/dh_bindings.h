@@ -20,10 +20,14 @@
 #ifndef BINDINGS_H
 #define BINDINGS_H
 
-const int BRtTlas      = 0;
-const int BRtOutImage  = 1;
-const int BRtFrameInfo = 2;
-const int BRtSceneDesc = 3;
-const int BRtSkyParam  = 4;
+#define B_tlas          0
+#define B_outImage      1
+#define B_frameInfo     2
+#define B_sceneDesc     3
+#define B_skyParam      4
+#define B_materials    5
+#define B_instances    6
+#define B_vertex       7
+#define B_index        8
 
 #endif  // !BINDINGS_H

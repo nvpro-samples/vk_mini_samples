@@ -47,9 +47,24 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
+#include "shaders/device_host.h"
+
+#if USE_HLSL
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+#elif USE_SLANG
+#include "_autogen/raster_vertexMain.spirv.h"
+#include "_autogen/raster_fragmentMain.spirv.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+#else
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
-#include "shaders/device_host.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+#endif  // USE_HLSL
 
 #include <GLFW/glfw3.h>
 
@@ -324,8 +339,8 @@ private:
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, n))},  // Normal
     });
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
-    pgen.addShader(std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)}, VK_SHADER_STAGE_VERTEX_BIT);
-    pgen.addShader(std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)}, VK_SHADER_STAGE_FRAGMENT_BIT);
+    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
+    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
 
     m_graphicsPipeline = pgen.createPipeline();
     m_dutil->setObjectName(m_graphicsPipeline, "Graphics");

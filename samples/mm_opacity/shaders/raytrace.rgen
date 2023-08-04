@@ -31,9 +31,9 @@
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
 
-layout(set = 0, binding = BRtTlas) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = BRtOutImage, rgba32f) uniform image2D image;
-layout(set = 0, binding = BRtFrameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
+layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
+layout(set = 0, binding = B_frameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
 // clang-format on
 
 layout(push_constant) uniform RtxPushConstant_

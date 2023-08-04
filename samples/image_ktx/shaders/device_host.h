@@ -21,10 +21,16 @@
 using mat4 = nvmath::mat4f;
 using vec4 = nvmath::vec4f;
 using vec3 = nvmath::vec3f;
+#elif defined(__hlsl) || defined(__slang)
+#define mat4 float4x4
+#define vec4 float4
+#define vec3 float3
+#else
+#define static
 #endif  // __cplusplus
 
-const int BKtxFrameInfo = 0;
-const int BKtxTex       = 1;
+static const int BKtxFrameInfo = 0;
+static const int BKtxTex       = 1;
 
 struct PushConstant
 {
@@ -37,4 +43,7 @@ struct FrameInfo
   mat4 proj;
   mat4 view;
   vec3 camPos;
+#if defined(__hlsl)
+  //Sampler2D texture;
+#endif
 };
