@@ -346,7 +346,7 @@ private:
     // No indices, all 3 vertex is a triangle
     //triangles.indexType                = VK_INDEX_TYPE_UINT32;
     //triangles.indexData.deviceAddress  = indexAddress;
-    triangles.maxVertex = static_cast<uint32_t>(prim.size());
+    triangles.maxVertex = static_cast<uint32_t>(prim.size()) - 1;
 
     // Identify the above data as containing opaque triangles.
     VkAccelerationStructureGeometryKHR as_geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};

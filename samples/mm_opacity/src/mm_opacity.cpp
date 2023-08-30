@@ -396,7 +396,7 @@ private:
     triangles.vertexStride             = sizeof(nvh::PrimitiveVertex);
     triangles.indexType                = VK_INDEX_TYPE_UINT32;
     triangles.indexData.deviceAddress  = indexAddress;
-    triangles.maxVertex                = static_cast<uint32_t>(prim.vertices.size());
+    triangles.maxVertex                = static_cast<uint32_t>(prim.vertices.size()) - 1;
     //triangles.transformData; // Identity
 
     // Identify the above data as containing opaque triangles.
