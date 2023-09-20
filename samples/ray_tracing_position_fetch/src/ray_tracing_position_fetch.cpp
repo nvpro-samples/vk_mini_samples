@@ -642,12 +642,18 @@ int main(int argc, char** argv)
   spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
   spec.vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
   VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR fetchFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, false, &fetchFeatures);  // #FETCH
+  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, true, &fetchFeatures);  // #FETCH
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
   spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
+
+  if(!app->getContext()->hasDeviceExtension(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME))
+  {
+    LOGE("ERROR: Position Fetch not supported");
+    exit(1);
+  }
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);

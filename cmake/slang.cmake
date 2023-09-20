@@ -1,6 +1,34 @@
-cmake_minimum_required(VERSION 3.12)
-#project(shader_compiler)
 
+#
+# CMAKE to deal with Slang
+# - Download Slang SDK
+# - Find Slang executable
+# - Add a funtion to compile slang to spir-v
+#
+
+
+# Download Slang SDK
+set(SLANG_VERSION "2023.3.9")
+
+if(WIN32)
+set(SLANG_URL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-win64.zip")
+else()
+set(SLANG_URL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.zip")
+endif()
+if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.24.0")
+  set(_EXTRA_OPTIONS DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+else()
+  set(_EXTRA_OPTIONS)
+endif()
+
+
+FetchContent_Declare(
+  Slang
+  URL ${SLANG_URL}
+  ${_EXTRA_OPTIONS}
+)
+FetchContent_Populate(Slang)
+set(SLANG_SDK ${slang_SOURCE_DIR} CACHE PATH "Path to Slang SDK root directory")
 
 # Find Python executable
 find_package(Python REQUIRED)
@@ -166,7 +194,7 @@ function(compile_slang_file)
       set(_SLANG_FLAGS 
         -entry ${_ENTRY_NAME} 
         -target ${_TARGET}
-        -g3 
+        # -g3 
         -line-directive-mode standard 
         -profile glsl_460 
         -D__slang 

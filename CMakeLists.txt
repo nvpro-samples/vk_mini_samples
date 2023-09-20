@@ -8,25 +8,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(EXTERNALS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/externals")
 execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${EXTERNALS_DIR}/_build")
 
-if(WIN32)
-execute_process(
-    COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" -A "${CMAKE_GENERATOR_PLATFORM}" -S "${EXTERNALS_DIR}" -B "${EXTERNALS_DIR}/_build"
-    WORKING_DIRECTORY "${EXTERNALS_DIR}/_build"
-	COMMAND_ECHO STDOUT
-)
-else(WIN32)
-execute_process(
-    COMMAND ${CMAKE_COMMAND} -DCMAKE_BUILD_TYPE=RelWithDebInfo "${EXTERNALS_DIR}"
-    WORKING_DIRECTORY "${EXTERNALS_DIR}/_build"
-	COMMAND_ECHO STDOUT
-)
-endif(WIN32)
-#build the external projects
-execute_process(
-	COMMAND ${CMAKE_COMMAND} --build "${EXTERNALS_DIR}/_build" --config RelWithDebInfo --parallel
-    WORKING_DIRECTORY "${EXTERNALS_DIR}/_build"
-	COMMAND_ECHO STDOUT
-)
+
+# FetchContent is used for downloading content
+include(FetchContent)
+set(FETCHCONTENT_BASE_DIR ${EXTERNALS_DIR}  CACHE PATH "Directory under which to collect all populated content" FORCE)
+set(FETCHCONTENT_QUIET FALSE CACHE BOOL "Enables QUIET option for all content population" FORCE)
 
 #--------------------------------------------------------------------------------------------------
 # look for nvpro_core 1) as a sub-folder 2) at some other locations
@@ -55,7 +41,6 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
 
 # Adding SLANG compiler function
-set(SLANG_SDK "${EXTERNALS_DIR}/src/SLANG" CACHE PATH "Path to Slang SDK root directory")
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/slang.cmake)
 
 # Various Paths

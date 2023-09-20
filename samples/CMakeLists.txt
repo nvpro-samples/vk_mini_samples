@@ -134,6 +134,7 @@ set(SAMPLES
     ray_trace
     rectangle
     ser_pathtrace
+    shader_object
     simple_polygons
     solid_color
     texture_3d
@@ -152,6 +153,7 @@ endif()
 if(USE_GLSL)
     list(APPEND SAMPLES
         ray_tracing_position_fetch
+        ray_query_position_fetch
         tiny_shader_toy
     )
 endif()

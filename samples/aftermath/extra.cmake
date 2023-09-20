@@ -10,9 +10,9 @@ macro(copy_dll dlls)
 endmacro()
 
 # Searching for the Aftermath SDK
-set(AFTERMATH_SDK ${CMAKE_CURRENT_SOURCE_DIR}/aftermath_sdk)
+set(AFTERMATH_SDK ${CMAKE_CURRENT_SOURCE_DIR}/aftermath/aftermath_sdk)
 if (NOT DEFINED ENV{NSIGHT_AFTERMATH_SDK})
-  set(ENV{NSIGHT_AFTERMATH_SDK} ${AFTERMATH_SDK})
+    set(NSIGHT_AFTERMATH_SDK ${AFTERMATH_SDK} CACHE PATH "AftermathSDK" FORCE)
 endif()
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 find_package(NsightAftermath)

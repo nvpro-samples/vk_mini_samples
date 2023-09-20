@@ -300,7 +300,7 @@ void GpuCrashTracker::crashDumpDescriptionCallback(PFN_GFSDK_Aftermath_AddGpuCra
 }
 
 // Static callback wrapper for OnResolveMarker
-void GpuCrashTracker::resolveMarkerCallback(const void* pMarker, void* pUserData, void** resolvedMarkerData, uint32_t* markerSize)
+void GpuCrashTracker::resolveMarkerCallback(const void* pMarker, const uint32_t markerDataSize, void* pUserData, void** resolvedMarkerData, uint32_t* markerSize)
 {
   auto* p_gpu_crash_tracker = reinterpret_cast<GpuCrashTracker*>(pUserData);
   p_gpu_crash_tracker->onResolveMarker(pMarker, resolvedMarkerData, markerSize);

@@ -2,7 +2,7 @@
 **/autogen/*
 **/build/*
 **/_auto*/*
-**/extern/*
+**/externals/*
 **/.obsidian/
 _Build/*
 _Install/*
@@ -11,4 +11,6 @@ downloaded_resources/*
 /nvpro_core/
 .vscode/**
 .vs/
-
+**/nsight-aftermath-usage-guidelines.txt
+**/LICENSE
+**/Readme.md
