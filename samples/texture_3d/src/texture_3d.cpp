@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -69,8 +69,8 @@ const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(r
 const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_comp), std::end(perlin_comp)};
 #endif
 
-#include "imgui_helper.h"
-#include "imgui_camera_widget.h"
+#include "imgui/imgui_helper.h"
+#include "imgui/imgui_camera_widget.h"
 
 class Texture3dSample : public nvvkhl::IAppElement
 {

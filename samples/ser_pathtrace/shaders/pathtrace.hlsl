@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,13 +45,11 @@
 struct [raypayload] HitPayload
 {
   float hitT : write(closesthit, miss) : read(caller);
-  int instanceIndex : write(closesthit) : read(caller);
+int instanceIndex : write(closesthit) : read(caller);
 float3 pos : write(closesthit) : read(caller);
 float3 nrm : write(closesthit) : read(caller);
 };
 
-#define RayPayloadKHR 5338
-[[vk::ext_storage_class(RayPayloadKHR)]] static HitPayload payload;
 
 
 //-----------------------------------------------------------------------
@@ -63,9 +61,16 @@ struct HitState
   float3 geonrm;
 };
 
+//-----------------------------------------------------------------------
+//
+// Shader Execution Reordering (SER)
+//
+// SPV_NV_shader_invocation_reorder
 // https://htmlpreview.github.io/?https://github.com/KhronosGroup/SPIRV-Registry/blob/master/extensions/NV/SPV_NV_shader_invocation_reorder.html
 #define ShaderInvocationReorderNV 5383
 #define HitObjectAttributeNV 5385
+#define RayPayloadKHR 5338
+
 
 #define OpHitObjectRecordHitMotionNV 5249
 #define OpHitObjectRecordHitWithIndexMotionNV 5250
@@ -101,22 +106,32 @@ struct HitState
 #define OpReorderThreadWithHintNV 5280
 #define OpTypeHitObjectNV 5281
 
+// Definition of the Storage classes
+[[vk::ext_storage_class(RayPayloadKHR)]] static HitPayload payload;
+[[vk::ext_storage_class(HitObjectAttributeNV)]] static float3 objAttribs;
+
+// Adding capabilities
 [[vk::ext_capability(ShaderInvocationReorderNV)]]
 [[vk::ext_extension("SPV_NV_shader_invocation_reorder")]]
 
+// Pointer to the HitObject: used in parameter declarations
+#define HitObjectNV vk::ext_type<HitObjectAttributeNV>
+#define RefHitObjectNV [[vk::ext_reference]] HitObjectNV
+
+// Shader Execution Reorder :  Function Declaration
+
 [[vk::ext_type_def(HitObjectAttributeNV, OpTypeHitObjectNV)]]
 void createHitObjectNV();
-#define HitObjectNV vk::ext_type<HitObjectAttributeNV>
 
 [[vk::ext_type_def(1, RayPayloadKHR)]]
 void createRayPayloadKHR();
 
 [[vk::ext_instruction(OpHitObjectRecordEmptyNV)]]
-void hitObjectRecordEmptyNV([[vk::ext_reference]] HitObjectNV hitObject);
+void hitObjectRecordEmptyNV(RefHitObjectNV hitObject);
 
 [[vk::ext_instruction(OpHitObjectTraceRayNV)]]
 void hitObjectTraceRayNV(
-    [[vk::ext_reference]] HitObjectNV hitObject,
+    RefHitObjectNV hitObject,
     RaytracingAccelerationStructure as,
     uint RayFlags,
     uint CullMask,
@@ -134,14 +149,78 @@ void hitObjectTraceRayNV(
 void reorderThreadWithHintNV(int Hint, int Bits);
 
 [[vk::ext_instruction(OpReorderThreadWithHitObjectNV)]]
-void reorderThreadWithHitObjectNV([[vk::ext_reference]] HitObjectNV hitObject);
+void reorderThreadWithHitObjectNV(RefHitObjectNV hitObject);
 
 [[vk::ext_instruction(OpHitObjectExecuteShaderNV)]]
-void hitObjectExecuteShaderNV([[vk::ext_reference]] HitObjectNV hitObject, [[vk::ext_reference]] [[vk::ext_storage_class(RayPayloadKHR)]] HitPayload payload);
+void hitObjectExecuteShaderNV(
+  RefHitObjectNV hitObject, 
+  [[vk::ext_reference]] [[vk::ext_storage_class(RayPayloadKHR)]] HitPayload payload);
 
 [[vk::ext_instruction(OpHitObjectIsHitNV)]]
-bool hitObjectIsHitNV([[vk::ext_reference]] HitObjectNV hitObject);
+bool hitObjectIsHitNV(RefHitObjectNV hitObject);
 
+[[vk::ext_instruction(OpHitObjectGetRayTMaxNV)]]
+float hitObjectGetRayTMaxNV(RefHitObjectNV hitObject);
+
+[[vk::ext_instruction(OpHitObjectGetWorldToObjectNV)]]
+float4x3 hitObjectGetWorldToObjectNV(RefHitObjectNV hitObject);
+
+[[vk::ext_instruction(OpHitObjectGetObjectToWorldNV)]]
+float4x3 hitObjectGetObjectToWorldNV(RefHitObjectNV hitObject);
+
+[[vk::ext_instruction(OpHitObjectGetInstanceIdNV)]]
+int hitObjectGetInstanceIdNV(RefHitObjectNV hitObject);
+
+[[vk::ext_instruction(OpHitObjectGetInstanceCustomIndexNV)]]
+int hitObjectGetInstanceCustomIndexNV(RefHitObjectNV hitObject);
+
+[[vk::ext_instruction(OpHitObjectGetPrimitiveIndexNV)]]
+int hitObjectGetPrimitiveIndexNV(RefHitObjectNV hitObject);
+
+[[vk::ext_instruction(OpHitObjectGetAttributesNV)]]
+void hitObjectGetAttributesNV(
+    RefHitObjectNV hitObject,
+    [[vk::ext_reference]] [[vk::ext_storage_class(HitObjectAttributeNV)]] float3 attribs
+  );
+
+//
+// End -- Shader Execution Reordering (SER)
+//
+
+
+//-----------------------------------------------------------------------
+// Return hit position, normal and geometric normal in world space
+HitState getHitState(uint meshID, uint triID, float4x3 objectToWorld, float4x3 worldToObject, float3 barycentrics)
+{
+  HitState hit;
+  
+  uint3 triangleIndex = indices[meshID][triID];
+
+  // Vertex and indices of the primitive
+  Vertex v0 = vertices[meshID][triangleIndex.x];
+  Vertex v1 = vertices[meshID][triangleIndex.y];
+  Vertex v2 = vertices[meshID][triangleIndex.z];
+   
+  // Position
+  const float3 pos0 = v0.position.xyz;
+  const float3 pos1 = v1.position.xyz;
+  const float3 pos2 = v2.position.xyz;
+  const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
+  hit.pos = float3(mul(float4(position, 1.0), objectToWorld));
+
+  // Normal
+  const float3 nrm0 = v0.normal.xyz;
+  const float3 nrm1 = v1.normal.xyz;
+  const float3 nrm2 = v2.normal.xyz;
+  const float3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
+  float3 worldNormal = normalize(mul(worldToObject, normal).xyz);
+  const float3 geoNormal = normalize(cross(pos1 - pos0, pos2 - pos0));
+  float3 worldGeoNormal = normalize(mul(worldToObject, geoNormal).xyz);
+  hit.geonrm = worldGeoNormal;
+  hit.nrm = worldNormal;
+
+  return hit;
+}
 
 //-----------------------------------------------------------------------
 // Shoot a ray an return the information of the closest hit, in the
@@ -151,13 +230,34 @@ void traceRay(RayDesc r, inout HitPayload payload)
 {
   payload.hitT = 0.0F;
   uint rayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
-  if (USE_SER == 1)
+  if(USE_SER == 1)
   {
-    HitObjectNV hObj; 
+    HitObjectNV hObj;
     hitObjectRecordEmptyNV(hObj); //Initialize to an empty hit object
     hitObjectTraceRayNV(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.Origin, 0.0, r.Direction, INFINITE, payload);
     reorderThreadWithHitObjectNV(hObj);
-    hitObjectExecuteShaderNV(hObj, payload);
+    
+    payload.hitT = hitObjectGetRayTMaxNV(hObj);
+
+    hitObjectGetAttributesNV(hObj, objAttribs);
+        
+    if(hitObjectIsHitNV(hObj))
+    {
+      payload.instanceIndex = hitObjectGetInstanceIdNV(hObj);
+
+      int meshID = hitObjectGetInstanceCustomIndexNV(hObj);
+      int triID = hitObjectGetPrimitiveIndexNV(hObj);
+      float4x3 objectToWorld = hitObjectGetObjectToWorldNV(hObj);
+      float4x3 worldToObject = hitObjectGetWorldToObjectNV(hObj);
+
+      float3 barycentrics = float3(1 - objAttribs.x - objAttribs.y, objAttribs.x, objAttribs.y);
+      HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, barycentrics);
+      payload.pos = hit.pos;
+      payload.nrm = hit.nrm;
+    }
+        
+    // No need to execute the closest hit shader, as all necessary shading information has already been retrieved above.
+    // hitObjectExecuteShaderNV(hObj, payload);
   }
   else
   {
@@ -173,9 +273,9 @@ bool traceShadow(RayDesc r, inout HitPayload payload)
   payload.hitT = 0.0F;
   uint rayFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER;
   bool isHit;
-  if (USE_SER == 1)
+  if(USE_SER == 1)
   {
-    HitObjectNV hObj; 
+    HitObjectNV hObj;
     hitObjectRecordEmptyNV(hObj); //Initialize to an empty hit object
     hitObjectTraceRayNV(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.Origin, 0.0, r.Direction, INFINITE, payload);
     isHit = hitObjectIsHitNV(hObj);
@@ -208,7 +308,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
       float3 sky_color = proceduralSky(skyInfo, r.Direction, 0.0F);
       return radiance + (sky_color * throughput);
     }
-
+    
     // Retrieve the Instance buffer information
     uint matID = instanceInfo[payload.instanceIndex].materialID;
   
@@ -345,44 +445,6 @@ float3 samplePixel(inout uint seed, inout HitPayload payload)
 
 
 //-----------------------------------------------------------------------
-// Return hit position, normal and geometric normal in world space
-HitState getHitState(float3 barycentrics)
-{
-  HitState hit;
-  
-  uint meshID = InstanceID();
-  uint triID = PrimitiveIndex();
-
-  uint3 triangleIndex = indices[meshID][triID];
-
-  // Vertex and indices of the primitive
-  Vertex v0 = vertices[meshID][triangleIndex.x];
-  Vertex v1 = vertices[meshID][triangleIndex.y];
-  Vertex v2 = vertices[meshID][triangleIndex.z];
-
- 
-  // Position
-  const float3 pos0 = v0.position.xyz;
-  const float3 pos1 = v1.position.xyz;
-  const float3 pos2 = v2.position.xyz;
-  const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
-  hit.pos = float3(mul(ObjectToWorld3x4(), float4(position, 1.0)));
-
-  // Normal
-  const float3 nrm0 = v0.normal.xyz;
-  const float3 nrm1 = v1.normal.xyz;
-  const float3 nrm2 = v2.normal.xyz;
-  const float3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
-  float3 worldNormal = normalize(mul(normal, WorldToObject3x4()).xyz);
-  const float3 geoNormal = normalize(cross(pos1 - pos0, pos2 - pos0));
-  float3 worldGeoNormal = normalize(mul(geoNormal, WorldToObject3x4()).xyz);
-  hit.geonrm = worldGeoNormal;
-  hit.nrm = worldNormal;
-
-  return hit;
-}
-
-//-----------------------------------------------------------------------
 // RAY GENERATION
 //-----------------------------------------------------------------------
 [shader("raygeneration")]
@@ -453,7 +515,12 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
 {
   float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
 
-  HitState hit = getHitState(barycentrics);
+  uint meshID = InstanceID();
+  uint triID = PrimitiveIndex();
+  float4x3 objectToWorld = ObjectToWorld4x3();
+  float4x3 worldToObject = WorldToObject4x3();
+  
+  HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, barycentrics);
 
   payload.hitT = RayTCurrent();
   payload.pos = hit.pos;

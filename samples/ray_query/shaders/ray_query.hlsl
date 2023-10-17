@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -83,7 +83,7 @@ Material getMaterial(uint64_t materialAddress, uint64_t offset)
 
 //-----------------------------------------------------------------------
 // Return hit position, normal and geometric normal in world space
-HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3x4 objectToWorld3x4, int meshID, int primitiveID, float3 worldRayDirection)
+HitState getHitState(int meshID, int triID, float4x3 objectToWorld, float4x3 worldToObject, float2 barycentricCoords, float3 worldRayDirection)
 {
   HitState hit;
   
@@ -94,7 +94,7 @@ HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3
   uint64_t vertAddress = vk::RawBufferLoad < uint64_t > (sceneDesc[0].primInfoAddress + primOffset);
   uint64_t indexAddress = vk::RawBufferLoad < uint64_t > (sceneDesc[0].primInfoAddress + primOffset + sizeof(uint64_t));
 
-  uint64_t indexOffset = sizeof(uint3) * primitiveID;
+  uint64_t indexOffset = sizeof(uint3) * triID;
   uint3 triangleIndex = vk::RawBufferLoad <uint3 > (indexAddress + indexOffset);
   
   // Vertex and indices of the primitive
@@ -107,20 +107,20 @@ HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3
   const float3 pos1 = v1.position.xyz;
   const float3 pos2 = v2.position.xyz;
   const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
-  hit.pos = float3(mul(objectToWorld3x4, float4(position, 1.0)));
+  hit.pos = float3(mul(float4(position, 1.0), objectToWorld));
 
   // Normal
   const float3 nrm0 = v0.normal.xyz;
   const float3 nrm1 = v1.normal.xyz;
   const float3 nrm2 = v2.normal.xyz;
   const float3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
-  float3 worldNormal = normalize(mul(normal, worldToObject3x4).xyz);
+  float3 worldNormal = normalize(mul(worldToObject, normal).xyz);
   const float3 geoNormal = normalize(cross(pos1 - pos0, pos2 - pos0));
-  float3 worldGeoNormal = normalize(mul(geoNormal, worldToObject3x4).xyz);
+  float3 worldGeoNormal = normalize(mul(worldToObject , geoNormal).xyz);
   hit.geonrm = worldGeoNormal;
   hit.nrm = worldNormal;
 
-  // For low tessalated, avoid internal reflection
+  // For low tesselated, avoid internal reflection
   vec3 r = reflect(normalize(worldRayDirection), hit.nrm);
   if(dot(r, hit.geonrm) < 0)
     hit.nrm = hit.geonrm;
@@ -147,13 +147,13 @@ void traceRay(RayDesc ray, inout HitPayload payload)
   {
     float2 barycentricCoords = q.CommittedTriangleBarycentrics();
     int meshID = q.CommittedInstanceID(); // rayQueryGetIntersectionInstanceCustomIndexEXT(rayQuery, true);
-    int primitiveID = q.CommittedPrimitiveIndex(); // rayQueryGetIntersectionPrimitiveIndexEXT(rayQuery, true);
-    float3x4 worldToObject = q.CommittedWorldToObject3x4();
-    float3x4 objectToWorld = q.CommittedObjectToWorld3x4();
+    int triID = q.CommittedPrimitiveIndex(); // rayQueryGetIntersectionPrimitiveIndexEXT(rayQuery, true);
+    float4x3 worldToObject = q.CommittedWorldToObject4x3();
+    float4x3 objectToWorld = q.CommittedObjectToWorld4x3();
     float hitT = q.CommittedRayT();
     int instanceIndex = q.CommittedInstanceIndex(); //rayQueryGetIntersectionInstanceIdEXT(rayQuery, true);
 
-    HitState hit = getHitState(barycentricCoords, worldToObject, objectToWorld, meshID, primitiveID, ray.Direction);
+    HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, barycentricCoords, ray.Direction);
 
     payload.hitT = hitT;
     payload.pos = hit.pos;

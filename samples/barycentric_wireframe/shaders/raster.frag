@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 450
@@ -125,7 +125,7 @@ void main()
   // [optional] Vary the thickness along the edge
   thickness *= edgeThickness(settings.thicknessVar, edgePos);
 
-  // fwidth — return the sum of the absolute value of derivatives in x and y
+  // fwidth ï¿½ return the sum of the absolute value of derivatives in x and y
   //          which makes the width in screen space
   vec3 deltas = (settings.screenSpace == 1) ? fwidthFine(gl_BaryCoordEXT) : vec3(1);
 

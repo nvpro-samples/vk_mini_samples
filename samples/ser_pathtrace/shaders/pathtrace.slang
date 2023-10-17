@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,6 +60,41 @@ struct HitState
 };
 
 
+//-----------------------------------------------------------------------
+// Return hit position, normal and geometric normal in world space
+HitState getHitState(uint meshID, uint triID, float4x3 objectToWorld, float4x3 worldToObject, float3 barycentrics)
+{
+  HitState hit;
+  
+  uint3 triangleIndex = indices[NonUniformResourceIndex(meshID)][triID];
+
+  // Vertex and indices of the primitive
+  Vertex v0 = vertices[NonUniformResourceIndex(meshID)][triangleIndex.x];
+  Vertex v1 = vertices[NonUniformResourceIndex(meshID)][triangleIndex.y];
+  Vertex v2 = vertices[NonUniformResourceIndex(meshID)][triangleIndex.z];
+
+ 
+  // Position
+  const float3 pos0 = v0.position.xyz;
+  const float3 pos1 = v1.position.xyz;
+  const float3 pos2 = v2.position.xyz;
+  const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
+  hit.pos = float3(mul(float4(position, 1.0), objectToWorld));
+
+  // Normal
+  const float3 nrm0 = v0.normal.xyz;
+  const float3 nrm1 = v1.normal.xyz;
+  const float3 nrm2 = v2.normal.xyz;
+  const float3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
+  float3 worldNormal = normalize(mul(worldToObject, normal).xyz);
+  const float3 geoNormal = normalize(cross(pos1 - pos0, pos2 - pos0));
+  float3 worldGeoNormal = normalize(mul(worldToObject, geoNormal).xyz);
+  hit.geonrm = worldGeoNormal;
+  hit.nrm = worldNormal;
+
+  return hit;
+}
+
 
 //-----------------------------------------------------------------------
 // Shoot a ray an return the information of the closest hit, in the
@@ -71,9 +106,28 @@ void traceRay(RayDesc ray, inout HitPayload payload)
   uint rayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
   if(USE_SER == 1)
   {
-    HitObject hit = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
-    ReorderThread(hit);
-    HitObject::Invoke(topLevelAS, hit, payload);
+    HitObject hitObj = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
+    ReorderThread(hitObj);
+    
+    vec3 attribs = hitObj.GetAttributes < vec3 > ();
+    
+    RayDesc rayDesc = hitObj.GetRayDesc();
+
+    payload.hitT = rayDesc.TMax;
+    
+    if(hitObj.IsHit())
+    {
+      int meshID = hitObj.GetInstanceIndex();
+      int triID = hitObj.GetPrimitiveIndex();
+      float4x3 objectToWorld = hitObj.GetObjectToWorld();
+      float4x3 worldToObject = hitObj.GetWorldToObject();
+      HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, attribs);
+      payload.pos = hit.pos;
+      payload.nrm = hit.nrm;
+      payload.instanceIndex = hitObj.GetInstanceID();     
+    }
+    
+    HitObject::Invoke(topLevelAS, hitObj, payload);
   }
   else
   {
@@ -258,44 +312,6 @@ float3 samplePixel(inout uint seed, inout HitPayload payload)
 }
 
 
-//-----------------------------------------------------------------------
-// Return hit position, normal and geometric normal in world space
-HitState getHitState(float3 barycentrics)
-{
-  HitState hit;
-  
-  uint meshID = InstanceID();
-  uint triID = PrimitiveIndex();
-
-  uint3 triangleIndex = indices[NonUniformResourceIndex(meshID)][triID];
-
-  // Vertex and indices of the primitive
-  Vertex v0 = vertices[NonUniformResourceIndex(meshID)][triangleIndex.x];
-  Vertex v1 = vertices[NonUniformResourceIndex(meshID)][triangleIndex.y];
-  Vertex v2 = vertices[NonUniformResourceIndex(meshID)][triangleIndex.z];
-
- 
-  // Position
-  const float3 pos0 = v0.position.xyz;
-  const float3 pos1 = v1.position.xyz;
-  const float3 pos2 = v2.position.xyz;
-  const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
-  hit.pos = float3(mul(ObjectToWorld3x4(), float4(position, 1.0)));
-
-  // Normal
-  const float3 nrm0 = v0.normal.xyz;
-  const float3 nrm1 = v1.normal.xyz;
-  const float3 nrm2 = v2.normal.xyz;
-  const float3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
-  float3 worldNormal = normalize(mul(normal, WorldToObject3x4()).xyz);
-  const float3 geoNormal = normalize(cross(pos1 - pos0, pos2 - pos0));
-  float3 worldGeoNormal = normalize(mul(geoNormal, WorldToObject3x4()).xyz);
-  hit.geonrm = worldGeoNormal;
-  hit.nrm = worldNormal;
-
-  return hit;
-}
-
 uint64_t ReadClock()
 {
   return uint64_t(getRealtimeClock().x) | (uint64_t(getRealtimeClock().y) << 32);
@@ -373,7 +389,11 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
 {
   float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
 
-  HitState hit = getHitState(barycentrics);
+  uint meshID = InstanceID();
+  uint triID = PrimitiveIndex();
+  float4x3 worldToObject = WorldToObject4x3();
+  float4x3 objectToWorld = ObjectToWorld4x3();
+  HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, barycentrics);
 
   payload.hitT = RayTCurrent();
   payload.pos = hit.pos;

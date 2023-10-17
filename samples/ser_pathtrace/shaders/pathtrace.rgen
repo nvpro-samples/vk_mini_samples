@@ -28,6 +28,7 @@
 #extension GL_EXT_shader_realtime_clock : enable  // Debug - heatmap timing
 
 #extension GL_NV_shader_invocation_reorder : enable
+#extension GL_EXT_ray_query : require
 
 
 #include "device_host.h"
@@ -43,6 +44,7 @@
 #include "nvvkhl/shaders/bsdf_structs.h"
 #include "nvvkhl/shaders/bsdf_functions.h"
 
+
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
 
@@ -55,10 +57,19 @@ layout(set = 0, binding = B_heatStats) buffer HeatStats_ { HeatStats heatStats; 
 layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
 layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
 
-// clang-format on
+layout(set = 0, binding = B_vertex, scalar) buffer Vertex_ { Vertex v[]; } vertices[];
+layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[];
+
+layout(location = 0) hitObjectAttributeNV vec3 objAttribs;
 
 layout(constant_id = 0) const int USE_SER = 0;
 
+// clang-format on
+
+
+#include "gethit.h"
+
+#define USE_RAYQUERY 1
 
 layout(push_constant) uniform RtxPushConstant_
 {
@@ -70,6 +81,8 @@ struct Ray
   vec3 origin;
   vec3 direction;
 };
+
+
 
 
 //-----------------------------------------------------------------------
@@ -86,7 +99,26 @@ void traceRay(Ray r)
     hitObjectRecordEmptyNV(hObj);  //Initialize to an empty hit object
     hitObjectTraceRayNV(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.origin, 0.0, r.direction, INFINITE, 0);
     reorderThreadNV(hObj);
-    hitObjectExecuteShaderNV(hObj, 0);
+    hitObjectGetAttributesNV(hObj, 0);
+
+    payload.hitT = hitObjectGetRayTMaxNV(hObj);
+
+    if(hitObjectIsHitNV(hObj))
+    {
+      payload.instanceIndex = hitObjectGetInstanceIdNV(hObj);
+
+      int    meshID        = hitObjectGetInstanceCustomIndexNV(hObj);
+      int    triID         = hitObjectGetPrimitiveIndexNV(hObj);
+      mat4x3 objectToWorld = hitObjectGetObjectToWorldNV(hObj);
+      mat4x3 worldToObject = hitObjectGetWorldToObjectNV(hObj);
+
+      HitState hit          = getHitState(meshID, triID, objectToWorld, worldToObject, objAttribs);
+      payload.pos           = hit.pos;
+      payload.nrm           = hit.nrm;
+    }
+    
+    // Skipping call to Chit and Miss shaders, the information can be retrieved from hitObjectGet functions
+    // hitObjectExecuteShaderNV(hObj, 0);
   }
   else
   {
@@ -136,7 +168,7 @@ vec3 pathTrace(Ray r, inout uint seed)
     }
 
     // Retrieve the Instance buffer information
-    InstanceInfo  iInfo  = instanceInfo.i[payload.instanceIndex];
+    InstanceInfo iInfo = instanceInfo.i[payload.instanceIndex];
 
     float pdf = 0.0F;
     vec3  V   = -r.direction;

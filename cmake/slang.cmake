@@ -8,7 +8,7 @@
 
 
 # Download Slang SDK
-set(SLANG_VERSION "2023.3.9")
+set(SLANG_VERSION "2023.3.20")
 
 if(WIN32)
 set(SLANG_URL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-win64.zip")

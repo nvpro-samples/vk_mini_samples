@@ -26,6 +26,9 @@
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 #extension GL_EXT_buffer_reference2 : require
 
+#extension GL_NV_shader_invocation_reorder : enable
+
+
 const int GROUP_SIZE = 16;
 layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
 
@@ -183,10 +186,10 @@ void traceRay(in rayQueryEXT rayQuery, Ray ray, inout HitPayload payload)
 bool traceShadow(in rayQueryEXT rayQuery, Ray ray, float maxDist)
 {
   uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-  rayQueryInitializeEXT(rayQuery, topLevelAS, rayFlags , 0xFF, ray.origin, 0.0, ray.direction, maxDist);
+  rayQueryInitializeEXT(rayQuery, topLevelAS, rayFlags, 0xFF, ray.origin, 0.0, ray.direction, maxDist);
 
   while(rayQueryProceedEXT(rayQuery))
-  { // Force opaque, therefore, no intersection confirmation needed
+  {  // Force opaque, therefore, no intersection confirmation needed
   }
 
   return (rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT);  // Is Hit ?
@@ -231,7 +234,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
     InstanceInfo  iInfo  = iInfo_.i[payload.instanceIndex];
 
 
-    vec3 lightPos = getRandomPosition(pushConst.light.position, pushConst.light.radius, vec2(rand(seed), rand(seed)));
+    vec3  lightPos = getRandomPosition(pushConst.light.position, pushConst.light.radius, vec2(rand(seed), rand(seed)));
     float distanceToLight = length(lightPos - payload.pos);
 
     float pdf = 0.0F;
@@ -259,7 +262,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
       evalData.k2 = L;
       bsdfEvaluate(evalData, pbrMat);
 
-      const vec3 w = pushConst.light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
+      const vec3 w = pushConst.light.intensity.xxx * 1.0 / (distanceToLight * distanceToLight);
       contrib += w * evalData.bsdf_diffuse;
       contrib += w * evalData.bsdf_glossy;
       contrib *= throughput;
