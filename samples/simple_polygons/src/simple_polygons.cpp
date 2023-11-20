@@ -25,7 +25,7 @@
 //////////////////////////////////////////////////////////////////////////
 
 // clang-format off
-#define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
+#define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 
 // clang-format on
 #include <array>
@@ -65,6 +65,7 @@ const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), st
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
+#include "glm/ext/matrix_projection.hpp"
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
 #endif  // USE_HLSL
 
@@ -135,18 +136,19 @@ public:
 
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const float   aspect_ratio = m_viewSize.x / m_viewSize.y;
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
+    const float aspect_ratio = m_viewSize.x / m_viewSize.y;
+    glm::vec3   eye;
+    glm::vec3   center;
+    glm::vec3   up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo            finfo{};
-    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
-    finfo.view                = CameraManip.getMatrix();
-    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
-    finfo.camPos              = eye;
+    FrameInfo        finfo{};
+    const glm::vec2& clip = CameraManip.getClipPlanes();
+    finfo.view            = CameraManip.getMatrix();
+    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.camPos = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // Drawing the primitives in a G-Buffer
@@ -195,22 +197,27 @@ private:
     // Materials (colorful)
     for(int i = 0; i < num_meshes; i++)
     {
-      const nvmath::vec3f freq = nvmath::vec3f(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      const nvmath::vec3f v    = static_cast<nvmath::vec3f>(sin(freq) * 0.5F + 0.5F);
-      m_materials.push_back({nvmath::vec4f(v, 1)});
+      const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
+      const glm::vec3 v    = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
+      m_materials.push_back({glm::vec4(v, 1)});
     }
 
     // Instances
+    int   elemPerRow = (int)std::sqrt(num_meshes) + 1;
+    int   elemPerCol = (num_meshes - 1) / elemPerRow + 1;
+    float spacing    = 2.0f;
     for(int i = 0; i < num_meshes; i++)
     {
-      nvh::Node& n  = m_nodes.emplace_back();
-      n.mesh        = i;
-      n.material    = i;
-      n.translation = nvmath::vec3f(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
+      nvh::Node& n    = m_nodes.emplace_back();
+      n.mesh          = i;
+      n.material      = i;
+      n.translation.x = (i % elemPerRow - elemPerRow / 2.F + 0.5F) * spacing;
+      n.translation.y = 0.f;
+      n.translation.z = (i / elemPerRow - elemPerCol / 2.F + 0.5F) * spacing;
     }
 
     CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({-0.5F, 0.0F, 5.0F}, {-0.5F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    CameraManip.setLookat({4.5F, 4.5F, 2.5F}, {0.F, 0.F, 0.F}, {0.0F, 1.0F, 0.0F});
   }
 
   void createPipeline()
@@ -252,7 +259,7 @@ private:
     pgen.clearShaders();
   }
 
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const glm::vec2& size)
   {
     m_viewSize = size;
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
@@ -305,24 +312,26 @@ private:
   //
   void rasterPicking()
   {
-    nvmath::vec2f       mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
-    const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
-    mouse_pos                     = mouse_pos - corner;           // Mouse pos relative to center of viewport
+    glm::vec2       mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+    const glm::vec2 corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
+    mouse_pos                 = mouse_pos - corner;           // Mouse pos relative to center of viewport
 
-    const float          aspect_ratio = m_viewSize.x / m_viewSize.y;
-    const nvmath::vec2f& clip         = CameraManip.getClipPlanes();
-    const nvmath::mat4f  view         = CameraManip.getMatrix();
-    const nvmath::mat4f  proj         = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
+    const float      aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const glm::vec2& clip         = CameraManip.getClipPlanes();
+    const glm::mat4  view         = CameraManip.getMatrix();
+    glm::mat4        proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
+    proj[1][1] *= -1;
 
     // Find the distance under the cursor
     const float d = getDepth(static_cast<int>(mouse_pos.x), static_cast<int>(mouse_pos.y));
 
     if(d < 1.0F)  // Ignore infinite
     {
-      const nvmath::vec3f hit_pos = unprojectScreenPosition({mouse_pos.x, mouse_pos.y, d}, view, proj);
+      glm::vec4       win_norm = {0, 0, m_gBuffers->getSize().width, m_gBuffers->getSize().height};
+      const glm::vec3 hit_pos  = glm::unProjectZO({mouse_pos.x, mouse_pos.y, d}, view, proj, win_norm);
 
       // Set the interest position
-      nvmath::vec3f eye, center, up;
+      glm::vec3 eye, center, up;
       CameraManip.getLookat(eye, center, up);
       CameraManip.setLookat(eye, hit_pos, up, false);
     }
@@ -381,31 +390,6 @@ private:
     return value;
   }
 
-  //--------------------------------------------------------------------------------------------------
-  // Return the 3D position of the screen 2D + depth
-  //
-  nvmath::vec3f unprojectScreenPosition(const nvmath::vec3f& screenPos, const nvmath::mat4f& view, const nvmath::mat4f& proj)
-  {
-    // Transformation of normalized coordinates between -1 and 1
-    const VkExtent2D size = m_gBuffers->getSize();
-    nvmath::vec4f    win_norm;
-    win_norm.x = screenPos.x / static_cast<float>(size.width) * 2.0F - 1.0F;
-    win_norm.y = screenPos.y / static_cast<float>(size.height) * 2.0F - 1.0F;
-    win_norm.z = screenPos.z;
-    win_norm.w = 1.0;
-
-    // Transform to world space
-    const nvmath::mat4f mat       = proj * view;
-    const nvmath::mat4f mat_inv   = nvmath::invert(mat);
-    nvmath::vec4f       world_pos = mat_inv * win_norm;
-    world_pos.w                   = 1.0F / world_pos.w;
-    world_pos.x                   = world_pos.x * world_pos.w;
-    world_pos.y                   = world_pos.y * world_pos.w;
-    world_pos.z                   = world_pos.z * world_pos.w;
-
-    return nvmath::vec3f(world_pos);
-  }
-
 
   //--------------------------------------------------------------------------------------------------
   //
@@ -414,7 +398,7 @@ private:
   std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  nvmath::vec2f                    m_viewSize    = {0, 0};
+  glm::vec2                        m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
@@ -437,7 +421,7 @@ private:
   // Data and setting
   struct Material
   {
-    nvmath::vec4f color{1.F};
+    glm::vec4 color{1.F};
   };
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;

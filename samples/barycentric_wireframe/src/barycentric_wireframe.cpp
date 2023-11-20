@@ -27,8 +27,11 @@
 */
 //////////////////////////////////////////////////////////////////////////
 
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 // clang-format off
-#define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
+#define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 
 // clang-format on
 #include <array>
@@ -56,7 +59,7 @@
 #include "nvvk/images_vk.hpp"
 #include "imgui/imgui_helper.h"
 
-#if USE_HLSL 
+#if USE_HLSL
 #include "_autogen/raster_vertexMain.spirv.h"
 #include "_autogen/raster_fragmentMain.spirv.h"
 const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
@@ -179,18 +182,19 @@ public:
 
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const float   aspect_ratio = m_gBuffers->getAspectRatio();
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
+    const float aspect_ratio = m_gBuffers->getAspectRatio();
+    glm::vec3   eye;
+    glm::vec3   center;
+    glm::vec3   up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo            finfo{};
-    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
-    finfo.view                = CameraManip.getMatrix();
-    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
-    finfo.camPos              = eye;
+    FrameInfo        finfo{};
+    const glm::vec2& clip = CameraManip.getClipPlanes();
+    finfo.view            = CameraManip.getMatrix();
+    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.camPos = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     vkCmdUpdateBuffer(cmd, m_bSettings.buffer, 0, sizeof(WireframeSettings), &m_settings);
@@ -212,7 +216,7 @@ public:
       // Push constant information
       m_pushConst.transfo    = n.localMatrix();
       m_pushConst.color      = m_materials[n.material].color;
-      m_pushConst.clearColor = m_clearColor.float32;
+      m_pushConst.clearColor = glm::make_vec4(m_clearColor.float32);
       vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                          sizeof(PushConstant), &m_pushConst);
 
@@ -240,9 +244,9 @@ private:
     // Materials (colorful)
     for(int i = 0; i < num_meshes; i++)
     {
-      const nvmath::vec3f freq = nvmath::vec3f(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      const nvmath::vec3f v    = static_cast<nvmath::vec3f>(sin(freq) * 0.5F + 0.5F);
-      m_materials.push_back({nvmath::vec4f(v, 1)});
+      const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
+      const glm::vec3 v    = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
+      m_materials.push_back({glm::vec4(v, 1)});
     }
 
     // Instances
@@ -378,7 +382,7 @@ private:
   // Data and setting
   struct Material
   {
-    nvmath::vec4f color{1.F};
+    glm::vec4 color{1.F};
   };
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;
@@ -389,7 +393,7 @@ private:
   VkPipeline   m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int          m_currentObject    = 0;
 
-  WireframeSettings m_settings;
+  WireframeSettings m_settings = {};
   nvvk::Buffer      m_bSettings;
 };
 

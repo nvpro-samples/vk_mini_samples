@@ -21,7 +21,7 @@
 #define PAYLOAD_H
 
 #ifdef __cplusplus
-using vec3 = nvmath::vec3f;
+using vec3 = glm::vec3;
 #endif  // __cplusplus
 
 #define MISS_DEPTH 1000

@@ -218,11 +218,12 @@ public:
     const float aspect_ratio = m_gBuffers->getAspectRatio();
 
     // Update Frame buffer uniform buffer
-    FrameInfo            finfo{};
-    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
-    finfo.view                = CameraManip.getMatrix();
-    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
-    finfo.camPos              = CameraManip.getEye();
+    FrameInfo        finfo{};
+    const glm::vec2& clip = CameraManip.getClipPlanes();
+    finfo.view            = CameraManip.getMatrix();
+    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.camPos = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // Drawing the primitives in a G-Buffer
@@ -466,7 +467,7 @@ private:
   //-------------------------------------------------------------------------------------------------
   // G-Buffers, a color and a depth, which are used for rendering. The result color will be displayed
   // and an image filling the ImGui Viewport window.
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const glm::vec2& size)
   {
     m_viewSize = size;
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
@@ -542,7 +543,7 @@ private:
   std::shared_ptr<AllocDma>        m_alloc;
   //std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  nvmath::vec2f                    m_viewSize    = {0, 0};
+  glm::vec2                        m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkClearColorValue                m_clearColor  = {{0.7F, 0.7F, 0.7F, 1.0F}};     // Clear color
@@ -564,7 +565,7 @@ private:
   // Data and setting
   struct Material
   {
-    nvmath::vec3f color{1.F};
+    glm::vec3 color{1.F};
   };
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;

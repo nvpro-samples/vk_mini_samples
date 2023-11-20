@@ -42,7 +42,7 @@ public:
   ~MicromapProcess();
 
   bool createMicromapData(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, const Terrain& terrain);
-  void createMicromapBuffers(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, const nvmath::vec2f& biasScale);
+  void createMicromapBuffers(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, const glm::vec2& biasScale);
   void cleanBuildData();
 
   const nvvk::Buffer&                    primitiveFlags() { return m_primitiveFlags; }

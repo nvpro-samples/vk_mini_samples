@@ -104,7 +104,7 @@ If you are new to this repository, the first samples to read to better understan
 | [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [ ] |
 | [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray quary | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [ ] | [ ] |
 | [shader_object](samples/shader_object) | Using shader object and dynamic pipline | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] |
-
+| [compute_only](samples/compute_only) | Simple compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] |
 
 ## HLSL
 

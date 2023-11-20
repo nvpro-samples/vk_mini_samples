@@ -197,21 +197,21 @@ public:
       return;
     }
 
-    float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
+    float     view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    glm::vec3 eye;
+    glm::vec3 center;
+    glm::vec3 up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
     const auto& clip = CameraManip.getClipPlanes();
-    FrameInfo   finfo{
-          .proj    = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y),
-          .view    = CameraManip.getMatrix(),
-          .projInv = nvmath::inverse(finfo.proj),
-          .viewInv = nvmath::inverse(finfo.view),
-          .camPos  = eye,
-    };
+    FrameInfo   finfo{};
+    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.view    = CameraManip.getMatrix();
+    finfo.projInv = glm::inverse(finfo.proj);
+    finfo.viewInv = glm::inverse(finfo.view);
+    finfo.camPos  = eye;
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     m_pushConst.frame = m_frame;
@@ -296,7 +296,7 @@ private:
   }
 
 
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const glm::vec2& size)
   {
     // Rendering image targets
     m_viewSize                          = size;
@@ -528,17 +528,17 @@ private:
   //
   bool updateFrame()
   {
-    static float ref_fov{0};
-    static float ref_cam_matrix[16];
+    static float     ref_fov{0};
+    static glm::mat4 ref_cam_matrix;
 
     const auto& m   = CameraManip.getMatrix();
     const auto  fov = CameraManip.getFov();
 
-    if(memcmp(&ref_cam_matrix[0], &m.a00, sizeof(nvmath::mat4f)) != 0 || ref_fov != fov)
+    if(ref_cam_matrix != m || ref_fov != fov)
     {
       resetFrame();
-      memcpy(&ref_cam_matrix[0], &m.a00, sizeof(nvmath::mat4f));
-      ref_fov = fov;
+      ref_cam_matrix = m;
+      ref_fov        = fov;
     }
 
     if(m_frame >= m_maxFrames)
@@ -585,7 +585,7 @@ private:
   std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet;  // Descriptor set
   std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
 
-  nvmath::vec2f                    m_viewSize    = {1, 1};
+  glm::vec2                        m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
@@ -608,7 +608,7 @@ private:
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;
   std::vector<Material>           m_materials;
-  Light                           m_light;
+  Light                           m_light = {};
 
 
   // Pipeline

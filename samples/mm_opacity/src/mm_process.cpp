@@ -23,7 +23,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/noise.hpp>  // Perlin noise
 
-#include "nvmath/nvmath.h"
+
 #include "nvvk/buffers_vk.hpp"
 #include "nvvk/error_vk.hpp"
 #include "nvh/parallel_work.hpp"
@@ -261,18 +261,18 @@ void MicromapProcess::barrier(VkCommandBuffer cmd)
 // Return 2 when triangle is within the circle
 // Return 1 when triangle intersect, point, edge or surface
 // Return 0 when it is totally outside
-uint32_t triangleCircleItersection(const std::array<nvmath::vec3f, 3>& p, const nvmath::vec3f& center, float radius)
+uint32_t triangleCircleItersection(const std::array<glm::vec3, 3>& p, const glm::vec3& center, float radius)
 {
   float radiusSqr = radius * radius;
 
   // Vertices within circle
-  int           hit = 0;
-  nvmath::vec3f c[3];
-  float         csqr[3]{};
+  int       hit = 0;
+  glm::vec3 c[3];
+  float     csqr[3]{};
   for(int i = 0; i < 3; i++)
   {
     c[i]    = center - p[i];
-    csqr[i] = nvmath::dot(c[i], c[i]) - radiusSqr;
+    csqr[i] = glm::dot(c[i], c[i]) - radiusSqr;
     hit += csqr[i] <= 0 ? 1 : 0;
   }
 
@@ -282,17 +282,17 @@ uint32_t triangleCircleItersection(const std::array<nvmath::vec3f, 3>& p, const 
   if(hit > 0)
     return 1;  // Circle crossing the triangle
 
-  nvmath::vec3f edges[3];
+  glm::vec3 edges[3];
   edges[0] = p[1] - p[0];
   edges[1] = p[2] - p[1];
   edges[2] = p[0] - p[2];
 
   // Circle is within triangle? (not happening, discard)
   //hit = 0;
-  //nvmath::vec3f n[3];
+  //glm::vec3 n[3];
   //for(int i = 0; i < 3; i++)
   //{
-  //  n[i] = nvmath::cross(edges[i], c[i]);
+  //  n[i] = glm::cross(edges[i], c[i]);
   //  hit += n[i].y > 0 ? 1 : 0;
   //}
   //if(hit == 3)
@@ -305,10 +305,10 @@ uint32_t triangleCircleItersection(const std::array<nvmath::vec3f, 3>& p, const 
   float k[3]{};
   for(int i = 0; i < 3; i++)
   {
-    k[i] = nvmath::dot(edges[i], c[i]);
+    k[i] = glm::dot(edges[i], c[i]);
     if(k[i] > 0)
     {
-      float len = nvmath::dot(edges[i], edges[i]);  // squared len
+      float len = glm::dot(edges[i], edges[i]);  // squared len
 
       if(k[i] < len)
       {
@@ -339,7 +339,7 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
   auto num_tri = static_cast<uint32_t>(mesh.triangles.size());
   displacements.rawTriangles.resize(num_tri);
 
-  const nvmath::vec3f center{0.0F, 0.0F, 0.0F};
+  const glm::vec3 center{0.0F, 0.0F, 0.0F};
 
   // Find the distances in parallel
   // Faster than : for(size_t tri_index = 0; tri_index < num_tri; tri_index++)
@@ -347,9 +347,9 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
       num_tri,
       [&](uint64_t tri_index) {
         // Retrieve the positions of the triangle
-        nvmath::vec3f t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].p;
-        nvmath::vec3f t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].p;
-        nvmath::vec3f t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].p;
+        glm::vec3 t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].p;
+        glm::vec3 t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].p;
+        glm::vec3 t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].p;
 
         // Working on this triangle
         RawTriangle& triangle = displacements.rawTriangles[tri_index];
@@ -362,13 +362,13 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
         for(uint32_t index = 0; index < num_micro_tri; index++)
         {
           // Utility to get the barycentric values
-          nvmath::vec3f uv0, uv1, uv2;
+          glm::vec3 uv0, uv1, uv2;
           BirdCurveHelper::micro2bary(index, subdivLevel, uv0, uv1, uv2);
 
           // The sub-triangle position
-          nvmath::vec3f p0 = getInterpolated(t0, t1, t2, uv0);
-          nvmath::vec3f p1 = getInterpolated(t0, t1, t2, uv1);
-          nvmath::vec3f p2 = getInterpolated(t0, t1, t2, uv2);
+          glm::vec3 p0 = getInterpolated(t0, t1, t2, uv0);
+          glm::vec3 p1 = getInterpolated(t0, t1, t2, uv1);
+          glm::vec3 p2 = getInterpolated(t0, t1, t2, uv2);
 
           // Check how many sub-triangle vertex are within the radius
           uint32_t hit = triangleCircleItersection({p0, p1, p2}, center, radius);

@@ -220,7 +220,7 @@ void MicromapProcess::cleanBuildData()
 //--------------------------------------------------------------------------------------------------
 //
 //
-void MicromapProcess::createMicromapBuffers(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, const nvmath::vec2f& biasScale)
+void MicromapProcess::createMicromapBuffers(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, const glm::vec2& biasScale)
 {
   m_alloc->destroy(m_primitiveFlags);
   m_alloc->destroy(m_displacementDirections);
@@ -247,7 +247,7 @@ void MicromapProcess::createMicromapBuffers(VkCommandBuffer cmd, const nvh::Prim
   // Direction Bounds
   {
     // Making the bias-scale uniform across all triangle vertices
-    std::vector<nvmath::vec2f> bias_scale;
+    std::vector<glm::vec2> bias_scale;
     bias_scale.reserve(num_tri * 3ULL);
     for(uint32_t i = 0; i < num_tri; i++)
     {
@@ -312,9 +312,9 @@ MicromapProcess::MicroDistances MicromapProcess::createDisplacements(const nvh::
       num_tri,
       [&](uint64_t tri_index) {
         // Retrieve the UV of the triangle
-        nvmath::vec2f t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].t;
-        nvmath::vec2f t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].t;
-        nvmath::vec2f t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].t;
+        glm::vec2 t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].t;
+        glm::vec2 t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].t;
+        glm::vec2 t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].t;
 
         // Working on this triangle
         RawTriangle& triangle = displacements.rawTriangles[tri_index];
@@ -323,7 +323,7 @@ MicromapProcess::MicroDistances MicromapProcess::createDisplacements(const nvh::
 
         for(size_t index = 0; index < bvalues.size(); index++)
         {
-          nvmath::vec2f uv = getInterpolated(t0, t1, t2, bvalues[index]);
+          glm::vec2 uv = getInterpolated(t0, t1, t2, bvalues[index]);
 
           // Simple perlin noise
           float v     = 0.0F;
@@ -337,7 +337,7 @@ MicromapProcess::MicroDistances MicromapProcess::createDisplacements(const nvh::
           }
 
           // Adjusting the value
-          triangle.values[index] = nvmath::clamp((1.0F + v) * 0.5F, 0.0F, 1.0F);
+          triangle.values[index] = glm::clamp((1.0F + v) * 0.5F, 0.0F, 1.0F);
         }
       },
       std::thread::hardware_concurrency());

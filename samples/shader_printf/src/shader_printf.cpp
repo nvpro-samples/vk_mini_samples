@@ -30,13 +30,15 @@
  */
 //////////////////////////////////////////////////////////////////////////
 
+#include <glm/glm.hpp>
+
 // clang-format off
-#define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
+#define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
 
 #include <array>
 #include <vulkan/vulkan_core.h>
-#include "nvmath/nvmath.h"
+
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
@@ -141,9 +143,9 @@ public:
       // Pick the mouse coordinate if the mouse is down
       if(ImGui::GetIO().MouseDown[0])
       {
-        const nvmath::vec2f mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
-        const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
-        m_pushConstant.mouseCoord     = mouse_pos - corner;
+        const glm::vec2 mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+        const glm::vec2 corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
+        m_pushConstant.mouseCoord = mouse_pos - corner;
       }
       else
       {
@@ -188,8 +190,8 @@ public:
 private:
   struct Vertex
   {
-    nvmath::vec2f pos;
-    nvmath::vec3f color;
+    glm::vec2 pos;
+    glm::vec3 color;
   };
 
   void createPipeline()
@@ -296,6 +298,15 @@ int main(int argc, char** argv)
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;
 
+  // Setting up the layout of the application
+  spec.dockSetup = [](ImGuiID viewportID) {
+    ImGuiID settingID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.5F, nullptr, &viewportID);
+    ImGui::DockBuilderDockWindow("Settings", settingID);
+    ImGuiID logID = ImGui::DockBuilderSplitNode(settingID, ImGuiDir_Down, 0.85F, nullptr, &settingID);
+    ImGui::DockBuilderDockWindow("Log", logID);
+  };
+
+
   // #debug_printf
   VkValidationFeaturesEXT                    features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
   std::vector<VkValidationFeatureEnableEXT>  enables{VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT};
@@ -332,7 +343,7 @@ int main(int argc, char** argv)
   dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
   NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getContext()->m_instance, &dbg_messenger_create_info, nullptr, &dbg_messenger));
 
-  // #debug_printf : By uncommenting the next line, we would allow all messages to go through  the
+  // #debug_printf : By uncommenting the next line, we would allow all messages to go through the
   // nvvk::Context::debugCallback. But the message wouldn't be clean as the one we made.
   // Since we have the one above, it would also duplicate all messages.
   //app->getContext()->setDebugSeverityFilterMask(VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT);

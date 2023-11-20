@@ -28,13 +28,14 @@
 
 */
 //////////////////////////////////////////////////////////////////////////
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 // clang-format off
-#define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
+#define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
 
 #include <array>
-#include "nvmath/nvmath.h"
 #include <imgui.h>
 #include <vulkan/vulkan_core.h>
 
@@ -65,7 +66,7 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 #include "_autogen/raster_fragmentMain.spirv.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#else 
+#else
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
@@ -240,17 +241,17 @@ public:
       ImGui::Begin("Viewport");
 
       // Get size of current viewport
-      const nvmath::vec2f size = ImGui::GetContentRegionAvail();
+      const glm::vec2 size = ImGui::GetContentRegionAvail();
 
       // Deal with mouse interaction only if the window has focus
       if(ImGui::IsWindowHovered(ImGuiFocusedFlags_RootWindow))
       {
         const ImGuiIO& io = ImGui::GetIO();
 
-        nvmath::vec2f       mouse_pos = ImGui::GetMousePos();               // Current mouse pos in window
-        const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();        // Corner of the viewport
-        mouse_pos                     = (mouse_pos - corner) - size / 2.F;  // Mouse pos relative to center of viewport
-        const nvmath::vec2f pan       = mouse_pos * (2.F / m_zoom) / size;  // Position in image space before zoom
+        glm::vec2       mouse_pos = ImGui::GetMousePos();               // Current mouse pos in window
+        const glm::vec2 corner    = ImGui::GetCursorScreenPos();        // Corner of the viewport
+        mouse_pos                 = (mouse_pos - corner) - size / 2.F;  // Mouse pos relative to center of viewport
+        const glm::vec2 pan       = mouse_pos * (2.F / m_zoom) / size;  // Position in image space before zoom
 
         // Change zoom on mouse wheel
         if(io.MouseWheel > 0)
@@ -262,12 +263,12 @@ public:
           m_zoom /= 1.1F;
         }
 
-        const nvmath::vec2f pan2 = mouse_pos * (2.F / m_zoom) / size;  // Position in image space after zoom
+        const glm::vec2 pan2 = mouse_pos * (2.F / m_zoom) / size;  // Position in image space after zoom
         m_pan += pan2 - pan;  // Re-adjust panning (making zoom relative to mouse cursor)
 
-        const nvmath::vec2f drag = ImGui::GetMouseDragDelta(0, 0);  // Get the amount of mouse drag
-        ImGui::ResetMouseDragDelta();                               // We want static move
-        m_pan += drag * (2.F / m_zoom) / size;                      // Drag in image space
+        const glm::vec2 drag = ImGui::GetMouseDragDelta(0, 0);  // Get the amount of mouse drag
+        ImGui::ResetMouseDragDelta();                           // We want static move
+        m_pan += drag * (2.F / m_zoom) / size;                  // Drag in image space
       }
 
       // Display the G-Buffer image
@@ -329,10 +330,10 @@ public:
     }
 
     // Applying the zoom and pan
-    const nvmath::mat4f ortho = nvmath::ortho(-1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F);
-    const nvmath::mat4f scale = nvmath::scale_mat4(nvmath::vec3f(m_zoom, m_zoom, 0));
-    const nvmath::mat4f trans = nvmath::translation_mat4(nvmath::vec3f(m_pan.x, m_pan.y, 0));
-    m_pushConst.transfo       = ortho * scale * trans;
+    const glm::mat4 ortho = glm::ortho(-1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F);
+    const glm::mat4 scale = glm::scale(glm::mat4(1), glm::vec3(m_zoom, m_zoom, 0));
+    const glm::mat4 trans = glm::translate(glm::mat4(1), glm::vec3(m_pan.x, m_pan.y, 0));
+    m_pushConst.transfo   = ortho * scale * trans;
 
     // Drawing the quad in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -355,14 +356,14 @@ public:
 private:
   struct Vertex
   {
-    nvmath::vec2f pos;
-    nvmath::vec2f uv;
+    glm::vec2 pos;
+    glm::vec2 uv;
   };
 
   struct PushConstant
   {
-    nvmath::mat4f transfo{1};
-    nvmath::vec2f scale{1};
+    glm::mat4 transfo{1};
+    glm::vec2 scale{1};
   };
 
   void createPipeline()
@@ -413,7 +414,7 @@ private:
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const glm::vec2& size)
   {
     m_viewSize = size;
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
@@ -482,7 +483,7 @@ private:
   std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  nvmath::vec2f                    m_viewSize{0, 0};
+  glm::vec2                        m_viewSize{0, 0};
   VkFormat                         m_colorFormat{VK_FORMAT_R8G8B8A8_UNORM};       // Color format of the image
   VkFormat                         m_depthFormat{VK_FORMAT_X8_D24_UNORM_PACK32};  // Depth format of the depth buffer
   VkClearColorValue                m_clearColor{{0, 0, 0, 1}};                    // Clear color
@@ -497,7 +498,7 @@ private:
 
   // Data and setting
   float                          m_zoom{1};
-  nvmath::vec2f                  m_pan{0, 0};
+  glm::vec2                      m_pan{0, 0};
   std::shared_ptr<SampleTexture> m_texture;  // Loaded image and displayed
 
   // Pipeline

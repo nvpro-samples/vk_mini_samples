@@ -29,16 +29,18 @@ This sample replicate in a simple form, the execution of shaders like
 
 */
 
+#include <glm/glm.hpp>
 
 // clang-format off
-#define IM_VEC2_CLASS_EXTRA ImVec2(const nvmath::vec2f& f) {x = f.x; y = f.y;} operator nvmath::vec2f() const { return nvmath::vec2f(x, y); }
+#define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
 
 #include <array>
 #include <filesystem>
+namespace fs = std::filesystem;
 
 #include <vulkan/vulkan_core.h>
-#include "nvmath/nvmath.h"
+
 #include <imgui.h>
 #include <shaderc/shaderc.hpp>
 
@@ -62,16 +64,40 @@ This sample replicate in a simple form, the execution of shaders like
 // ShaderToy inputs
 struct InputUniforms
 {
-  nvmath::vec3f iResolution{0.0F};
-  float         iTime{0};
-  nvmath::vec4f iMouse{0.0F};
-  float         iTimeDelta{0};
-  int           iFrame{0};
-  int           iFrameRate{1};
-  float         iChannelTime[1]{};
-  nvmath::vec3f iChannelResolution[1]{};
-  int           pad1;
-  int           pad2;
+  glm::vec3 iResolution           = {0.F, 0.F, 0.F};
+  float     iTime                 = {0};
+  glm::vec4 iMouse                = {0.F, 0.F, 0.F, 0.F};
+  float     iTimeDelta            = {0};
+  int       iFrame                = {0};
+  int       iFrameRate            = {1};
+  float     iChannelTime[1]       = {0.F};
+  glm::vec3 iChannelResolution[1] = {{0.F, 0.F, 0.F}};
+  int       pad1                  = {0};
+};
+
+// Simple utility that checks if a file has changed
+class FileCheck
+{
+public:
+  FileCheck(fs::path _path)
+      : pathToFile(_path)
+  {
+    lastWriteTime = fs::last_write_time(pathToFile);
+  }
+
+  bool hasChanged()
+  {
+    if(lastWriteTime != fs::last_write_time(pathToFile))
+    {
+      lastWriteTime = fs::last_write_time(pathToFile);
+      return true;
+    }
+    return false;
+  }
+
+private:
+  fs::file_time_type lastWriteTime;
+  fs::path           pathToFile;
 };
 
 
@@ -107,6 +133,9 @@ public:
     m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
     m_alloc  = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset   = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+
+    m_fileBufferA = std::make_unique<FileCheck>(getFilePath("buffer_a.glsl"));
+    m_fileImage   = std::make_unique<FileCheck>(getFilePath("image.glsl"));
 
     // glsl compiler
     m_glslC = std::make_unique<nvvkhl::GlslCompiler>();
@@ -157,8 +186,12 @@ public:
       {
         openFile("buffer_a.glsl");
       }
-
+      bool reloadShaders = false;
       if(ImGui::Button("Reload Shaders"))
+        reloadShaders = true;
+      reloadShaders |= m_fileBufferA->hasChanged();
+      reloadShaders |= m_fileImage->hasChanged();
+      if(reloadShaders)
       {
         error_msg = compileShaders();
         if(error_msg.empty())
@@ -244,12 +277,11 @@ public:
 private:
   struct Vertex
   {
-    nvmath::vec2f pos;
+    glm::vec2 pos;
   };
 
   void createPipelineLayout()
   {
-    size_t                    size           = sizeof(InputUniforms);
     const VkPushConstantRange push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
 
     m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -366,7 +398,8 @@ private:
 
   std::string compileShaders()
   {
-    std::string error_msg;
+    nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
+    std::string      error_msg;
 
     // Compile default shaders
     setCompilerOptions();
@@ -405,19 +438,20 @@ private:
       error_msg += frag_result_a.GetErrorMessage();
     }
 
+
     return error_msg;
   }
 
   void updateUniforms()
   {
     // Grab Data
-    const nvmath::vec2f mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
-    const nvmath::vec2f corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
-    const nvmath::vec2f size      = ImGui::GetContentRegionAvail();
+    const glm::vec2 mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+    const glm::vec2 corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
+    const glm::vec2 size      = ImGui::GetContentRegionAvail();
 
     // Set uniforms
-    m_inputUniform.iResolution           = nvmath::vec3f(size, 0);
-    m_inputUniform.iChannelResolution[0] = nvmath::vec3f(size, 0);
+    m_inputUniform.iResolution           = glm::vec3(size, 0);
+    m_inputUniform.iChannelResolution[0] = glm::vec3(size, 0);
 
     if(!m_pause)
     {
@@ -431,9 +465,9 @@ private:
     }
     if(ImGui::GetIO().MouseDown[0])
     {
-      nvmath::vec2f mpos(mouse_pos - corner);
+      glm::vec2 mpos(mouse_pos - corner);
       mpos.y                = size.y - mpos.y;  // Inverting mouse position
-      m_inputUniform.iMouse = nvmath::vec4f(mpos, 1, 0);
+      m_inputUniform.iMouse = glm::vec4(mpos, 1, 0);
     }
     else
     {
@@ -441,10 +475,9 @@ private:
     }
   }
 
-  // Opening a file
-  void openFile(const std::string& file)
+  // Find the full path of the shader file
+  std::string getFilePath(const std::string& file)
   {
-    namespace fs = std::filesystem;
     std::string directoryPath;
     for(const auto& dir : getShaderDirs())
     {
@@ -455,12 +488,19 @@ private:
         break;
       }
     }
+    return directoryPath;
+  }
+
+  // Opening a file
+  void openFile(const std::string& file)
+  {
+    std::string filePath = getFilePath(file);
 
 #ifdef _WIN32  // For Windows
-    std::string command = "start " + std::string(directoryPath);
+    std::string command = "start " + std::string(filePath);
     system(command.c_str());
 #elif defined __linux__  // For Linux
-    std::string command = "xdg-open " + std::string(directoryPath);
+    std::string command = "xdg-open " + std::string(filePath);
     system(command.c_str());
 #endif
   }
@@ -490,6 +530,8 @@ private:
   std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
   std::unique_ptr<nvvkhl::GlslCompiler>         m_glslC;
   std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;  // Descriptor set
+  std::unique_ptr<FileCheck>                    m_fileBufferA;
+  std::unique_ptr<FileCheck>                    m_fileImage;
 
   VkExtent2D        m_viewSize{0, 0};
   VkFormat          m_colorFormat  = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of fragment

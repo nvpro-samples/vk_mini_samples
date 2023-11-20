@@ -200,18 +200,19 @@ public:
 
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const float   view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
+    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    glm::vec3   eye;
+    glm::vec3   center;
+    glm::vec3   up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo            finfo{};
-    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
-    finfo.view                = CameraManip.getMatrix();
-    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
-    finfo.camPos              = eye;
+    FrameInfo        finfo{};
+    const glm::vec2& clip = CameraManip.getClipPlanes();
+    finfo.view            = CameraManip.getMatrix();
+    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.camPos = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // #MSAA
@@ -259,18 +260,19 @@ private:
       n.mesh       = 0;
       n.material   = i;
 
-      nvmath::mat4f mrot, mtrans;
-      mrot.as_rot(static_cast<float>(i) / static_cast<float>(num_instances) * nv_two_pi, {0.0F, 0.0F, 1.0F});
-      mtrans.as_translation({0, -0.5, 0});
+      glm::mat4 mrot, mtrans;
+      mrot = glm::rotate(glm::mat4(1), static_cast<float>(i) / static_cast<float>(num_instances) * glm::two_pi<float>(),
+                         {0.0F, 0.0F, 1.0F});
+      mtrans   = glm::translate(glm::mat4(1), {0, -0.5, 0});
       n.matrix = mrot * mtrans;
     }
 
     // Materials (colorful)
     for(int i = 0; i < num_instances; i++)
     {
-      const nvmath::vec3f freq = nvmath::vec3f(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      const nvmath::vec3f v    = static_cast<nvmath::vec3f>(nvmath::sin(freq) * 0.5F + 0.5F);
-      m_materials.push_back({nvmath::vec4f(v, 1.0F)});
+      const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
+      const glm::vec3 v    = static_cast<glm::vec3>(glm::sin(freq) * 0.5F + 0.5F);
+      m_materials.push_back({glm::vec4(v, 1.0F)});
     }
 
 
@@ -347,7 +349,7 @@ private:
     pgen.clearShaders();
   }
 
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const glm::vec2& size)
   {
     m_viewSize = size;
     m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
@@ -355,7 +357,7 @@ private:
                                                    m_colorFormat, m_depthFormat);
   }
 
-  void createMsaaBuffers(const nvmath::vec2f& size)
+  void createMsaaBuffers(const glm::vec2& size)
   {
     m_alloc->destroy(m_msaaColor);
     m_alloc->destroy(m_msaaDepth);
@@ -462,7 +464,7 @@ private:
   VkImageView           m_msaaDepthIView{VK_NULL_HANDLE};
   VkSampleCountFlagBits m_msaaSamples{VK_SAMPLE_COUNT_4_BIT};
 
-  nvmath::vec2f                    m_viewSize    = {0, 0};
+  glm::vec2                        m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkClearColorValue                m_clearColor  = {{0.4F, 0.4F, 0.6F, 1.F}};      // Clear color
@@ -482,7 +484,7 @@ private:
   // Data and setting
   struct Material
   {
-    nvmath::vec4f color{1.F};
+    glm::vec4 color{1.F};
   };
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;

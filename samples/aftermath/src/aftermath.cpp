@@ -344,17 +344,18 @@ public:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
-    const float view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
-    const nvmath::vec2f& clip     = CameraManip.getClipPlanes();
-    const nvmath::mat4f  matv     = CameraManip.getMatrix();
-    const nvmath::mat4f  matp     = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
+    const float      view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
+    const glm::vec2& clip              = CameraManip.getClipPlanes();
+    const glm::mat4  matv              = CameraManip.getMatrix();
+    glm::mat4        matp = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    matp[1][1] *= -1;
 
     FrameInfo finfo{};
     finfo.time[0] = static_cast<float>(ImGui::GetTime());
     finfo.time[1] = 0;
     finfo.mpv     = matp * matv;
 
-    finfo.resolution = nvmath::vec2f(m_viewSize.width, m_viewSize.height);
+    finfo.resolution = glm::vec2(m_viewSize.width, m_viewSize.height);
     finfo.badOffset  = std::rand();  // 0xDEADBEEF;
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
@@ -541,7 +542,6 @@ private:
   nvvk::Buffer              m_indices;                                 // Buffer of the indices
   VkClearColorValue         m_clearColor{{0.0F, 0.0F, 0.0F, 1.0F}};    // Clear color
   VkDevice                  m_device = VK_NULL_HANDLE;                 // Convenient
-  int                       m_frameNumber{0};
   int                       m_currentPipe{0};
 
   std::vector<nvh::PrimitiveMesh> m_meshes;

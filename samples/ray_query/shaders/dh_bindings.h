@@ -20,8 +20,8 @@
 #ifndef BINDINGS_H
 #define BINDINGS_H
 
-#define B_tlas      0
-#define B_outImage  1
+#define B_tlas 0
+#define B_outImage 1
 #define B_frameInfo 2
 #define B_sceneDesc 3
 

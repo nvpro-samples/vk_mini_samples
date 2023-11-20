@@ -19,8 +19,8 @@
 
 
 #ifdef __cplusplus
-using mat4 = nvmath::mat4f;
-using vec2 = nvmath::vec2f;
+using mat4 = glm::mat4;
+using vec2 = glm::vec2;
 #elif defined(__hlsl)
 #define mat4 float4x4
 #define vec2 float2

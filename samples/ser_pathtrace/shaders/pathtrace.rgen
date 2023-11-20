@@ -83,8 +83,6 @@ struct Ray
 };
 
 
-
-
 //-----------------------------------------------------------------------
 // Shoot a ray an return the information of the closest hit, in the
 // PtPayload structure (PRD)
@@ -112,11 +110,11 @@ void traceRay(Ray r)
       mat4x3 objectToWorld = hitObjectGetObjectToWorldNV(hObj);
       mat4x3 worldToObject = hitObjectGetWorldToObjectNV(hObj);
 
-      HitState hit          = getHitState(meshID, triID, objectToWorld, worldToObject, objAttribs);
-      payload.pos           = hit.pos;
-      payload.nrm           = hit.nrm;
+      HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, objAttribs);
+      payload.pos  = hit.pos;
+      payload.nrm  = hit.nrm;
     }
-    
+
     // Skipping call to Chit and Miss shaders, the information can be retrieved from hitObjectGet functions
     // hitObjectExecuteShaderNV(hObj, 0);
   }

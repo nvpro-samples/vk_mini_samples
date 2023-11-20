@@ -12,6 +12,10 @@ function(buildSample PROJECT_NAME)
     message(STATUS "Processing Project ${PROJECT_NAME}")
     add_executable(${PROJECT_NAME})
     
+    if (MSVC)
+      add_compile_options(/W3)       # warning level 3
+    endif()
+
     set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
     set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 
@@ -124,6 +128,7 @@ endfunction()
 # List of all samples
 set(SAMPLES 
     barycentric_wireframe
+    compute_only
     image_ktx
     image_viewer
     mm_displacement

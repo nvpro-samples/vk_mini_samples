@@ -310,11 +310,12 @@ public:
     const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
 
     // Update Frame buffer uniform buffer
-    FrameInfo            finfo{};
-    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
-    finfo.view                = CameraManip.getMatrix();
-    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
-    finfo.camPos              = CameraManip.getEye();
+    FrameInfo        finfo{};
+    const glm::vec2& clip = CameraManip.getClipPlanes();
+    finfo.view            = CameraManip.getMatrix();
+    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.camPos = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     renderScene(cmd);  // Render to GBuffer-1
@@ -335,7 +336,7 @@ private:
     CameraManip.setLookat({0.0F, 0.0F, 1.5F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
 
     // Set clear color in sRgb space
-    nvmath::vec3f c = toLinear({0.3F, 0.3F, 0.3F});
+    glm::vec3 c = nvvkhl_shaders::toLinear({0.3F, 0.3F, 0.3F});
     memcpy(m_clearColor.float32, &c.x, sizeof(vec3));
   }
 
@@ -503,7 +504,7 @@ private:
   std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  nvmath::vec2f                    m_viewSize    = {0, 0};
+  glm::vec2                        m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_srgbFormat  = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer

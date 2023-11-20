@@ -21,10 +21,10 @@
 #define HOST_DEVICE_H
 
 #ifdef __cplusplus
-using mat4 = nvmath::mat4f;
-using vec4 = nvmath::vec4f;
-using vec3 = nvmath::vec3f;
-using vec2 = nvmath::vec2f;
+using mat4 = glm::mat4;
+using vec4 = glm::vec4;
+using vec3 = glm::vec3;
+using vec2 = glm::vec2;
 using uint = uint32_t;
 #elif defined(__hlsl) || defined(__slang)
 #define mat4 float4x4

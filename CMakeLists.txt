@@ -12,7 +12,7 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${EXTERNALS_DIR}/_bu
 # FetchContent is used for downloading content
 include(FetchContent)
 set(FETCHCONTENT_BASE_DIR ${EXTERNALS_DIR}  CACHE PATH "Directory under which to collect all populated content" FORCE)
-set(FETCHCONTENT_QUIET FALSE CACHE BOOL "Enables QUIET option for all content population" FORCE)
+# set(FETCHCONTENT_QUIET FALSE CACHE BOOL "Enables QUIET option for all content population" FORCE)
 
 #--------------------------------------------------------------------------------------------------
 # look for nvpro_core 1) as a sub-folder 2) at some other locations
@@ -58,8 +58,6 @@ endif()
 _add_package_ZLIB()
 _add_package_ImGUI()
 _add_package_ShaderC() # implicitly including Vulkan
-find_package(Python REQUIRED Interpreter) # Find Python executable
-message(STATUS "--> using Python from: ${Python_EXECUTABLE}")
 
 set(VULKANSDK_BUILD_DEPENDENCIES FALSE CACHE BOOL "Build dependecies for GLSL shaders")
 

@@ -170,8 +170,8 @@ public:
 private:
   struct Vertex
   {
-    nvmath::vec2f pos;
-    nvmath::vec3f color;
+    glm::vec2 pos;
+    glm::vec3 color;
   };
 
   void createPipeline()

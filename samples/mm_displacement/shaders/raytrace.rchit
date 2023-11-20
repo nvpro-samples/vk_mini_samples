@@ -25,6 +25,8 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_buffer_reference2 : require
+#extension GL_NV_displacement_micromap : require
+
 
 #include "device_host.h"
 #include "dh_bindings.h"
@@ -176,6 +178,21 @@ vec3 temperature(float intensity)
   return color;
 }
 
+vec2 baseToMicro(vec2 barycentrics[3], vec2 p)
+{
+  vec2  ap   = p - barycentrics[0];
+  vec2  ab   = barycentrics[1] - barycentrics[0];
+  vec2  ac   = barycentrics[2] - barycentrics[0];
+  float rdet = 1.f / (ab.x * ac.y - ab.y * ac.x);
+  return vec2(ap.x * ac.y - ap.y * ac.x, ap.y * ab.x - ap.x * ab.y) * rdet;
+}
+
+vec3 wireframe(in vec3 color, float width, vec3 bary)
+{
+  const vec3 wireColor = vec3(0.3F, 0.3F, 0.3F);
+  float      minBary   = min(bary.x, min(bary.y, bary.z));
+  return mix(wireColor, color, smoothstep(width, width + 0.002F, minBary));
+}
 
 void main()
 {
@@ -202,14 +219,14 @@ void main()
     // Add wireframe
     if(pc.numBaseTriangles > 0)
     {
-      const float smoothness = 0.002F;
-      const float thickness  = smoothness * pc.numBaseTriangles;
-      const vec3  bary =
-          fract(vec3(1.0F - attribs.x - attribs.y, attribs.x, attribs.y) * pc.numBaseTriangles + (thickness * 0.5F));
-      float      minBary    = min(bary.x, min(bary.y, bary.z));
-      const vec3 wire_color = vec3(0.3F, 0.3F, 0.3F);
-      minBary               = smoothstep(thickness, thickness + smoothness, minBary);
-      payload.color         = mix(wire_color, payload.color, minBary);
+      // Micro-triangles
+      const vec2 microBary2 = baseToMicro(gl_HitMicroTriangleVertexBarycentricsNV, attribs);
+      const vec3 microBary  = vec3(1.0F - microBary2.x - microBary2.y, microBary2.xy);
+      payload.color         = wireframe(payload.color, 0.001F * pc.numBaseTriangles, microBary);
+
+      // Base triangles
+      const vec3 baseBary = vec3(1.0 - attribs.x - attribs.y, attribs.xy);
+      payload.color       = wireframe(payload.color, 0.002F, baseBary);
     }
     return;
   }

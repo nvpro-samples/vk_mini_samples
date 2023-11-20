@@ -82,10 +82,10 @@ class Texture3dSample : public nvvkhl::IAppElement
     VkSamplerAddressMode addressMode    = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     PerlinSettings       perlin         = PerlinDefaultValues();
     int                  headlight      = 1;
-    nvmath::vec3f        toLight        = {1.F, 1.F, 1.F};
+    glm::vec3            toLight        = {1.F, 1.F, 1.F};
     int                  steps          = 100;
     float                threshold      = 0.05f;
-    nvmath::vec4f        surfaceColor   = {0.8F, 0.8F, 0.8F, 1.0F};
+    glm::vec4            surfaceColor   = {0.8F, 0.8F, 0.8F, 1.0F};
     uint32_t             getSize() { return 1 << powerOfTwoSize; }
     uint32_t             getTotalSize() { return getSize() * getSize() * getSize(); }
   };
@@ -275,20 +275,21 @@ public:
       setData(cmd);
     }
 
-    const float   aspect_ratio = m_gBuffers->getAspectRatio();
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
+    const float aspect_ratio = m_gBuffers->getAspectRatio();
+    glm::vec3   eye;
+    glm::vec3   center;
+    glm::vec3   up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo            finfo{};
-    const nvmath::vec2f& clip = CameraManip.getClipPlanes();
-    finfo.view                = CameraManip.getMatrix();
-    finfo.proj                = nvmath::perspectiveVK(CameraManip.getFov(), aspect_ratio, clip.x, clip.y);
-    finfo.camPos              = eye;
-    finfo.headlight           = m_settings.headlight;
-    finfo.toLight             = m_settings.toLight;
+    FrameInfo        finfo{};
+    const glm::vec2& clip = CameraManip.getClipPlanes();
+    finfo.view            = CameraManip.getMatrix();
+    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.camPos    = eye;
+    finfo.headlight = m_settings.headlight;
+    finfo.toLight   = m_settings.toLight;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // Drawing the primitives in a G-Buffer
@@ -311,7 +312,7 @@ public:
       pushConstant.threshold = m_settings.threshold;
       pushConstant.steps     = m_settings.steps;
       pushConstant.color     = m_settings.surfaceColor;
-      pushConstant.transfo   = nvmath::mat4f(1);  // Identity
+      pushConstant.transfo   = glm::mat4(1);  // Identity
       vkCmdPushConstants(cmd, m_dsetRaster->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                          0, sizeof(PushConstant), &pushConstant);
 
@@ -578,8 +579,8 @@ private:
   std::unique_ptr<nvvk::DescriptorSetContainer> m_dsetCompute;  // Holding the descriptor set information
   std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers;     // G-Buffers: color + depth
 
-  nvvk::Buffer m_vertices;                                      // Buffer of the vertices
-  nvvk::Buffer m_indices;                                       // Buffer of the indices
+  nvvk::Buffer m_vertices;  // Buffer of the vertices
+  nvvk::Buffer m_indices;   // Buffer of the indices
   nvvk::Buffer m_frameInfo;
 
   nvvkhl::Application*                    m_app = nullptr;

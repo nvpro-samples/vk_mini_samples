@@ -18,6 +18,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <glm/glm.hpp>
+
 #include "bird_curve_helper.hpp"
 #include <unordered_map>
 #include <memory>
@@ -53,20 +55,20 @@ std::size_t hashVal(const Types&... args)
 }
 
 //---------------------------------------------------------
-// Hash key for a nvmath::vec3f
+// Hash key for a glm::vec3
 // Used to find an index from a barycentric coordinate
-std::size_t makeHash(const nvmath::vec3f& v)
+std::size_t makeHash(const glm::vec3& v)
 {
   return hashVal(v.x, v.y, v.z);
 }
-auto hash  = [](const nvmath::vec3f& v) { return makeHash(v); };
-auto equal = [](const nvmath::vec3f& l, const nvmath::vec3f& r) { return l == r; };
+auto hash  = [](const glm::vec3& v) { return makeHash(v); };
+auto equal = [](const glm::vec3& l, const glm::vec3& r) { return l == r; };
 
 
-static std::unordered_map<nvmath::vec3f, uint32_t, decltype(hash), decltype(equal)> buildMap(const BirdCurveHelper::BaryCoordinates& bary_coords)
+static std::unordered_map<glm::vec3, uint32_t, decltype(hash), decltype(equal)> buildMap(const BirdCurveHelper::BaryCoordinates& bary_coords)
 {
   // Create a map of all level bary coordinates, so we can find later the index from a bary coordinate
-  std::unordered_map<nvmath::vec3f, uint32_t, decltype(hash), decltype(equal)> bary_to_idx(0, hash, equal);
+  std::unordered_map<glm::vec3, uint32_t, decltype(hash), decltype(equal)> bary_to_idx(0, hash, equal);
   for(uint32_t idx = 0; idx < static_cast<uint32_t>(bary_coords.size()); idx++)
   {
     bary_to_idx[bary_coords[idx]] = idx;
@@ -80,17 +82,17 @@ static std::unordered_map<nvmath::vec3f, uint32_t, decltype(hash), decltype(equa
 //////////////////////////////////////////////////////////////////////////
 
 
-BirdCurveHelper::BirdCurveHelper(uint32_t             maxLevel /*= 5*/,
-                                 const nvmath::vec3f& w /*={1, 0, 0}*/,
-                                 const nvmath::vec3f& u /*={0, 1, 0}*/,
-                                 const nvmath::vec3f& v /*={0, 0, 1}*/)
+BirdCurveHelper::BirdCurveHelper(uint32_t         maxLevel /*= 5*/,
+                                 const glm::vec3& w /*={1, 0, 0}*/,
+                                 const glm::vec3& u /*={0, 1, 0}*/,
+                                 const glm::vec3& v /*={0, 0, 1}*/)
     : m_maxLevel(maxLevel)
 {
   init(w, u, v);
 }
 
 
-void BirdCurveHelper::init(const nvmath::vec3f& w, const nvmath::vec3f& u, const nvmath::vec3f& v)
+void BirdCurveHelper::init(const glm::vec3& w, const glm::vec3& u, const glm::vec3& v)
 {
   m_birdValues = {};
 
@@ -134,7 +136,7 @@ void BirdCurveHelper::init(const nvmath::vec3f& w, const nvmath::vec3f& u, const
 
     for(size_t t = 0; t < m_triBary[level].size(); t++)
     {
-      nvmath::vec3i tri_index;
+      glm::ivec3 tri_index;
       tri_index.x = bary_to_idx[m_triBary[level][t].w];
       tri_index.y = bary_to_idx[m_triBary[level][t].u];
       tri_index.z = bary_to_idx[m_triBary[level][t].v];
@@ -160,12 +162,7 @@ void BirdCurveHelper::init(const nvmath::vec3f& w, const nvmath::vec3f& u, const
 //                                                                      * W ________UW________ U *
 //                                                                      **************************
 //
-void BirdCurveHelper::birdLevel(int                  level,
-                                bool                 triPointUp,
-                                bool                 counterClockwise,
-                                const nvmath::vec3f& w,
-                                const nvmath::vec3f& u,
-                                const nvmath::vec3f& v)
+void BirdCurveHelper::birdLevel(int level, bool triPointUp, bool counterClockwise, const glm::vec3& w, const glm::vec3& u, const glm::vec3& v)
 {
   m_triBary[level - 1ULL].push_back({w, u, v});  // Adding triangle barycentric coordinates
 
@@ -173,11 +170,11 @@ void BirdCurveHelper::birdLevel(int                  level,
     return;
 
   // Finding the mid-points of the triangle
-  nvmath::vec3f vw = (v + w) * 0.5F;
-  nvmath::vec3f uv = (u + v) * 0.5F;
-  nvmath::vec3f uw = (w + u) * 0.5F;
+  glm::vec3 vw = (v + w) * 0.5F;
+  glm::vec3 uv = (u + v) * 0.5F;
+  glm::vec3 uw = (w + u) * 0.5F;
 
-  if(triPointUp)          // Store mid-points only triangles pointing up
+  if(triPointUp)  // Store mid-points only triangles pointing up
   {
     if(counterClockwise)  // Sub-triangle 0 - 2
     {
@@ -223,9 +220,9 @@ BirdCurveHelper::DisplacementBlocks BirdCurveHelper::createDisplacementBlocks(ui
   }
 
   // Starting bary coordinates
-  nvmath::vec3f w{1, 0, 0};
-  nvmath::vec3f u{0, 1, 0};
-  nvmath::vec3f v{0, 0, 1};
+  glm::vec3 w{1, 0, 0};
+  glm::vec3 u{0, 1, 0};
+  glm::vec3 v{0, 0, 1};
 
   // Create a map of all level bary coordinates, so we can find later the index from a bary coordinate
   auto bary_to_idx = buildMap(m_birdValues[level]);
@@ -285,20 +282,20 @@ BirdCurveHelper::DisplacementBlocks BirdCurveHelper::createDisplacementBlocks(ui
 //--------------------------------------------------------------------------------------------------
 // Split the triangle in four, used by createDisplacementBlocks()
 //
-std::vector<BirdCurveHelper::BirdCurveHelper::SubTriangle> BirdCurveHelper::splitTriangles(const nvmath::vec3f& w,
-                                                                                           const nvmath::vec3f& u,
-                                                                                           const nvmath::vec3f& v)
+std::vector<BirdCurveHelper::BirdCurveHelper::SubTriangle> BirdCurveHelper::splitTriangles(const glm::vec3& w,
+                                                                                           const glm::vec3& u,
+                                                                                           const glm::vec3& v)
 {
-  nvmath::vec3f vw = (v + w) * 0.5F;
-  nvmath::vec3f uv = (u + v) * 0.5F;
-  nvmath::vec3f uw = (w + u) * 0.5F;
+  glm::vec3 vw = (v + w) * 0.5F;
+  glm::vec3 uv = (u + v) * 0.5F;
+  glm::vec3 uw = (w + u) * 0.5F;
 
   std::vector<SubTriangle> triangles = {{w, uw, vw}, {vw, uv, uw}, {uw, u, uv}, {uv, vw, v}};
 
   return triangles;
 }
 
-const std::vector<nvmath::vec3f>& BirdCurveHelper::getVertexCoord(uint16_t level)
+const std::vector<glm::vec3>& BirdCurveHelper::getVertexCoord(uint16_t level)
 {
   return m_birdValues[level];
 }
@@ -368,7 +365,7 @@ static inline void index2dbary(uint32_t index, uint32_t& u, uint32_t& v, uint32_
 //--------------------------------------------------------------------------------------------------
 // This returns the 3 barycentric coordinates of a micro-triangle.
 //
-void BirdCurveHelper::micro2bary(uint32_t index, uint32_t subdivisionLevel, nvmath::vec3f& uv0, nvmath::vec3f& uv1, nvmath::vec3f& uv2)
+void BirdCurveHelper::micro2bary(uint32_t index, uint32_t subdivisionLevel, glm::vec3& uv0, glm::vec3& uv1, glm::vec3& uv2)
 {
   if(subdivisionLevel == 0)
   {

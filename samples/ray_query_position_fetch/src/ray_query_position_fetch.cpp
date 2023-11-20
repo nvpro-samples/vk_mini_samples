@@ -300,15 +300,13 @@ private:
   void animateTopLevelAS()
   {
     const float s_deg       = 30.0f;
-    float       currentTime = ImGui::GetTime();
+    float       currentTime = static_cast<float>(ImGui::GetTime());
 
     for(auto& node : m_nodes)
     {
       // Calculate rotation
-      float                     angle = s_deg * currentTime;
-      nvmath::quaternion<float> rotation =
-          nvmath::axis_to_quat(nvmath::vec3f(std::sin(currentTime), std::cos(currentTime), 0.0F), deg2rad(angle));
-      rotation.normalize();
+      float angle = s_deg * currentTime;
+      glm::quat rotation = glm::angleAxis(glm::radians(angle), glm::vec3(std::sin(currentTime), std::cos(currentTime), 0.0F));
 
       // Update node rotation and transform matrix
       node.rotation       = rotation;

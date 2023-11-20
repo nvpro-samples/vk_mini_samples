@@ -1,6 +1,6 @@
 // From https://users.cs.utah.edu/~dejohnso/models/teapot.html
 
-std::vector<nvmath::vec3f> triangulatedTeapot = {
+static std::vector<glm::vec3> triangulatedTeapot = {
     {0.000000, 2.250000, 1.500000},    //
     {0.168000, 2.250000, 1.500000},    //
     {0.000000, 2.282812, 1.484375},    //

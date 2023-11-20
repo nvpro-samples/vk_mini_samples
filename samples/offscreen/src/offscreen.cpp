@@ -28,7 +28,7 @@
 #define VMA_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
-#include "nvmath/nvmath.h"
+
 #include "nvh/commandlineparser.hpp"
 #include "nvh/timesampler.hpp"
 #include "nvvk/commands_vk.hpp"
@@ -97,8 +97,7 @@ public:
 
     vkCmdBeginRendering(cmd, &r_info);
 
-    const nvmath::vec2f size_f = {static_cast<float>(m_gBuffers->getSize().width),
-                                  static_cast<float>(m_gBuffers->getSize().height)};
+    const glm::vec2 size_f = {static_cast<float>(m_gBuffers->getSize().width), static_cast<float>(m_gBuffers->getSize().height)};
 
     // Viewport and scissor
     const VkViewport viewport{0.0F, 0.0F, size_f.x, size_f.y, 0.0F, 1.0F};
@@ -272,7 +271,7 @@ int main(int argc, char** argv)
   app->createPipeline();                // How the quad will be rendered: shaders and more
   app->offlineRender(anim_time);        // Rendering
 
-  app->saveImage(output_file);          // Saving rendered image
+  app->saveImage(output_file);  // Saving rendered image
 
   app.reset();
   vkctx.deinit();

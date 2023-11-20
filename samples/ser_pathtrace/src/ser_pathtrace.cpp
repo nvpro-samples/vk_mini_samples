@@ -178,7 +178,7 @@ public:
         {
           changed |= PropertyEditor::entry("Intensity",
                                            [&] { return ImGui::SliderFloat("#1", &m_pushConst.intensity, 0.0F, 10.0F); });
-          nvmath::vec3f dir = m_skyParams.directionToLight;
+          glm::vec3 dir = m_skyParams.directionToLight;
           changed |= ImGuiH::azimuthElevationSliders(dir, false);
           m_skyParams.directionToLight = dir;
           PropertyEditor::treePop();
@@ -226,24 +226,25 @@ public:
       return;
     }
 
-    float         view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    nvmath::vec3f eye;
-    nvmath::vec3f center;
-    nvmath::vec3f up;
+    float     view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    glm::vec3 eye;
+    glm::vec3 center;
+    glm::vec3 up;
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
     FrameInfo   finfo{};
     const auto& clip = CameraManip.getClipPlanes();
     finfo.view       = CameraManip.getMatrix();
-    finfo.proj       = nvmath::perspectiveVK(CameraManip.getFov(), view_aspect_ratio, clip.x, clip.y);
-    finfo.projInv    = nvmath::inverse(finfo.proj);
-    finfo.viewInv    = nvmath::inverse(finfo.view);
-    finfo.camPos     = eye;
+    finfo.proj       = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    finfo.proj[1][1] *= -1;
+    finfo.projInv = glm::inverse(finfo.proj);
+    finfo.viewInv = glm::inverse(finfo.view);
+    finfo.camPos  = eye;
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
 
     // Update the sky
-    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(ProceduralSkyShaderParameters), &m_skyParams);
+    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);
 
     // Reset maximum for current frame
     vkCmdFillBuffer(cmd, m_bHeatStats.buffer, (uint32_t(m_frame) & 1) * sizeof(uint32_t), sizeof(uint32_t), 1);
@@ -363,11 +364,11 @@ private:
 
 
     // Default Sky values
-    m_skyParams = initSkyShaderParameters();
+    m_skyParams = nvvkhl_shaders::initSkyShaderParameters();
   }
 
 
-  void createGbuffers(const nvmath::vec2f& size)
+  void createGbuffers(const glm::vec2& size)
   {
     // Rendering image targets
     m_viewSize                          = size;
@@ -402,12 +403,12 @@ private:
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
     // Create the buffer of sky parameters, updated at each frame
-    m_bSkyParams = m_alloc->createBuffer(sizeof(ProceduralSkyShaderParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bSkyParams.buffer);
 
     // Create the buffer for the heatmap statistics
-    m_bHeatStats = m_alloc->createBuffer(sizeof(ProceduralSkyShaderParameters), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    m_bHeatStats = m_alloc->createBuffer(sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     m_dutil->DBG_NAME(m_bHeatStats.buffer);
 
     // Primitive instance information
@@ -680,17 +681,17 @@ private:
   //
   bool updateFrame()
   {
-    static float ref_fov{0};
-    static float ref_cam_matrix[16];
+    static float     ref_fov{0};
+    static glm::mat4 ref_cam_matrix;
 
     const auto& m   = CameraManip.getMatrix();
     const auto  fov = CameraManip.getFov();
 
-    if(memcmp(&ref_cam_matrix[0], &m.a00, sizeof(nvmath::mat4f)) != 0 || ref_fov != fov)
+    if(ref_cam_matrix != m || ref_fov != fov)
     {
       resetFrame();
-      memcpy(&ref_cam_matrix[0], &m.a00, sizeof(nvmath::mat4f));
-      ref_fov = fov;
+      ref_cam_matrix = m;
+      ref_fov        = fov;
     }
 
     if(m_frame >= m_maxFrames)
@@ -737,12 +738,12 @@ private:
   std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet;  // Descriptor set
   std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
 
-  nvmath::vec2f                    m_viewSize    = {1, 1};
+  glm::vec2                        m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
-  ProceduralSkyShaderParameters    m_skyParams{};
+  nvvkhl_shaders::ProceduralSkyShaderParameters m_skyParams{};
 
   // Resources
   struct PrimitiveMeshVk

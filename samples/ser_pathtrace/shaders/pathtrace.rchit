@@ -48,12 +48,12 @@ layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[
 void main()
 {
   // Retrieve the Primitive mesh buffer information
-  uint meshID = gl_InstanceCustomIndexEXT;
-  uint triID  = gl_PrimitiveID;
+  uint   meshID        = gl_InstanceCustomIndexEXT;
+  uint   triID         = gl_PrimitiveID;
   mat4x3 objectToWorld = gl_ObjectToWorldEXT;
   mat4x3 worldToObject = gl_WorldToObjectEXT;
 
-  HitState hit = getHitState(meshID, triID,objectToWorld, worldToObject, objAttribs );
+  HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, objAttribs);
 
   payload.hitT          = gl_HitTEXT;
   payload.pos           = hit.pos;
