@@ -347,7 +347,7 @@ public:
     const float      view_aspect_ratio = static_cast<float>(m_viewSize.width) / static_cast<float>(m_viewSize.height);
     const glm::vec2& clip              = CameraManip.getClipPlanes();
     const glm::mat4  matv              = CameraManip.getMatrix();
-    glm::mat4        matp = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    glm::mat4 matp = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
     matp[1][1] *= -1;
 
     FrameInfo finfo{};

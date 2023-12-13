@@ -66,7 +66,7 @@ PSOut fragmentMain(VSOut input)
   // Time varying pixel color
   float3 col = 0.5 + 0.5 * cos(pushConst.iTime + uv.xyx + float3(0, 2, 4));
 
-  for (int i = 0; i < 2; ++i)
+  for(int i = 0; i < 2; ++i)
   {
     uv -= 0.5;
     uv *= 5.;

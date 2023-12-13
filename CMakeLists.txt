@@ -4,15 +4,19 @@ project(vk_mini_samples LANGUAGES C CXX)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_CXX_STANDARD 20)
 
-#configure the external projects
-set(EXTERNALS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/externals")
-execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${EXTERNALS_DIR}/_build")
-
-
 # FetchContent is used for downloading content
 include(FetchContent)
-set(FETCHCONTENT_BASE_DIR ${EXTERNALS_DIR}  CACHE PATH "Directory under which to collect all populated content" FORCE)
-# set(FETCHCONTENT_QUIET FALSE CACHE BOOL "Enables QUIET option for all content population" FORCE)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+set(SLANG_VERSION  "2023.5.2")
+find_package(Slang)
+
+# Adding HLSL compiler function
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
+
+# Adding SLANG compiler function
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/slang.cmake)
+
 
 #--------------------------------------------------------------------------------------------------
 # look for nvpro_core 1) as a sub-folder 2) at some other locations
@@ -37,11 +41,7 @@ else()
   message(FATAL_ERROR "could not find base directory, please set BASE_DIRECTORY to folder containing nvpro_core")
 endif()
 
-# Adding HLSL compiler function
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
 
-# Adding SLANG compiler function
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/slang.cmake)
 
 # Various Paths
 set(SAMPLES_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -68,10 +68,9 @@ if(${USE_HLSL} AND ${USE_SLANG})
   message(FATAL_ERROR "Cannot use both HLSL and Slang simultaneously.")
 endif()
 
+set(USE_GLSL 1)
 if(${USE_HLSL} OR ${USE_SLANG})
-	set(USE_GLSL FALSE)
-else()
-	set(USE_GLSL TRUE)
+    set(USE_GLSL 0)
 endif()
 
 
@@ -81,6 +80,144 @@ _add_nvpro_core_lib()
 # Copying media files to the EXE destination
 message(STATUS "COPY ${CMAKE_CURRENT_SOURCE_DIR}/media  to  ${OUTPUT_PATH}")
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION ${OUTPUT_PATH})
+
+
+
+function(makeRelative FROM TO OUT)
+    file(RELATIVE_PATH _TMP_STR "${FROM}" "${TO}")
+    set (${OUT} "${_TMP_STR}" PARENT_SCOPE)
+endfunction()
+
+function(create_sample  PROJECT_NAME)
+    set(options)
+    set(oneValueArgs)
+    set(multiValueArgs SOURCES SHADER_SOURCES SHADER_HEADERS SHADER_HLSL SHADER_SLANG FLAGS)
+    cmake_parse_arguments(ARGS "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    
+    # Executable
+    #get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
+    message(STATUS "-------------------------------")
+    message(STATUS "Processing Project ${PROJECT_NAME}")
+    add_executable(${PROJECT_NAME})
+    
+    if (MSVC)
+      add_compile_options(/W3)       # warning level 3
+    endif()
+
+    set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+
+    SET(SAMPLE_FOLDER ${CMAKE_CURRENT_SOURCE_DIR})
+
+    # Sources for the project
+    target_sources(${PROJECT_NAME} PRIVATE ${ARGS_SOURCES})
+    target_sources(${PROJECT_NAME} PRIVATE ${COMMON_SOURCE_FILES})  # Extra source from nvpro-core based on options
+    target_sources(${PROJECT_NAME} PRIVATE ${PACKAGE_SOURCE_FILES}) # Extra source from nvpro-core based on options
+    target_sources(${PROJECT_NAME} PRIVATE ${ARGS_SHADER_HEADERS})
+
+    # Folders for Visual Studio
+    source_group("Other" FILES ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES})
+    source_group("Shaders" FILES 
+      ${ARGS_SHADER_SOURCES} 
+      ${ARGS_SHADER_HEADERS}
+      ${ARGS_SHADER_HLSL}
+      ${ARGS_SHADER_SLANG}
+    )
+
+    # Readme 
+    target_sources(${PROJECT_NAME} PRIVATE ${SAMPLE_FOLDER}/README.md)
+
+    # Include paths
+    target_include_directories(${PROJECT_NAME} PRIVATE ${SAMPLES_COMMON_DIR} ${SAMPLE_FOLDER})
+
+    # Linking with other libraries
+    target_link_libraries(${PROJECT_NAME} 
+        optimized ${LIBRARIES_OPTIMIZED}
+        debug ${LIBRARIES_DEBUG}
+        ${PLATFORM_LIBRARIES}
+        nvpro_core
+         ${UNIXLINKLIBS}
+    )
+
+    # Compile definitions
+    # the "config" directory doesn't really exist but serves as place holder
+    makeRelative("${OUTPUT_PATH}/config" "${SAMPLE_FOLDER}" TO_CURRENT_SOURCE_DIR)
+    makeRelative("${OUTPUT_PATH}/config" "${DOWNLOAD_TARGET_DIR}" TO_DOWNLOAD_TARGET_DIR)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_NAME="${PROJECT_NAME}")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_RELDIRECTORY="${TO_CURRENT_SOURCE_DIR}/")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_DOWNLOAD_RELDIRECTORY="${TO_DOWNLOAD_TARGET_DIR}/")
+
+    # other properties
+    set_property(TARGET ${PROJECT_NAME} PROPERTY FOLDER "Samples")
+
+    # Using GLSL (by default)
+    if(USE_GLSL) 
+        # GLSL compilation flags
+        set(_GLSL_FLAGS 
+          -I${SAMPLE_FOLDER}/shaders 
+          -I${NVPRO_CORE_DIR} 
+          -g -D__glsl)
+        list(APPEND _GLSL_FLAGS ${ARGS_FLAGS})
+
+        # Compiling shaders to Spir-V header
+        compile_glsl(
+            SOURCE_FILES ${ARGS_SHADER_SOURCES}
+            HEADER_FILES ${ARGS_SHADER_HEADERS}
+            DST "${SAMPLE_FOLDER}/_autogen" 
+            VULKAN_TARGET "vulkan1.3"
+            HEADER ON
+            DEPENDENCY ${VULKANSDK_BUILD_DEPENDENCIES}
+            FLAGS ${_GLSL_FLAGS}
+            )
+
+        target_sources(${PROJECT_NAME} PRIVATE ${GLSL_SOURCES} ${GLSL_HEADERS})
+    endif()
+
+    if(USE_HLSL AND ARGS_SHADER_HLSL) 
+        foreach(HLSL_FILE ${ARGS_SHADER_HLSL})
+          compile_hlsl_file(
+            SOURCE_FILE ${HLSL_FILE}
+            FLAGS -I${SAMPLES_COMMON_DIR}/shaders ${ARGS_FLAGS}
+            )
+          target_sources(${PROJECT_NAME} PRIVATE ${HLSL_OUTPUT_FILES})
+          source_group("Shaders" FILES ${SLANG_OUTPUT_FILES})
+        endforeach()
+    endif()
+
+    if(USE_SLANG)
+      target_include_directories(${PROJECT_NAME} PRIVATE ${SLANG_SDK})
+      target_link_libraries(${PROJECT_NAME} ${CMAKE_SLANG_LIB})
+      if(ARGS_SHADER_SLANG) 
+          foreach(SLANG_FILE ${ARGS_SHADER_SLANG})
+              compile_slang_file(
+                SOURCE_FILE ${SLANG_FILE}
+                FLAGS -I${SAMPLES_COMMON_DIR}/shaders ${ARGS_FLAGS}
+                )
+              target_sources(${PROJECT_NAME} PRIVATE ${SLANG_OUTPUT_FILES})
+              source_group("Shaders" FILES ${SLANG_OUTPUT_FILES})
+          endforeach()
+      endif()
+    endif()
+
+    # target definitions for GLSL, HLSL and SLANG
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=${USE_GLSL})
+    if(${USE_SLANG})
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SLANG=1)
+    else()
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SLANG=0)
+    endif()
+    if(${USE_HLSL})
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_HLSL=1)
+    else()
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_HLSL=0)
+    endif()
+
+
+    # Copy binary
+    _finalize_target( ${PROJECT_NAME} )
+
+endfunction()
+
 
 # Sub examples
 add_subdirectory(samples)
@@ -95,13 +232,17 @@ install(DIRECTORY "media"
 
 
 # Fake project to add files
-set(EXTRAFILES CMakeLists.txt 
-	README.md
-    test.py
-    cmake/hlsl.cmake
-    cmake/slang.cmake
+set(EXTRAFILES 
+  CMakeLists.txt 
+  README.md
+  test.py
+  cmake/hlsl.cmake
+  cmake/slang.cmake
+  cmake/find_entrypoints.cmake
+  cmake/FindSlang.cmake
+  samples/CMakeLists.txt
 )
 add_custom_target(Settings SOURCES ${EXTRAFILES})
-set_property(TARGET Settings PROPERTY FOLDER "Extra")
+set_property(TARGET Settings PROPERTY FOLDER "_cmake")
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${EXTRAFILES})
 

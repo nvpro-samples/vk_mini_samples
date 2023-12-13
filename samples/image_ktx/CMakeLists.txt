@@ -1,0 +1,20 @@
+
+set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+
+create_sample(image_ktx
+  SOURCES 
+    image_ktx.cpp 
+  SHADER_SOURCES 
+    ${SHD_DIR}/raster.vert
+    ${SHD_DIR}/raster.frag
+  SHADER_HEADERS
+    ${SHD_DIR}/device_host.h
+  SHADER_HLSL
+    ${SHD_DIR}/raster.hlsl 
+  SHADER_SLANG
+    ${SHD_DIR}/raster.slang
+)
+
+# KTX needs extra libraries
+_add_package_KTX()
+target_link_libraries(image_ktx basisu)
