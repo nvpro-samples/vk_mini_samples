@@ -129,24 +129,27 @@ def test():
         if os.path.isfile(os.path.join(".", f)) and (f.endswith(".exe") or f.endswith("_app"))
     ]
 
-    # Call each executable with options --test and --snapshot
+    names_to_avoid = ['offscreen', 'gpu_monitor']  # Add other names as needed
+
+    # Call each executable with options --test and --screenshot
     returncode = 0
     for executable in executables:
         executable_path = os.path.join(".", executable)
         args = [executable_path]
-        if not ('offscreen' in executable): # offscreen.exe doesn't take these arguments
-            args += ["--test", "--snapshot", "--frames", "10"]
-        try:
-            header(f"Testing '{executable}'")
-            subprocess.run(args, check=True)
+        
+        if not any(name in executable for name in names_to_avoid):
+            args += ["-test", "-test-frames", "10", "-screenshot", "snap_" + executable[:-4] + ".png"]
+            try:
+                header(f"Testing '{executable}'")
+                subprocess.run(args, check=True)
 
-        except subprocess.CalledProcessError as e:
-            print(f"Error occurred while testing: {e}")
-            returncode = e.returncode
-            # Ignore errors from ray_query_position_fetch in CI 
-            if ("CI" in os.environ) and ('ray_query_position_fetch' in executable) and datetime.datetime.now().date() < datetime.date(year=2024, month=2, day=1):
-                print("Ignored")
-                returncode = 0
+            except subprocess.CalledProcessError as e:
+                print(f"Error occurred while testing: {e}")
+                returncode = e.returncode
+                # Ignore errors from ray_query_position_fetch in CI 
+                if ("CI" in os.environ) and ('ray_query_position_fetch' in executable) and datetime.datetime.now().date() < datetime.date(year=2024, month=2, day=1):
+                    print("Ignored")
+                    returncode = 0
 
     os.chdir(current_dir)
     if returncode != 0:

@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 include(FetchContent)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(SLANG_VERSION  "2023.5.2")
+set(SLANG_VERSION  "2023.5.5")
 find_package(Slang)
 
 # Adding HLSL compiler function
@@ -57,6 +57,7 @@ endif()
 # _add_package_VulkanSDK()
 _add_package_ZLIB()
 _add_package_ImGUI()
+_add_package_NVML()
 _add_package_ShaderC() # implicitly including Vulkan
 
 set(VULKANSDK_BUILD_DEPENDENCIES FALSE CACHE BOOL "Build dependecies for GLSL shaders")
@@ -132,10 +133,10 @@ function(create_sample  PROJECT_NAME)
 
     # Linking with other libraries
     target_link_libraries(${PROJECT_NAME} 
+        nvpro_core
         optimized ${LIBRARIES_OPTIMIZED}
         debug ${LIBRARIES_DEBUG}
         ${PLATFORM_LIBRARIES}
-        nvpro_core
          ${UNIXLINKLIBS}
     )
 
@@ -186,7 +187,7 @@ function(create_sample  PROJECT_NAME)
 
     if(USE_SLANG)
       target_include_directories(${PROJECT_NAME} PRIVATE ${SLANG_SDK})
-      target_link_libraries(${PROJECT_NAME} ${CMAKE_SLANG_LIB})
+      target_link_libraries(${PROJECT_NAME} ${SLANG_LIB})
       if(ARGS_SHADER_SLANG) 
           foreach(SLANG_FILE ${ARGS_SHADER_SLANG})
               compile_slang_file(

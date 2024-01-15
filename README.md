@@ -105,6 +105,7 @@ If you are new to this repository, the first samples to read to better understan
 | [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray quary | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [ ] | [ ] |
 | [shader_object](samples/shader_object) | Using shader object and dynamic pipline | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] |
 | [compute_only](samples/compute_only) | Simple compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] |
+| [gpu_monitor](samples/gpu_monitor) | Showing GPU usage | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] |
 
 ## HLSL
 
@@ -158,8 +159,7 @@ To use Slang, check USE_SLANG then re-configure and re-generate.
 * Getting Started: https://shader-slang.com/getting-started.html
 * User Guide: http://shader-slang.com/slang/user-guide/index.html
 * Various Documentations: https://github.com/shader-slang/slang/tree/master/docs
-
-
+* Interop GLSL, SPIR-V: https://shader-slang.com/slang/user-guide/a1-04-interop.html
 
 ## LICENSE
 

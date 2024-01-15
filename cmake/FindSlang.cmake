@@ -5,7 +5,7 @@
 # find_package(Slang)
 
 # Set the default Slang version
-set(SLANG_DEFAULT_VERSION "2023.5.0")
+set(SLANG_DEFAULT_VERSION "2023.5.5")
 
 # Parse optional arguments
 set(SLANG_VERSION ${SLANG_DEFAULT_VERSION} CACHE INTERNAL "")
@@ -29,7 +29,7 @@ FetchContent_Declare(slangsdk
 )
 
 message(STATUS "Looking for Slang ${SLANG_VERSION}")
-if(NOT DEFINED CMAKE_SLANG_COMPILER) 
+if(NOT DEFINED SLANG_COMPILER) 
     message(STATUS "Downloading Slang ${SLANG_VERSION}")
     FetchContent_Populate(slangsdk)
     message(STATUS "Done")
@@ -38,24 +38,24 @@ if(NOT DEFINED CMAKE_SLANG_COMPILER)
     
     if(slangsdk_SOURCE_DIR)
         # Use the one downloaded
-        find_program(CMAKE_SLANG_COMPILER 
+        find_program(SLANG_COMPILER 
             NAMES slangc 
             PATHS ${slangsdk_SOURCE_DIR}/bin/windows-x64/release ${slangsdk_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
         )
 
-        find_library(CMAKE_SLANG_LIB 
+        find_library(SLANG_LIB 
             NAMES slang
             PATHS ${slangsdk_SOURCE_DIR}/bin/windows-x64/release ${slangsdk_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
         )
 
     endif()
     
-    if(NOT CMAKE_SLANG_COMPILER)
+    if(NOT SLANG_COMPILER)
         message(ERROR "Slang not found")
     endif()
      
     # Provide the Slang compiler and SDK paths to the user
-    set(SLANG_COMPILER ${CMAKE_SLANG_COMPILER} CACHE FILEPATH "Path to Slang compiler")
+    set(SLANG_COMPILER ${SLANG_COMPILER} CACHE FILEPATH "Path to Slang compiler")
     set(SLANG_SDK ${slangsdk_SOURCE_DIR} CACHE PATH "Path to Slang SDK root directory")
 endif()
 

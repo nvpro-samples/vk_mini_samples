@@ -57,7 +57,7 @@
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
@@ -81,15 +81,6 @@ const auto& rmiss_shd = std::vector<char>{std::begin(raytrace_rmissMain), std::e
 const auto& rahit_shd = std::vector<char>{std::begin(raytrace_rahitMain), std::end(raytrace_rahitMain)};
 #elif USE_SLANG
 #include "_autogen/raytrace_slang.h"
-#define USE_SEPARATE_SLANG 1
-#include "_autogen/raytrace_rgenMain.spirv.h"
-#include "_autogen/raytrace_rchitMain.spirv.h"
-#include "_autogen/raytrace_rmissMain.spirv.h"
-#include "_autogen/raytrace_rahitMain.spirv.h"
-const auto& rgen_shd  = std::vector<uint32_t>{std::begin(raytrace_rgenMain), std::end(raytrace_rgenMain)};
-const auto& rchit_shd = std::vector<uint32_t>{std::begin(raytrace_rchitMain), std::end(raytrace_rchitMain)};
-const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmissMain), std::end(raytrace_rmissMain)};
-const auto& rahit_shd = std::vector<uint32_t>{std::begin(raytrace_rahitMain), std::end(raytrace_rahitMain)};
 #else
 #include "_autogen/raytrace.rchit.h"
 #include "_autogen/raytrace.rgen.h"
@@ -539,8 +530,8 @@ private:
     std::array<VkPipelineShaderStageCreateInfo, eShaderGroupCount> stages{};
     for(auto& s : stages)
       s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-#if USE_SLANG && !USE_SEPARATE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, raytraceSlang);
+#if USE_SLANG
+    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &raytraceSlang[0], sizeof(raytraceSlang));
     stages[eRaygen].module      = shaderModule;
     stages[eRaygen].pName       = "rgenMain";
     stages[eRaygen].stage       = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -630,8 +621,12 @@ private:
     m_sbt.create(m_rtPipe.plines[0], ray_pipeline_info);
 
     // Removing temp modules
+#if USE_SLANG
+    vkDestroyShaderModule(m_device, shaderModule, nullptr);
+#else
     for(const VkPipelineShaderStageCreateInfo& s : stages)
       vkDestroyShaderModule(m_device, s.module, nullptr);
+#endif
   }
 
   void writeRtDesc()
@@ -806,7 +801,7 @@ int main(int argc, char** argv)
 
 
   // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
 
   // Add all application elements

@@ -36,7 +36,7 @@
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "shaders/device_host.h"
 
@@ -598,7 +598,7 @@ int main(int argc, char** argv)
   }
 
   // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
   // Add all application elements
   app->addElement(test);

@@ -52,64 +52,65 @@ function(compile_slang_file)
     # This will contain a list of COMMAND arguments.
     set(_SLANG_COMMANDS )
     
-    # Call the function to find entrypoints
-    find_entrypoints(${COMPILE_SOURCE_FILE} ENTRYPOINTS_LIST STAGES_LIST)
-    
-    # Get the length of the list
-    list(LENGTH ENTRYPOINTS_LIST ENTRYPOINTS_LIST_LENGTH)
-    math(EXPR ENTRYPOINTS_LIST_LENGTH "${ENTRYPOINTS_LIST_LENGTH} - 1")
-    
-    # Iterate over the indices
-    foreach(INDEX RANGE ${ENTRYPOINTS_LIST_LENGTH})
-      # Access the element at the current index
-      list(GET ENTRYPOINTS_LIST ${INDEX} _ENTRY_NAME)
-      list(GET STAGES_LIST ${INDEX} _STAGE)
-      message(STATUS "  - Found entrypoint: ${_ENTRY_NAME} (${_STAGE})")
-    
-      set(_VAR_NAME "${_FILE_STEM}_${_ENTRY_NAME}") # Variable name in header files
-      set(_OUT_STEM "${_OUT_DIR}/${_VAR_NAME}") # Path to the output without extensions
-      
+    set(_TARGET "spirv")
 
-      set(_TARGET "spirv")
-
-      # Common Slang compiler flags
-      set(_SLANG_FLAGS 
-        -entry ${_ENTRY_NAME} 
-        -target ${_TARGET}
-        # -emit-spirv-directly
-        -g3
-        -line-directive-mode glsl 
-        -profile glsl_460 
-        -D__slang 
-        -force-glsl-scalar-layout
-      )
-
-      # Adding external flags, like -I ... 
-      list(APPEND _SLANG_FLAGS ${COMPILE_FLAGS})
-
-      # _OUT_ARG is the -o argument passed to Slang
-      set(_OUT_ARG "${_OUT_STEM}.${_TARGET}") 
-    
-      ## DEBUG output 
-      if(COMPILE_DEBUG)
-        list(APPEND _SLANG_COMMANDS
-          COMMAND ${SLANG_COMPILER} ${_SLANG_FLAGS} -o ${_OUT_ARG} ${COMPILE_SOURCE_FILE}
-        )
-      endif()
-
-      set(_OUT_FILE "${_OUT_ARG}.h")
-
-      # Embed the Spir-V in a header
-      list(APPEND _SLANG_FLAGS -source-embed-style text -source-embed-name ${_VAR_NAME})
-  
-      # Compile shader
-      list(APPEND _SLANG_COMMANDS
-        COMMAND ${CMAKE_COMMAND} -E echo ${SLANG_COMPILER} ${_SLANG_FLAGS} -o ${_OUT_ARG} ${COMPILE_SOURCE_FILE}
-        COMMAND ${SLANG_COMPILER} ${_SLANG_FLAGS} -o ${_OUT_ARG} ${COMPILE_SOURCE_FILE}
-      )
-  
-      list(APPEND SLANG_OUTPUT_FILES ${_OUT_FILE})
-    endforeach()
+    ## # Call the function to find entrypoints
+    ## find_entrypoints(${COMPILE_SOURCE_FILE} ENTRYPOINTS_LIST STAGES_LIST)
+    ## 
+    ## # Get the length of the list
+    ## list(LENGTH ENTRYPOINTS_LIST ENTRYPOINTS_LIST_LENGTH)
+    ## math(EXPR ENTRYPOINTS_LIST_LENGTH "${ENTRYPOINTS_LIST_LENGTH} - 1")
+    ## 
+    ## # Iterate over the indices
+    ## foreach(INDEX RANGE ${ENTRYPOINTS_LIST_LENGTH})
+    ##   # Access the element at the current index
+    ##   list(GET ENTRYPOINTS_LIST ${INDEX} _ENTRY_NAME)
+    ##   list(GET STAGES_LIST ${INDEX} _STAGE)
+    ##   message(STATUS "  - Found entrypoint: ${_ENTRY_NAME} (${_STAGE})")
+    ## 
+    ##   set(_VAR_NAME "${_FILE_STEM}_${_ENTRY_NAME}") # Variable name in header files
+    ##   set(_OUT_STEM "${_OUT_DIR}/${_VAR_NAME}") # Path to the output without extensions
+    ##   
+    ## 
+    ## 
+    ##   # Common Slang compiler flags
+    ##   set(_SLANG_FLAGS 
+    ##     -entry ${_ENTRY_NAME} 
+    ##     -target ${_TARGET}
+    ##     # -emit-spirv-directly
+    ##     -g3
+    ##     -line-directive-mode glsl 
+    ##     -profile glsl_460 
+    ##     -D__slang 
+    ##     -force-glsl-scalar-layout
+    ##   )
+    ## 
+    ##   # Adding external flags, like -I ... 
+    ##   list(APPEND _SLANG_FLAGS ${COMPILE_FLAGS})
+    ## 
+    ##   # _OUT_ARG is the -o argument passed to Slang
+    ##   set(_OUT_ARG "${_OUT_STEM}.${_TARGET}") 
+    ## 
+    ##   ## DEBUG output 
+    ##   if(COMPILE_DEBUG)
+    ##     list(APPEND _SLANG_COMMANDS
+    ##       COMMAND ${SLANG_COMPILER} ${_SLANG_FLAGS} -o ${_OUT_ARG} ${COMPILE_SOURCE_FILE}
+    ##     )
+    ##   endif()
+    ## 
+    ##   set(_OUT_FILE "${_OUT_ARG}.h")
+    ## 
+    ##   # Embed the Spir-V in a header
+    ##   list(APPEND _SLANG_FLAGS -source-embed-style text -source-embed-name ${_VAR_NAME})
+    ## 
+    ##   # Compile shader
+    ##   list(APPEND _SLANG_COMMANDS
+    ##     COMMAND ${CMAKE_COMMAND} -E echo ${SLANG_COMPILER} ${_SLANG_FLAGS} -o ${_OUT_ARG} ${COMPILE_SOURCE_FILE}
+    ##     COMMAND ${SLANG_COMPILER} ${_SLANG_FLAGS} -o ${_OUT_ARG} ${COMPILE_SOURCE_FILE}
+    ##   )
+    ## 
+    ##   list(APPEND SLANG_OUTPUT_FILES ${_OUT_FILE})
+    ## endforeach()
 
     # !! Compiling all entry points in a single compilation
     set(_OUT_ARG "${_OUT_DIR}/${_FILE_STEM}_slang.h")

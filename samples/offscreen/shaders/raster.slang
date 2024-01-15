@@ -20,19 +20,25 @@
 #include "device_host.h"
 
 
-struct VSIn
+struct VSin
 {
   uint vertexId : SV_VertexID;
 };
 
-struct VSOut
+struct PSin
 {
   float2 uv : TEXCOORD;
+};
+
+// Output of the vertex shader
+struct VSout
+{
+  PSin stage;
   float4 sv_position : SV_Position;
 };
 
 // Output of the fragment shader
-struct PSOut
+struct PSout
 {
   float4 color : SV_Target;
 };
@@ -43,12 +49,13 @@ struct PSOut
 
 // Vertex  Shader
 [shader("vertex")]
-VSOut vertexMain(VSIn input)
+VSout vertexMain(VSin input)
 {
-  VSOut output;
+  VSout output;
 
-  output.uv = float2((input.vertexId << 1) & 2, input.vertexId & 2);
-  output.sv_position = float4(output.uv * 2.0f - 1.0f, 0.0f, 1.0f);
+  float2 uv = float2((input.vertexId << 1) & 2, input.vertexId & 2);
+  output.stage.uv = uv;
+  output.sv_position = float4(uv * 2.0f - 1.0f, 0.0f, 1.0f);
   
   return output;
 }
@@ -56,9 +63,9 @@ VSOut vertexMain(VSIn input)
 
 // Fragment Shader
 [shader("pixel")]
-PSOut fragmentMain(VSOut input)
+PSout fragmentMain(PSin input)
 {
-  PSOut output;
+  PSout output;
   float2 uv = input.uv;
   
   uv.x *= pushConst.aspectRatio;

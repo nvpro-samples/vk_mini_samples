@@ -53,12 +53,6 @@ const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::
 const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
 #elif USE_SLANG
 #include "_autogen/raster_slang.h"
-#define USE_SEPARATE_SLANG 1
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-
 #else
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
@@ -201,7 +195,7 @@ public:
     pstate.rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
     nvvk::GraphicsPipelineGenerator pgen(m_ctx->m_device, m_pipelineLayout, prend_info, pstate);
-#if USE_SLANG && !USE_SEPARATE_SLANG
+#if USE_SLANG
     VkShaderModule shaderModule = nvvk::createShaderModule(m_ctx->m_device, &rasterSlang[0], sizeof(rasterSlang));
     pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
     pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
@@ -210,7 +204,7 @@ public:
     pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
 #endif
     m_pipeline = pgen.createPipeline();
-#if USE_SLANG && !USE_SEPARATE_SLANG
+#if USE_SLANG
     vkDestroyShaderModule(m_ctx->m_device, shaderModule, nullptr);
 #endif
   }

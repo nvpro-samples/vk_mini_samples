@@ -52,7 +52,7 @@
 #include "nvvk/images_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 
 
 class SolidColor : public nvvkhl::IAppElement
@@ -199,7 +199,7 @@ int main(int argc, char** argv)
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
   // Create this example
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
   app->addElement(test);
   app->addElement(std::make_shared<SolidColor>());
 

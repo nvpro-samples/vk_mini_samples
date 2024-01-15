@@ -55,7 +55,7 @@ namespace fs = std::filesystem;
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/glsl_compiler.hpp"
 #include "nvvkhl/pipeline_container.hpp"
@@ -604,7 +604,7 @@ int main(int argc, char** argv)
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
   app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
   app->addElement(std::make_shared<TinyShaderToy>());

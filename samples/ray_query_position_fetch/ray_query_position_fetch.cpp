@@ -35,7 +35,7 @@
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
@@ -453,7 +453,7 @@ auto main(int argc, char** argv) -> int
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
   // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
   // Add all application elements
   app->addElement(test);

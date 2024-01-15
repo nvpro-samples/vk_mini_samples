@@ -53,7 +53,7 @@
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_logger.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "shaders/device_host.h"
 #include "nvvk/error_vk.hpp"
@@ -66,11 +66,6 @@ const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::
 const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
 #elif USE_SLANG
 #include "_autogen/raster_slang.h"
-#define USE_SEPARATE_SLANG 0
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
 #else
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
@@ -222,7 +217,7 @@ private:
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
-#if(USE_SLANG && !USE_SEPARATE_SLANG)
+#if(USE_SLANG)
     VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
     pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
     pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
@@ -234,7 +229,7 @@ private:
     m_graphicsPipeline = pgen.createPipeline();
     m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
     pgen.clearShaders();
-#if(USE_SLANG && !USE_SEPARATE_SLANG)
+#if(USE_SLANG)
     vkDestroyShaderModule(m_device, shaderModule, nullptr);
 #endif
   }
@@ -361,7 +356,7 @@ int main(int argc, char** argv)
   //app->getContext()->setDebugSeverityFilterMask(VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT);
 
   // Create a view/render
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
   app->addElement(test);
   app->addElement(std::make_unique<nvvkhl::ElementLogger>(&g_logger, true));  // Add logger window
   app->addElement(std::make_shared<ShaderPrintf>());

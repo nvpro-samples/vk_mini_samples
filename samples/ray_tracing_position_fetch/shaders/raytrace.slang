@@ -58,29 +58,39 @@ struct HitState
 };
 
 // Adding capability and extension for KHR_ray_tracing_position_fetch
-// * http://htmlpreview.github.io/?https://github.com/KhronosGroup/SPIRV-Registry/blob/main/extensions/KHR/SPV_KHR_ray_tracing_position_fetch.html
-// * https://github.com/KhronosGroup/SPIRV-Headers/blob/main/include/spirv/unified1/spirv.json
-
-// Adding access to the vertex positions stored in the acceleration structure. 
-//#define BuiltIn 11
-//#define RayTracingPositionFetchKHR 5336
-//#define HitTriangleVertexPositionsKHR 5391
-//
-//static float3 gl_HitTriangleVertexPositions[3];
-//
-//[[vk::ext_extension("SPV_KHR_ray_tracing_position_fetch")]]
-//[[vk::ext_capability(RayTracingPositionFetchKHR)]] 
+[ForceInline]
+__glsl_extension(GL_EXT_ray_tracing_position_fetch)
+float3 getHitTriangleVertexPositions(int ID)
+{
+  __target_switch
+  {
+  case glsl:
+    __intrinsic_asm "gl_HitTriangleVertexPositionsEXT[$0]";
+  case spirv:
+    return spirv_asm {
+      OpExtension "SPV_KHR_ray_tracing_position_fetch";
+      OpCapability RayTracingPositionFetchKHR;
+      
+      %pv3float = OpTypePointer Input $$float3;
+      %addr = OpAccessChain %pv3float builtin(HitTriangleVertexPositionsKHR:float3[3]) $ID;
+      result:$$float3 = OpLoad %addr;
+      };
+  default:
+    return float3(0, 0, 0);
+  }
+}
+  
 
 //-----------------------------------------------------------------------
 // Return hit position, normal and geometric normal in world space
-HitState getHitState(int meshID, int primitiveID, float3 barycentrics, float3 hitTriangleVertexPositions[3])
+HitState getHitState(int meshID, int primitiveID, float3 barycentrics)
 {
   HitState hit;
   
   // Position
-  const float3 pos0 = hitTriangleVertexPositions[0]; // #FETCH
-  const float3 pos1 = hitTriangleVertexPositions[1];
-  const float3 pos2 = hitTriangleVertexPositions[2];
+  const float3 pos0 = getHitTriangleVertexPositions(0); // #FETCH
+  const float3 pos1 = getHitTriangleVertexPositions(1);
+  const float3 pos2 = getHitTriangleVertexPositions(2);
   const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
   hit.pos = float3(mul(ObjectToWorld3x4(), float4(position, 1.0)));
 
@@ -165,20 +175,12 @@ void rgenMain()
 //-----------------------------------------------------------------------
 struct MyAttributes
 {
-  [[vk::ext_decorate(BuiltIn, HitTriangleVertexPositionsKHR)]] float3 HitTriangleVertexPositions[3];
   BuiltInTriangleIntersectionAttributes intersect;
 };
 
 [shader("closesthit")]
 void rchitMain(inout HitPayload payload, in MyAttributes attr)
 {
-
-  gl_HitTriangleVertexPositions[0] = attr.HitTriangleVertexPositions[0];
-  gl_HitTriangleVertexPositions[1] = attr.HitTriangleVertexPositions[1];
-  gl_HitTriangleVertexPositions[2] = attr.HitTriangleVertexPositions[2];
-  
-  //BuiltInTriangleIntersectionAttributes attr;
-  //initializeArr();
   float2 bary = attr.intersect.barycentrics;
   float3 barycentrics = float3(1 - bary.x - bary.y, bary.x, bary.y);
   uint instanceID = InstanceIndex();
@@ -195,13 +197,7 @@ void rchitMain(inout HitPayload payload, in MyAttributes attr)
   float3 albedo = materials[iInfo.materialID].xyz;
   
   // Hit information: position, normal, geo normal
-  HitState hitState = getHitState(meshID, primitiveID, barycentrics, gl_HitTriangleVertexPositions);
-
-  //payload.color = albedo;
-  //payload.color = frac(hitState.pos);
-  //payload.color = hitState.nrm;
-  payload.color = frac(gl_HitTriangleVertexPositions[0]);
-  return;
+  HitState hitState = getHitState(meshID, primitiveID, barycentrics);
   
   // Send a ray toward light and return true if there was no hit between P and L
   bool visible = shadowRay(hitState.pos, L);

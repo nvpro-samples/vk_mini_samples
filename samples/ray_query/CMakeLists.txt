@@ -10,7 +10,7 @@ create_sample(ray_query
     ${SHD_DIR}/device_host.h
   SHADER_HLSL
     ${SHD_DIR}/ray_query.hlsl 
-  # SHADER_SLANG
-  #   ${SHD_DIR}/ray_query.slang
+  SHADER_SLANG
+    ${SHD_DIR}/ray_query.slang
 )
 

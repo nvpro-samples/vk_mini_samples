@@ -43,7 +43,7 @@
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvk/shaders_vk.hpp"
@@ -452,7 +452,7 @@ int main(int argc, char** argv)
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
   // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
   // Add all application elements
   app->addElement(test);

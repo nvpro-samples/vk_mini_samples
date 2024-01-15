@@ -53,7 +53,7 @@
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
-#include "nvvkhl/element_testing.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
@@ -533,7 +533,7 @@ int main(int argc, char** argv)
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
   // Create a view/render
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
   app->addElement(test);
   app->addElement(std::make_shared<ImageViewer>());
 

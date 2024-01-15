@@ -30,12 +30,26 @@
 
 #define WORKGROUP_SIZE 16
 
+struct PrimMeshInfoSlang
+{
+    ConstBufferPointer<Vertex> vertexAddress;
+    ConstBufferPointer<uint> indexAddress;
+};
+    
+struct SceneDescriptionSlang
+{
+    ConstBufferPointer<Material> materialAddress;
+    ConstBufferPointer<InstanceInfo> instInfoAddress;
+    ConstBufferPointer<PrimMeshInfoSlang> primInfoAddress;
+    Light light;
+};
+
 // Bindings
 [[vk::push_constant]]  ConstantBuffer<PushConstant> pushConst;
 [[vk::binding(B_tlas)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
 [[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(B_sceneDesc)]] StructuredBuffer<SceneDescription> sceneDesc;
+[[vk::binding(B_sceneDesc)]] StructuredBuffer<SceneDescriptionSlang> sceneDesc;
 
 
 
@@ -60,26 +74,6 @@ struct HitState
   float3 geonrm;
 };
 
-
-// Return the Vertex structure, from a buffer address and an offset
-Vertex getVertex(uint64_t vertAddress, uint64_t offset)
-{
-  Vertex v;
-  v.position = vk::RawBufferLoad <float3 > (vertAddress + offset);
-  v.normal = vk::RawBufferLoad <float3 > (vertAddress + offset + sizeof(float3));
-  v.t = vk::RawBufferLoad <float2 > (vertAddress + offset + (2 * sizeof(float3)));
-  return v;
-}
-
-Material getMaterial(uint64_t materialAddress, uint64_t offset)
-{
-  Material m;
-  m.albedo = vk::RawBufferLoad <float3 > (materialAddress + offset);
-  m.roughness = vk::RawBufferLoad <float > (materialAddress + offset + sizeof(float3));
-  m.metallic = vk::RawBufferLoad <float > (materialAddress + offset + sizeof(float3)+sizeof(float));
-  return m;
-}
-
 //-----------------------------------------------------------------------
 // Return hit position, normal and geometric normal in world space
 HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3x4 objectToWorld3x4, int meshID, int primitiveID, float3 worldRayDirection)
@@ -88,18 +82,18 @@ HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3
   
   // Barycentric coordinate on the triangle
   const vec3 barycentrics = vec3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
-  
-  uint64_t primOffset = sizeof(PrimMeshInfo) * meshID;
-  uint64_t vertAddress = vk::RawBufferLoad < uint64_t > (sceneDesc[0].primInfoAddress + primOffset);
-  uint64_t indexAddress = vk::RawBufferLoad < uint64_t > (sceneDesc[0].primInfoAddress + primOffset + sizeof(uint64_t));
-
-  uint64_t indexOffset = sizeof(uint3) * primitiveID;
-  uint3 triangleIndex = vk::RawBufferLoad <uint3 > (indexAddress + indexOffset);
+ 
+  PrimMeshInfoSlang pimInfo = sceneDesc[0].primInfoAddress[meshID];
+  uint tIndex0 = pimInfo.indexAddress[primitiveID*3+0];
+  uint tIndex1 = pimInfo.indexAddress[primitiveID*3+1];
+  uint tIndex2 = pimInfo.indexAddress[primitiveID*3+2];
+  uint3 triangleIndex = uint3(tIndex0, tIndex1, tIndex2);
+  //uint3 triangleIndex = pimInfo.indexAddress[primitiveID];
   
   // Vertex and indices of the primitive
-  Vertex v0 = getVertex(vertAddress, sizeof(Vertex) * triangleIndex.x);
-  Vertex v1 = getVertex(vertAddress, sizeof(Vertex) * triangleIndex.y);
-  Vertex v2 = getVertex(vertAddress, sizeof(Vertex) * triangleIndex.z);
+  Vertex v0 = pimInfo.vertexAddress[triangleIndex.x];
+  Vertex v1 = pimInfo.vertexAddress[triangleIndex.y];
+  Vertex v2 = pimInfo.vertexAddress[triangleIndex.z];
 
   // Position
   const float3 pos0 = v0.position.xyz;
@@ -209,10 +203,8 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     }
 
     // Retrieve the Instance buffer information
-    uint64_t materialIDOffest = sizeof(float4x4);
-    uint64_t instOffset = sizeof(InstanceInfo) * payload.instanceIndex;
-    int matID = vk::RawBufferLoad < int > (sceneDesc[0].instInfoAddress + instOffset + materialIDOffest);
-    
+    InstanceInfo instInfo = sceneDesc[0].instInfoAddress[payload.instanceIndex];
+
     float3 lightPos = getRandomPosition(pushConst.light.position, pushConst.light.radius, float2(rand(seed), rand(seed)));
     float distanceToLight = length(lightPos - payload.pos);
         
@@ -221,17 +213,17 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     float3 L = normalize(lightPos - payload.pos);
    
     // Retrieve the material color
-    uint64_t matOffset = sizeof(Material) * matID;
-    Material mat = getMaterial(sceneDesc[0].materialAddress, matOffset);
+    Material mat = sceneDesc[0].materialAddress[instInfo.materialID];
+    
 
     // Setting up the material
     PbrMaterial pbrMat;
     pbrMat.albedo = float4(mat.albedo, 1);
     pbrMat.roughness = mat.roughness;
-    pbrMat.metallic = mat.metallic;
+    pbrMat.metallic =  mat.metallic;
     pbrMat.normal = payload.nrm;
     pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
-    pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, mat.metallic);
+    pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pbrMat.metallic);
 
     float3 contrib = float3(0, 0, 0);
 
@@ -343,7 +335,7 @@ void computeMain(uint3 threadIdx : SV_DispatchThreadID)
     return;
   
   // Initialize the random number
-  uint seed = xxhash32(uint3(launchID.xy, pushConst.frame));
+  uint seed = xxhash32(uint3(uint2(launchID.xy), pushConst.frame));
 
   // Sampling n times the pixel
   float3 pixel_color = float3(0.0F, 0.0F, 0.0F);

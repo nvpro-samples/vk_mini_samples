@@ -7,6 +7,7 @@ add_subdirectory(barycentric_wireframe)
 endif()
 
 add_subdirectory(compute_only)
+add_subdirectory(gpu_monitor)
 add_subdirectory(image_ktx)
 add_subdirectory(image_viewer)
 add_subdirectory(mm_displacement)
@@ -14,15 +15,15 @@ add_subdirectory(mm_opacity)
 add_subdirectory(msaa)
 add_subdirectory(offscreen)
 
-if(NOT USE_SLANG) # No buffer reference
+#if(NOT USE_SLANG) # No buffer reference
 add_subdirectory(ray_query)
-endif()
+#endif()
 
 if(NOT USE_SLANG AND NOT USE_HLSL) # Only supported with GLSL
 add_subdirectory(ray_query_position_fetch)
 endif()
 
-if(NOT USE_SLANG AND NOT USE_HLSL) # Not supported
+if(NOT USE_HLSL) # Not supported
 add_subdirectory(ray_tracing_position_fetch)
 endif()
 

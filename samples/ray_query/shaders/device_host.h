@@ -67,6 +67,9 @@ struct Material
   vec3  albedo;
   float roughness;
   float metallic;
+  float _pad0;
+  float _pad1;
+  float _pad2;
 };
 
 // From primitive
@@ -87,6 +90,9 @@ struct InstanceInfo
 {
   mat4 transform;
   int  materialID;
+  int  _pad0;
+  int  _pad1;
+  int  _pad2;
 };
 
 struct SceneDescription

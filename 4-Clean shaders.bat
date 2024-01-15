@@ -1,12 +1,19 @@
 @echo off
+setlocal enabledelayedexpansion
 
-pushd ..
-FOR /D /R %%G IN ("*") DO (  rem Iterate through all subfolders
-  IF NOT %%G == ".git" CD %%G
-  IF EXIST _autogen (
-    rd /q /s _autogen
-    echo "Deleted in " %%G
-  )
+set "targetFolder=%CD%"  REM Set the target folder to the current directory or provide a specific path
+
+echo Deleting _autogen folders recursively in %targetFolder%...
+
+for /r "%targetFolder%" %%d in (_autogen) do (
+    if exist "%%d" (
+        echo Deleting: "%%d"
+        rmdir /s /q "%%d"
+    )
 )
-popd
+
+echo Deletion completed.
+
+endlocal
+
 pause

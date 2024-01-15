@@ -12,3 +12,11 @@ create_sample(tiny_shader_toy
     ${SHD_DIR}/common.glsl
     ${SHD_DIR}/image.glsl
 )
+
+# Install - copying the media directory
+install(DIRECTORY "shaders" 
+        CONFIGURATIONS Release 
+        DESTINATION "bin_${ARCH}/tiny_shader_toy")
+install(DIRECTORY "shaders" 
+        CONFIGURATIONS Debug 
+        DESTINATION "bin_${ARCH}_debug/tiny_shader_toy")

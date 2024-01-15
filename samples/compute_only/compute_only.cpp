@@ -23,7 +23,7 @@
 #include "nvvkhl/application.hpp"      // For Application and IAppElememt
 #include "nvvkhl/gbuffer.hpp"          // G-Buffer helper
 #include "nvvkhl/shaders/dh_comp.h"    // Workgroup size and count
-#include "nvvkhl/element_testing.hpp"  // For testing
+#include "nvvkhl/element_benchmark_parameters.hpp"  // For testing
 
 #include "shaders/device_host.h"  // Shared between host and device
 
@@ -185,7 +185,7 @@ int main(int argc, char** argv)
   spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
   auto app  = std::make_unique<nvvkhl::Application>(spec);           // Create the application
-  auto test = std::make_shared<nvvkhl::ElementTesting>(argc, argv);  // Create the test framework
+  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);  // Create the test framework
   app->addElement(test);                                             // Add the test element (--test ...)
   app->addElement(std::make_shared<ComputeOnlyElement>());           // Add our sample to the application
   app->run();  // Loop infinitely, and call IAppElement virtual functions at each frame
