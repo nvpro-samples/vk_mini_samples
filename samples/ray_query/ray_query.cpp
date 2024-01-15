@@ -33,21 +33,26 @@
 #include "imgui/imgui_helper.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/buffers_vk.hpp"
-#include "nvvk/images_vk.hpp"
+#include "nvvk/commands_vk.hpp"
+#include "nvvk/debug_util_vk.hpp"
+#include "nvvk/descriptorsets_vk.hpp"
+#include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/pipeline_vk.hpp"
 #include "nvvk/raytraceKHR_vk.hpp"
 #include "nvvk/sbtwrapper_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
 
 #include "shaders/dh_bindings.h"
 #include "shaders/device_host.h"
+#include "nvvkhl/shaders/dh_sky.h"
 
 #if USE_HLSL
 #include "_autogen/ray_query_computeMain.spirv.h"
@@ -60,6 +65,8 @@ const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_querySlang), std::en
 const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_query_comp), std::end(ray_query_comp)};
 #endif
 
+#include "nvvk/specialization.hpp"
+#include "nvvk/images_vk.hpp"
 
 #define GROUP_SIZE 16  // Same group size as in compute shader
 
