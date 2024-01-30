@@ -43,7 +43,11 @@
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/shaders/dh_comp.h"
-#include "shaders/device_host.h"
+
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 
 #if USE_HLSL
@@ -77,7 +81,7 @@ class Texture3dSample : public nvvkhl::IAppElement
     bool                 useGpu         = true;
     VkFilter             magFilter      = VK_FILTER_LINEAR;
     VkSamplerAddressMode addressMode    = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    PerlinSettings       perlin         = PerlinDefaultValues();
+    DH::PerlinSettings   perlin         = DH::PerlinDefaultValues();
     int                  headlight      = 1;
     glm::vec3            toLight        = {1.F, 1.F, 1.F};
     int                  steps          = 100;
@@ -103,7 +107,7 @@ public:
     m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
-    m_settings.perlin = PerlinDefaultValues();
+    m_settings.perlin = DH::PerlinDefaultValues();
 
     createComputePipeline();
     createTexture();
@@ -184,7 +188,7 @@ public:
         switch(preset)
         {
           case 0:
-            m_settings.perlin         = PerlinDefaultValues();
+            m_settings.perlin         = DH::PerlinDefaultValues();
             m_settings.powerOfTwoSize = 6;
             m_settings.threshold      = 0.05F;
             break;
@@ -279,7 +283,7 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo        finfo{};
+    DH::FrameInfo    finfo{};
     const glm::vec2& clip = CameraManip.getClipPlanes();
     finfo.view            = CameraManip.getMatrix();
     finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
@@ -287,7 +291,7 @@ public:
     finfo.camPos    = eye;
     finfo.headlight = m_settings.headlight;
     finfo.toLight   = m_settings.toLight;
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // Drawing the primitives in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -305,13 +309,13 @@ public:
 
     {
       // Push constant information
-      PushConstant pushConstant{};
+      DH::PushConstant pushConstant{};
       pushConstant.threshold = m_settings.threshold;
       pushConstant.steps     = m_settings.steps;
       pushConstant.color     = m_settings.surfaceColor;
       pushConstant.transfo   = glm::mat4(1);  // Identity
       vkCmdPushConstants(cmd, m_dsetRaster->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                         0, sizeof(PushConstant), &pushConstant);
+                         0, sizeof(DH::PushConstant), &pushConstant);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -456,7 +460,7 @@ private:
     d->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
     m_dutil->DBG_NAME(d->getLayout());
 
-    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PerlinSettings)};
+    VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(DH::PerlinSettings)};
 
     d->initPipeLayout(1, &push_constant_ranges);
     m_dutil->DBG_NAME(d->getPipeLayout());
@@ -479,11 +483,11 @@ private:
 
   void runCompute(VkCommandBuffer cmd, const VkExtent3D& size)
   {
-    uint32_t       realSize = m_settings.getSize();
-    auto           sdbg     = m_dutil->DBG_SCOPE(cmd);
-    PerlinSettings perlin   = m_settings.perlin;
+    uint32_t           realSize = m_settings.getSize();
+    auto               sdbg     = m_dutil->DBG_SCOPE(cmd);
+    DH::PerlinSettings perlin   = m_settings.perlin;
     perlin.frequency /= float(realSize);
-    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PerlinSettings), &perlin);
+    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(DH::PerlinSettings), &perlin);
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_dsetCompute->getPipeLayout(), 0,
                               static_cast<uint32_t>(m_dsetCompWrites.size()), m_dsetCompWrites.data());
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
@@ -517,7 +521,7 @@ private:
     m_dutil->DBG_NAME(m_indices.buffer);
 
     // Frame information: camera matrix
-    m_frameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_frameInfo.buffer);
 
@@ -531,7 +535,7 @@ private:
     m_dsetRaster->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(PushConstant)};
+                                                      sizeof(DH::PushConstant)};
     m_dsetRaster->initPipeLayout(1, &push_constant_ranges);
 
     // Descriptors writes

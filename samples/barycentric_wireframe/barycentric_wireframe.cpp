@@ -56,7 +56,11 @@
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvk/shaders_vk.hpp"
 
+namespace DH {
+using namespace glm;
 #include "shaders/device_host.h"
+}  // namespace DH
+
 #include "nvvk/images_vk.hpp"
 #include "imgui/imgui_helper.h"
 
@@ -76,7 +80,7 @@ const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(r
 
 
 // thickness;color;thicknessVar;smoothing;screenSpace;backFaceColor;enableDash;dashRepeats;dashLength;onlyWire;
-std::vector<WireframeSettings> presets{
+std::vector<DH::WireframeSettings> presets{
     {1.0F, {0.8F, 0.F, 0.F}, {1.0F, 1.0F}, 1.0F, 1, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 0},       // default
     {1.0F, {0.F, 0.8F, 0.F}, {1.0F, 1.0F}, 0.5F, 1, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 1},       // Wire dot
     {0.1F, {0.9F, 0.9F, 0.F}, {0.0F, 1.0F}, 0.1F, 0, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 0},      // Star
@@ -186,15 +190,15 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo        finfo{};
+    DH::FrameInfo    finfo{};
     const glm::vec2& clip = CameraManip.getClipPlanes();
     finfo.view            = CameraManip.getMatrix();
     finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.camPos = eye;
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
-    vkCmdUpdateBuffer(cmd, m_bSettings.buffer, 0, sizeof(WireframeSettings), &m_settings);
+    vkCmdUpdateBuffer(cmd, m_bSettings.buffer, 0, sizeof(DH::WireframeSettings), &m_settings);
 
     // Drawing the primitives in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -215,7 +219,7 @@ public:
       m_pushConst.color      = m_materials[n.material].color;
       m_pushConst.clearColor = glm::make_vec4(m_clearColor.float32);
       vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(PushConstant), &m_pushConst);
+                         sizeof(DH::PushConstant), &m_pushConst);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -267,7 +271,7 @@ private:
     m_dset->initPool(1);
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(PushConstant)};
+                                                      sizeof(DH::PushConstant)};
     m_dset->initPipeLayout(1, &push_constant_ranges);
 
     // Writing to descriptors
@@ -332,11 +336,11 @@ private:
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }
 
-    m_frameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_frameInfo.buffer);
 
-    m_bSettings = m_alloc->createBuffer(sizeof(WireframeSettings), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bSettings = m_alloc->createBuffer(sizeof(DH::WireframeSettings), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bSettings.buffer);
 
@@ -396,12 +400,12 @@ private:
   std::vector<Material>           m_materials;
 
   // Pipeline
-  PushConstant m_pushConst{};                        // Information sent to the shader
-  VkPipeline   m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int          m_currentObject    = 0;
+  DH::PushConstant m_pushConst{};                        // Information sent to the shader
+  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  int              m_currentObject    = 0;
 
-  WireframeSettings m_settings = {};
-  nvvk::Buffer      m_bSettings;
+  DH::WireframeSettings m_settings = {};
+  nvvk::Buffer          m_bSettings;
 };
 
 //////////////////////////////////////////////////////////////////////////

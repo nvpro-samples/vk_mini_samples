@@ -17,13 +17,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
+#include "common/shaders/constants.hlsli"
+#include "common/shaders/ggx.hlsli"
+#include "common/shaders/glsl_type.slang"
+#include "common/shaders/sky.hlsli"
 #include "device_host.h"
 #include "dh_bindings.h"
-
-#include "sky.hlsli"
-#include "ggx.hlsli"
-#include "constants.hlsli"
 
 #define MISS_DEPTH 1000
 
@@ -57,29 +56,6 @@ struct HitState
   float3 geonrm;
 };
 
-// Adding capability and extension for KHR_ray_tracing_position_fetch
-[ForceInline]
-__glsl_extension(GL_EXT_ray_tracing_position_fetch)
-float3 getHitTriangleVertexPositions(int ID)
-{
-  __target_switch
-  {
-  case glsl:
-    __intrinsic_asm "gl_HitTriangleVertexPositionsEXT[$0]";
-  case spirv:
-    return spirv_asm {
-      OpExtension "SPV_KHR_ray_tracing_position_fetch";
-      OpCapability RayTracingPositionFetchKHR;
-      
-      %pv3float = OpTypePointer Input $$float3;
-      %addr = OpAccessChain %pv3float builtin(HitTriangleVertexPositionsKHR:float3[3]) $ID;
-      result:$$float3 = OpLoad %addr;
-      };
-  default:
-    return float3(0, 0, 0);
-  }
-}
-  
 
 //-----------------------------------------------------------------------
 // Return hit position, normal and geometric normal in world space
@@ -88,9 +64,9 @@ HitState getHitState(int meshID, int primitiveID, float3 barycentrics)
   HitState hit;
   
   // Position
-  const float3 pos0 = getHitTriangleVertexPositions(0); // #FETCH
-  const float3 pos1 = getHitTriangleVertexPositions(1);
-  const float3 pos2 = getHitTriangleVertexPositions(2);
+  const float3 pos0 = HitTriangleVertexPosition(0); // #FETCH
+  const float3 pos1 = HitTriangleVertexPosition(1);
+  const float3 pos2 = HitTriangleVertexPosition(2);
   const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
   hit.pos = float3(mul(ObjectToWorld3x4(), float4(position, 1.0)));
 

@@ -17,9 +17,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "common/shaders/constants.hlsli"
+#include "common/shaders/functions.hlsli"
+#include "common/shaders/glsl_type.slang"
 #include "device_host.h"
-#include "functions.hlsli"
-#include "constants.hlsli"
 
 // Per-vertex attributes to be assembled from bound vertex buffers.
 struct VSin

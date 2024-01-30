@@ -17,16 +17,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifdef __cplusplus
-using mat4 = glm::mat4;
-using vec4 = glm::vec4;
-using vec3 = glm::vec3;
-#elif defined(__hlsl) || defined(__slang)
-#define mat4 float4x4
-#define vec4 float4
-#define vec3 float3
-#else
-#define static
+#ifdef __glsl
 #define inline
 #endif
 

@@ -19,14 +19,13 @@
 
 // https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html#rayquery
 
-
+#include "common/shaders/constants.hlsli"
+#include "common/shaders/ggx.hlsli"
+#include "common/shaders/glsl_type.slang"
+#include "common/shaders/random.hlsli"
+#include "common/shaders/sky.hlsli"
 #include "device_host.h"
 #include "dh_bindings.h"
-
-#include "sky.hlsli"
-#include "ggx.hlsli"
-#include "constants.hlsli"
-#include "random.hlsli"
 
 #define WORKGROUP_SIZE 16
 

@@ -8,5 +8,7 @@ create_sample(ray_query_position_fetch
     ${SHD_DIR}/ray_query.comp
   SHADER_HEADERS
     ${SHD_DIR}/dh_bindings.h
+  SHADER_SLANG
+    ${SHD_DIR}/ray_query.slang
 )
 

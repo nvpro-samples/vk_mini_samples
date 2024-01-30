@@ -18,15 +18,6 @@
  */
 
 
-#ifdef __cplusplus
-using mat4 = glm::mat4;
-using vec2 = glm::vec2;
-#elif defined(__hlsl)
-#define mat4 float4x4
-#define vec2 float2
-#endif  // __cplusplus
-
-
 struct FrameInfo
 {
   mat4     mpv;

@@ -51,10 +51,15 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
+#include "nvvkhl/shaders/dh_sky.h"
 
 #include "shaders/dh_bindings.h"
-#include "shaders/device_host.h"
-#include "nvvkhl/shaders/dh_sky.h"
+
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
+
 
 #if USE_HLSL
 #include "_autogen/pathtrace_rgenMain.spirv.h"
@@ -228,15 +233,15 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo   finfo{};
-    const auto& clip = CameraManip.getClipPlanes();
-    finfo.view       = CameraManip.getMatrix();
-    finfo.proj       = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    DH::FrameInfo finfo{};
+    const auto&   clip = CameraManip.getClipPlanes();
+    finfo.view         = CameraManip.getMatrix();
+    finfo.proj         = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.projInv = glm::inverse(finfo.proj);
     finfo.viewInv = glm::inverse(finfo.view);
     finfo.camPos  = eye;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // Update the sky
     vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);
@@ -256,7 +261,7 @@ public:
     std::vector<VkDescriptorSet> descSets{m_rtSet->getSet()};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipe.plines[0]);
     pushDescriptorSet(cmd);
-    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &m_pushConst);
+    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
 
     const auto& regions = m_sbt.getRegions();
     const auto& size    = m_app->getViewportSize();
@@ -295,9 +300,9 @@ private:
     m_materials.reserve(num_materials);
     for(int i = 0; i < num_materials; i++)
     {
-      const vec3 freq = vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      vec3       v    = static_cast<vec3>(sin(freq) * 0.5F + 0.5F);
-      m_materials.push_back({vec4(v, 1)});
+      const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
+      glm::vec3       v    = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
+      m_materials.push_back({glm::vec4(v, 1)});
     }
 
     auto inRange = [](int a, int b, int v0 = 10 - 3, int v1 = 10 + 2) {
@@ -321,9 +326,9 @@ private:
             auto& n       = m_nodes.emplace_back();
             n.mesh        = 0;
             n.material    = rand() % num_materials;  // (i * num_obj * num_obj) + (j * num_obj) + (k);
-            n.translation = vec3(-(static_cast<float>(num_obj) / 2.F) + static_cast<float>(i),
-                                 -(static_cast<float>(num_obj) / 2.F) + static_cast<float>(j),
-                                 -(static_cast<float>(num_obj) / 2.F) + static_cast<float>(k));
+            n.translation = glm::vec3(-(static_cast<float>(num_obj) / 2.F) + static_cast<float>(i),
+                                      -(static_cast<float>(num_obj) / 2.F) + static_cast<float>(j),
+                                      -(static_cast<float>(num_obj) / 2.F) + static_cast<float>(k));
 
             n.translation *= obj_spacing;
           }
@@ -336,7 +341,7 @@ private:
     m_nodes.shrink_to_fit();
 
     // Adding a plane & material
-    m_materials.push_back({vec4(.7F, .7F, .7F, 1.0F)});
+    m_materials.push_back({glm::vec4(.7F, .7F, .7F, 1.0F)});
     m_meshes.emplace_back(nvh::createPlane(10, 100, 100));
     auto& n       = m_nodes.emplace_back();
     n.mesh        = static_cast<int>(m_meshes.size()) - 1;
@@ -393,7 +398,7 @@ private:
     }
 
     // Create the buffer of the current frame, changing at each frame
-    m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
@@ -407,10 +412,10 @@ private:
     m_dutil->DBG_NAME(m_bHeatStats.buffer);
 
     // Primitive instance information
-    std::vector<InstanceInfo> instInfo;
+    std::vector<DH::InstanceInfo> instInfo;
     for(auto& node : m_nodes)
     {
-      InstanceInfo info{};
+      DH::InstanceInfo info{};
       info.transform  = node.localMatrix();
       info.materialID = node.material;
       instInfo.emplace_back(info);
@@ -599,7 +604,7 @@ private:
     shaderGroups.push_back(group);
 
     // Push constant: we want to be able to update constants used by the shaders
-    VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant)};
+    VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant)};
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
@@ -769,10 +774,10 @@ private:
   // Data and setting
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;
-  std::vector<Material>           m_materials;
+  std::vector<DH::Material>       m_materials;
 
   // Pipeline
-  PushConstant     m_pushConst{};                        // Information sent to the shader
+  DH::PushConstant m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int              m_frame{0};

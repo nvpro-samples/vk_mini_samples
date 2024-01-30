@@ -17,13 +17,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
+#include "common/shaders/glsl_type.slang"
 #include "device_host.h"
 #include "dh_bindings.h"
 
-#include "sky.hlsli"
-#include "ggx.hlsli"
-#include "constants.hlsli"
+#include "common/shaders/sky.hlsli"
+#include "common/shaders/ggx.hlsli"
+#include "common/shaders/constants.hlsli"
 
 #define MISS_DEPTH 1000
 

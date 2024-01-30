@@ -56,10 +56,14 @@
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
+#include "nvvkhl/shaders/dh_sky.h"
 
 #include "shaders/dh_bindings.h"
-#include "shaders/device_host.h"
-#include "nvvkhl/shaders/dh_sky.h"
+
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 //#undef USE_HLSL
 
@@ -183,7 +187,7 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo        finfo{};
+    DH::FrameInfo    finfo{};
     const glm::vec2& clip = CameraManip.getClipPlanes();
     finfo.view            = CameraManip.getMatrix();
     finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
@@ -191,7 +195,7 @@ public:
     finfo.projInv = glm::inverse(finfo.proj);
     finfo.viewInv = glm::inverse(finfo.view);
     finfo.camPos  = eye;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // Update the sky
     vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);
@@ -201,7 +205,7 @@ public:
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipe.plines[0]);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipe.layout, 0, (uint32_t)desc_sets.size(),
                             desc_sets.data(), 0, nullptr);
-    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &m_pushConst);
+    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
 
     const std::array<VkStridedDeviceAddressRegionKHR, 4>& regions = m_sbt.getRegions();
     const VkExtent2D&                                     size    = m_app->getViewportSize();
@@ -225,9 +229,9 @@ private:
     // Materials (colorful)
     for(int i = 0; i < num_meshes; i++)
     {
-      const vec3 freq = vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
-      const vec3 v    = static_cast<vec3>(sin(freq) * 0.5F + 0.5F);
-      m_materials.push_back({vec4(v, 1)});
+      const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
+      const glm::vec3 v    = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
+      m_materials.push_back({glm::vec4(v, 1)});
     }
 
     // Instances
@@ -236,11 +240,11 @@ private:
       nvh::Node& n  = m_nodes.emplace_back();
       n.mesh        = i;
       n.material    = i;
-      n.translation = vec3(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
+      n.translation = glm::vec3(-(static_cast<float>(num_meshes) / 2.F) + static_cast<float>(i), 0.F, 0.F);
     }
 
     // Adding a plane & material
-    m_materials.push_back({vec4(.7F, .7F, .7F, 1.0F)});
+    m_materials.push_back({glm::vec4(.7F, .7F, .7F, 1.0F)});
     m_meshes.emplace_back(nvh::createPlane(10, 100, 100));
     nvh::Node& n  = m_nodes.emplace_back();
     n.mesh        = static_cast<int>(m_meshes.size()) - 1;
@@ -293,7 +297,7 @@ private:
     }
 
     // Create the buffer of the current frame, changing at each frame
-    m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
@@ -303,11 +307,11 @@ private:
     m_dutil->DBG_NAME(m_bSkyParams.buffer);
 
     // Primitive instance information
-    std::vector<InstanceInfo> inst_info;
+    std::vector<DH::InstanceInfo> inst_info;
     inst_info.reserve(m_nodes.size());
     for(const nvh::Node& node : m_nodes)
     {
-      InstanceInfo info{};
+      DH::InstanceInfo info{};
       info.transform  = node.localMatrix();
       info.materialID = node.material;
       inst_info.push_back(info);
@@ -499,7 +503,7 @@ private:
     shader_groups.push_back(group);
 
     // Push constant: we want to be able to update constants used by the shaders
-    const VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant)};
+    const VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant)};
 
     VkPipelineLayoutCreateInfo pipeline_layout_create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipeline_layout_create_info.pushConstantRangeCount = 1;
@@ -629,14 +633,14 @@ private:
   // Data and setting
   struct Material
   {
-    vec4 color{1.F};
+    glm::vec4 color{1.F};
   };
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;
   std::vector<Material>           m_materials;
 
   // Pipeline
-  PushConstant     m_pushConst{};                        // Information sent to the shader
+  DH::PushConstant m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
 

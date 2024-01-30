@@ -17,13 +17,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifdef __cplusplus
-using vec2 = glm::vec2;
-#elif defined(__hlsl) || defined(__slang)
-#define vec2 float2
-#endif  // __cplusplus
-
-
 struct PushConstant
 {
   vec2 mouseCoord;

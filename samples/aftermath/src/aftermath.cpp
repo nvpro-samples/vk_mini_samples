@@ -52,7 +52,10 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
+namespace DH {
+using namespace glm;
 #include "shaders/device_host.h"
+}  // namespace DH
 
 template <typename T>
 std::vector<uint32_t> changeMemoryLayout(const std::vector<T>& input)
@@ -350,14 +353,14 @@ public:
     glm::mat4 matp = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
     matp[1][1] *= -1;
 
-    FrameInfo finfo{};
+    DH::FrameInfo finfo{};
     finfo.time[0] = static_cast<float>(ImGui::GetTime());
     finfo.time[1] = 0;
     finfo.mpv     = matp * matv;
 
     finfo.resolution = glm::vec2(m_viewSize.width, m_viewSize.height);
     finfo.badOffset  = std::rand();  // 0xDEADBEEF;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     vkCmdBeginRendering(cmd, &r_info);
     m_app->setViewport(cmd);
@@ -482,7 +485,7 @@ private:
       m_dutil->DBG_NAME(m_indices.buffer);
 
       // Frame information
-      m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+      m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
       m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 

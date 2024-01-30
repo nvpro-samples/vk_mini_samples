@@ -17,6 +17,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "common/shaders/glsl_type.hlsli"
 #include "device_host.h"
 
 // Per-vertex attributes to be assembled from bound vertex buffers.

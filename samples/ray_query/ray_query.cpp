@@ -49,10 +49,14 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
+#include "nvvkhl/shaders/dh_sky.h"
 
 #include "shaders/dh_bindings.h"
-#include "shaders/device_host.h"
-#include "nvvkhl/shaders/dh_sky.h"
+
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 #if USE_HLSL
 #include "_autogen/ray_query_computeMain.spirv.h"
@@ -204,15 +208,15 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    const auto& clip = CameraManip.getClipPlanes();
-    FrameInfo   finfo{};
+    const auto&   clip = CameraManip.getClipPlanes();
+    DH::FrameInfo finfo{};
     finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.view    = CameraManip.getMatrix();
     finfo.projInv = glm::inverse(finfo.proj);
     finfo.viewInv = glm::inverse(finfo.view);
     finfo.camPos  = eye;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     m_pushConst.frame = m_frame;
     m_pushConst.light = m_light;
@@ -229,7 +233,7 @@ public:
     std::vector<VkDescriptorSet> descSets{m_rtSet->getSet()};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_rtPipe.plines[0]);
     pushDescriptorSet(cmd);
-    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &m_pushConst);
+    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
 
     const auto& size = m_app->getViewportSize();
     vkCmdDispatch(cmd, (size.width + (GROUP_SIZE - 1)) / GROUP_SIZE, (size.height + (GROUP_SIZE - 1)) / GROUP_SIZE, 1);
@@ -316,7 +320,7 @@ private:
                        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
-    std::vector<PrimMeshInfo> primInfo;
+    std::vector<DH::PrimMeshInfo> primInfo;
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
       auto& m    = m_bMeshes[i];
@@ -326,7 +330,7 @@ private:
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
 
       // To find the buffers of the mesh (buffer reference)
-      PrimMeshInfo info{
+      DH::PrimMeshInfo info{
           .vertexAddress = nvvk::getBufferDeviceAddress(m_device, m.vertices.buffer),
           .indexAddress  = nvvk::getBufferDeviceAddress(m_device, m.indices.buffer),
       };
@@ -338,15 +342,15 @@ private:
     m_dutil->DBG_NAME(m_bPrimInfo.buffer);
 
     // Create the buffer of the current frame, changing at each frame
-    m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
     // Primitive instance information
-    std::vector<InstanceInfo> instInfo;
+    std::vector<DH::InstanceInfo> instInfo;
     for(auto& node : m_nodes)
     {
-      InstanceInfo info{
+      DH::InstanceInfo info{
           info.transform  = node.localMatrix(),
           info.materialID = node.material,
       };
@@ -360,14 +364,14 @@ private:
     m_dutil->DBG_NAME(m_bMaterials.buffer);
 
     // Buffer references of all scene elements
-    SceneDescription sceneDesc{
+    DH::SceneDescription sceneDesc{
         .materialAddress = nvvk::getBufferDeviceAddress(m_device, m_bMaterials.buffer),
         .instInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bInstInfoBuffer.buffer),
         .primInfoAddress = nvvk::getBufferDeviceAddress(m_device, m_bPrimInfo.buffer),
         .light           = m_light,
     };
 
-    m_bSceneDesc = m_alloc->createBuffer(cmd, sizeof(SceneDescription), &sceneDesc,
+    m_bSceneDesc = m_alloc->createBuffer(cmd, sizeof(DH::SceneDescription), &sceneDesc,
                                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     m_dutil->DBG_NAME(m_bSceneDesc.buffer);
 
@@ -473,7 +477,7 @@ private:
     m_rtSet->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
 
     // pushing time
-    VkPushConstantRange        pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant)};
+    VkPushConstantRange        pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant)};
     VkPipelineLayoutCreateInfo plCreateInfo{
         .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount         = 1U,
@@ -485,7 +489,7 @@ private:
 
     VkComputePipelineCreateInfo cpCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .stage = nvvk::createShaderStageInfo(m_device, comp_shd, VK_SHADER_STAGE_COMPUTE_BIT, USE_GLSL ? "main" : "computeMain" ),
+        .stage = nvvk::createShaderStageInfo(m_device, comp_shd, VK_SHADER_STAGE_COMPUTE_BIT, USE_GLSL ? "main" : "computeMain"),
         .layout = m_rtPipe.layout,
     };
 
@@ -607,12 +611,12 @@ private:
   // Data and setting
   std::vector<nvh::PrimitiveMesh> m_meshes;
   std::vector<nvh::Node>          m_nodes;
-  std::vector<Material>           m_materials;
-  Light                           m_light = {};
+  std::vector<DH::Material>       m_materials;
+  DH::Light                       m_light = {};
 
 
   // Pipeline
-  PushConstant     m_pushConst{};                        // Information sent to the shader
+  DH::PushConstant m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int              m_frame{0};

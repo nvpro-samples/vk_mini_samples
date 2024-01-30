@@ -76,7 +76,10 @@ const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(r
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
 #endif  // USE_HLSL
 
-#include "shaders/device_host.h"
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 
 //--
@@ -308,13 +311,13 @@ public:
     const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
 
     // Update Frame buffer uniform buffer
-    FrameInfo        finfo{};
+    DH::FrameInfo    finfo{};
     const glm::vec2& clip = CameraManip.getClipPlanes();
     finfo.view            = CameraManip.getMatrix();
     finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.camPos = CameraManip.getEye();
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     renderScene(cmd);  // Render to GBuffer-1
     renderPost(cmd);   // Use GBuffer-1 and render to GBuffer-0
@@ -325,7 +328,7 @@ private:
   void createScene()
   {
     m_meshes.emplace_back(nvh::createSphereUv());
-    m_materials.push_back({vec4(1)});
+    m_materials.push_back({glm::vec4(1)});
     nvh::Node& n = m_nodes.emplace_back();
     n.mesh       = 0;
     n.material   = 0;
@@ -335,7 +338,7 @@ private:
 
     // Set clear color in sRgb space
     glm::vec3 c = nvvkhl_shaders::toLinear({0.3F, 0.3F, 0.3F});
-    memcpy(m_clearColor.float32, &c.x, sizeof(vec3));
+    memcpy(m_clearColor.float32, &c.x, sizeof(glm::vec3));
   }
 
 
@@ -361,7 +364,7 @@ private:
       m_pushConst.transfo = n.localMatrix();
       m_pushConst.color   = m_materials[n.material].color;
       vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(PushConstant), &m_pushConst);
+                         sizeof(DH::PushConstant), &m_pushConst);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -400,8 +403,8 @@ private:
 
   void createPipeline()
   {
-    m_dset->addBinding(BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->addBinding(BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(DH::BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    m_dset->addBinding(DH::BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
     m_dset->initLayout();
     m_dset->initPool(2);  // two frames - allow to change on the fly
 
@@ -409,11 +412,11 @@ private:
     const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
-    writes.emplace_back(m_dset->makeWrite(0, BKtxTex, &m_texture->descriptorImage()));
+    writes.emplace_back(m_dset->makeWrite(0, DH::BKtxTex, &m_texture->descriptorImage()));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(PushConstant)};
+                                                      sizeof(DH::PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
@@ -476,7 +479,7 @@ private:
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }
 
-    m_frameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_frameInfo.buffer);
 
@@ -532,7 +535,7 @@ private:
   // Data and setting
   struct Material
   {
-    vec4 color{1.F};
+    glm::vec4 color{1.F};
   };
   std::vector<nvh::PrimitiveMesh>                m_meshes;
   std::vector<nvh::Node>                         m_nodes;
@@ -543,7 +546,7 @@ private:
 
 
   // Pipeline
-  PushConstant     m_pushConst{};                        // Information sent to the shader
+  DH::PushConstant m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int              m_frame{0};

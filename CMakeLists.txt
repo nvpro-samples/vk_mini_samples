@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 include(FetchContent)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(SLANG_VERSION  "2023.5.5")
+set(SLANG_VERSION  "2024.0.0")
 find_package(Slang)
 
 # Adding HLSL compiler function
@@ -178,7 +178,7 @@ function(create_sample  PROJECT_NAME)
         foreach(HLSL_FILE ${ARGS_SHADER_HLSL})
           compile_hlsl_file(
             SOURCE_FILE ${HLSL_FILE}
-            FLAGS -I${SAMPLES_COMMON_DIR}/shaders ${ARGS_FLAGS}
+            FLAGS -I${SAMPLES_ROOT_DIR} ${ARGS_FLAGS}
             )
           target_sources(${PROJECT_NAME} PRIVATE ${HLSL_OUTPUT_FILES})
           source_group("Shaders" FILES ${SLANG_OUTPUT_FILES})
@@ -192,7 +192,7 @@ function(create_sample  PROJECT_NAME)
           foreach(SLANG_FILE ${ARGS_SHADER_SLANG})
               compile_slang_file(
                 SOURCE_FILE ${SLANG_FILE}
-                FLAGS -I${SAMPLES_COMMON_DIR}/shaders ${ARGS_FLAGS}
+                FLAGS -I${SAMPLES_ROOT_DIR} ${ARGS_FLAGS}
                 )
               target_sources(${PROJECT_NAME} PRIVATE ${SLANG_OUTPUT_FILES})
               source_group("Shaders" FILES ${SLANG_OUTPUT_FILES})

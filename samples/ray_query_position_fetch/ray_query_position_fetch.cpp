@@ -42,12 +42,13 @@
 
 #include "shaders/dh_bindings.h"
 
-//#if USE_HLSL
-//const auto& comp_shd = std::vector<char>{std::begin(ray_query_computeMain), std::end(ray_query_computeMain)};
-//#else
+#if USE_SLANG
+#include "_autogen/ray_query_slang.h"
+const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_querySlang), std::end(ray_querySlang)};
+#else
 #include "_autogen/ray_query.comp.h"
 const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_query_comp), std::end(ray_query_comp)};
-//#endif
+#endif
 
 /// </summary> Fetching position in ray tracing ray query
 class RayQueryFetch : public nvvkhl::IAppElement
@@ -342,7 +343,7 @@ private:
 
     VkComputePipelineCreateInfo cpCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .stage = nvvk::createShaderStageInfo(m_device, comp_shd, VK_SHADER_STAGE_COMPUTE_BIT, USE_HLSL ? "computeMain" : "main"),
+        .stage = nvvk::createShaderStageInfo(m_device, comp_shd, VK_SHADER_STAGE_COMPUTE_BIT, USE_GLSL ? "main" : "computeMain"),
         .layout = m_rtPipe.layout,
     };
 

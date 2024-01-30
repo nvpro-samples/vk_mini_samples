@@ -19,6 +19,7 @@
 
 
 
+#include "common/shaders/glsl_type.hlsli"
 #include "device_host.h"
 
 #define WORKGROUP_SIZE 16

@@ -18,14 +18,17 @@
  */
 
 #define VMA_IMPLEMENTATION
-#include "nvvk/descriptorsets_vk.hpp"  // Descriptor set helper
-#include "nvvkhl/alloc_vma.hpp"        // Our allocator
-#include "nvvkhl/application.hpp"      // For Application and IAppElememt
-#include "nvvkhl/gbuffer.hpp"          // G-Buffer helper
-#include "nvvkhl/shaders/dh_comp.h"    // Workgroup size and count
+#include "nvvk/descriptorsets_vk.hpp"               // Descriptor set helper
+#include "nvvkhl/alloc_vma.hpp"                     // Our allocator
+#include "nvvkhl/application.hpp"                   // For Application and IAppElememt
+#include "nvvkhl/gbuffer.hpp"                       // G-Buffer helper
+#include "nvvkhl/shaders/dh_comp.h"                 // Workgroup size and count
 #include "nvvkhl/element_benchmark_parameters.hpp"  // For testing
 
+namespace DH {
+using namespace glm;
 #include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 #define SHOW_MENU 1      // Enabling the standard Window menu.
 #define SHOW_SETTINGS 1  // Show the setting panel
@@ -50,7 +53,7 @@ size_t getShaderSize(const std::vector<T>& vec)
   return sizeof(baseType) * vec.size();
 }
 
-PushConstant g_pushC = {.zoom = 1.5f, .iter = 2};
+DH::PushConstant g_pushC = {.zoom = 1.5f, .iter = 2};
 
 class ComputeOnlyElement : public nvvkhl::IAppElement
 {
@@ -105,7 +108,7 @@ public:
 
     // Pushing constants
     g_pushC.time = static_cast<float>(ImGui::GetTime());
-    vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &g_pushC);
+    vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &g_pushC);
 
     // Dispatch compute shader
     VkExtent2D group_counts = getGroupCounts(m_gBuffers->getSize());
@@ -135,7 +138,7 @@ public:
   // Creating the pipeline layout and shader object
   void createShaderObjectAndLayout()
   {
-    VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(PushConstant)};
+    VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(DH::PushConstant)};
 
     // Create the layout used by the shader
     m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
@@ -184,10 +187,10 @@ int main(int argc, char** argv)
   spec.vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
   spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
-  auto app  = std::make_unique<nvvkhl::Application>(spec);           // Create the application
+  auto app  = std::make_unique<nvvkhl::Application>(spec);                       // Create the application
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);  // Create the test framework
-  app->addElement(test);                                             // Add the test element (--test ...)
-  app->addElement(std::make_shared<ComputeOnlyElement>());           // Add our sample to the application
+  app->addElement(test);                                                         // Add the test element (--test ...)
+  app->addElement(std::make_shared<ComputeOnlyElement>());                       // Add our sample to the application
   app->run();  // Loop infinitely, and call IAppElement virtual functions at each frame
   return test->errorCode();
 }

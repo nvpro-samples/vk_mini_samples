@@ -44,7 +44,10 @@
 #include "stb_image_write.h"
 
 // Shaders
-#include "shaders/device_host.h"
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 #if USE_HLSL
 #include "_autogen/raster_vertexMain.spirv.h"
@@ -106,11 +109,11 @@ public:
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     // Rendering the full-screen pixel shader
-    PushConstant push_c{};
+    DH::PushConstant push_c{};
     push_c.aspectRatio = size_f.x / size_f.y;
     push_c.iTime       = anim_time;
 
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant), &push_c);
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DH::PushConstant), &push_c);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);  // No vertices, it is implicitly done in the vertex shader
 
@@ -180,7 +183,7 @@ public:
     const nvh::ScopedTimer s_timer("Create Pipeline");
 
     // Pipeline Layout: The layout of the shader needs only Push Constants: we are using parameters, time and aspect ratio
-    const VkPushConstantRange  push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstant)};
+    const VkPushConstantRange  push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DH::PushConstant)};
     VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges    = &push_constants;

@@ -20,18 +20,6 @@
 #ifndef HOST_DEVICE_H
 #define HOST_DEVICE_H
 
-#ifdef __cplusplus
-using mat4 = glm::mat4;
-using vec4 = glm::vec4;
-using vec3 = glm::vec3;
-using vec2 = glm::vec2;
-#elif defined(__hlsl) || defined(__slang)
-#define mat4 float4x4
-#define vec4 float4
-#define vec3 float3
-#define vec2 float2
-#endif  // __cplusplus
-
 
 struct PushConstant
 {

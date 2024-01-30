@@ -55,8 +55,12 @@
 #include "nvvkhl/element_logger.hpp"
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
-#include "shaders/device_host.h"
 #include "nvvk/error_vk.hpp"
+
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 
 #if USE_HLSL
@@ -174,7 +178,7 @@ public:
     m_app->setViewport(cmd);
 
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                       sizeof(PushConstant), &m_pushConstant);
+                       sizeof(DH::PushConstant), &m_pushConstant);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
     const VkDeviceSize offsets{0};
@@ -196,7 +200,7 @@ private:
   {
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(PushConstant)};
+                                                      sizeof(DH::PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
@@ -276,7 +280,7 @@ private:
   std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  PushConstant m_pushConstant{};
+  DH::PushConstant m_pushConstant{};
 
   VkExtent2D        m_viewSize{0, 0};
   VkFormat          m_colorFormat      = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
@@ -337,7 +341,7 @@ int main(int argc, char** argv)
                                    const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
     // Get rid of all the extra message we don't need
     std::string clean_msg = callbackData->pMessage;
-    clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
+    clean_msg             = clean_msg.substr(clean_msg.find('\n') + 1);
     nvprintf("%s", clean_msg.c_str());  // <- This will end up in the Logger
     return VK_FALSE;                    // to continue
   };

@@ -48,7 +48,10 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
-#include "shaders/device_host.h"
+namespace DH {
+using namespace glm;
+#include "shaders/device_host.h"  // Shared between host and device
+}  // namespace DH
 
 #if USE_HLSL
 #include "_autogen/raster_vertexMain.spirv.h"
@@ -205,13 +208,13 @@ public:
     CameraManip.getLookat(eye, center, up);
 
     // Update Frame buffer uniform buffer
-    FrameInfo        finfo{};
+    DH::FrameInfo    finfo{};
     const glm::vec2& clip = CameraManip.getClipPlanes();
     finfo.view            = CameraManip.getMatrix();
     finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.camPos = eye;
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // #MSAA
     if((m_msaaSamples & VK_SAMPLE_COUNT_1_BIT) == VK_SAMPLE_COUNT_1_BIT)
@@ -295,7 +298,7 @@ private:
       m_pushConst.transfo = n.localMatrix();
       m_pushConst.color   = m_materials[n.material].color;
       vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(PushConstant), &m_pushConst);
+                         sizeof(DH::PushConstant), &m_pushConst);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -316,7 +319,7 @@ private:
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(PushConstant)};
+                                                      sizeof(DH::PushConstant)};
 
     VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     create_info.pushConstantRangeCount = 1;
@@ -427,7 +430,7 @@ private:
       m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
     }
 
-    m_frameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_frameInfo.buffer);
 
@@ -498,7 +501,7 @@ private:
   std::vector<Material>           m_materials;
 
   // Pipeline
-  PushConstant     m_pushConst{};                        // Information sent to the shader
+  DH::PushConstant m_pushConst{};                        // Information sent to the shader
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
   int              m_frame{0};
