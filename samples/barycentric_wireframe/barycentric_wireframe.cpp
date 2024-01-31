@@ -414,7 +414,7 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = PROJECT_NAME " Example";
+  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync            = true;
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;
@@ -433,7 +433,7 @@ int main(int argc, char** argv)
   app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
   app->addElement(std::make_shared<BaryWireframe>());
 
   app->run();

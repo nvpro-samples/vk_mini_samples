@@ -61,12 +61,13 @@ NVML Monitor:
 #include "nvvkhl/element_profiler.hpp"
 #include "nvvkhl/gbuffer.hpp"
 
-#include "realtime_analysis.h"
 
 namespace DH {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
+#include "shaders/device_host.h"
 }  // namespace DH
+
+#include "realtime_analysis.h"
 
 
 // Adding the compiled Vulkan shaders
@@ -129,7 +130,7 @@ class RealtimeAnalysis : public nvvkhl::IAppElement
     float     interactionRadius   = 0.2f;   // Pull/push radius
   } m_settings;
 
-  ParticleSetting m_particleSetting = TestA;  // Initialized with Test-A
+  DH::ParticleSetting m_particleSetting = TestA;  // Initialized with Test-A
 
 
 public:
@@ -180,8 +181,8 @@ public:
 
   void onUIRender() override
   {
-    using PE            = ImGuiH::PropertyEditor;
-    ParticleSetting& pS = m_particleSetting;
+    using PE                = ImGuiH::PropertyEditor;
+    DH::ParticleSetting& pS = m_particleSetting;
     ImGui::Begin("Settings");
     ImGui::TextDisabled("%d FPS / %.3fms", static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
     PE::begin();
@@ -332,7 +333,8 @@ private:
     if(m_bParticles.buffer != NULL)
     {
       auto cmd = m_app->createTempCmdBuffer();
-      m_alloc->getStaging()->cmdToBuffer(cmd, m_bParticles.buffer, 0, m_particles.size() * sizeof(Particle), m_particles.data());
+      m_alloc->getStaging()->cmdToBuffer(cmd, m_bParticles.buffer, 0, m_particles.size() * sizeof(DH::Particle),
+                                         m_particles.data());
       m_app->submitAndWaitTempCmdBuffer(cmd);
       m_alloc->finalizeAndReleaseStaging();
     }
@@ -341,23 +343,23 @@ private:
 
   void createRasterPipeline()
   {
-    m_dsetRaster->addBinding(eFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetRaster->addBinding(eParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetRaster->addBinding(eFragInspectorData, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
-    m_dsetRaster->addBinding(eFragInspectorMeta, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    m_dsetRaster->addBinding(DH::eFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dsetRaster->addBinding(DH::eParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dsetRaster->addBinding(DH::eFragInspectorData, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    m_dsetRaster->addBinding(DH::eFragInspectorMeta, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
     m_dsetRaster->initLayout();
     m_dsetRaster->initPool(1);
 
     const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(PushConstant)};
+                                                      sizeof(DH::PushConstant)};
     m_dsetRaster->initPipeLayout(1, &push_constant_ranges);
 
     // Writing to descriptors
     const VkDescriptorBufferInfo      dbi_frameinfo{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo      dbi_particles{m_bParticles.buffer, 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dsetRaster->makeWrite(0, eFrameInfo, &dbi_frameinfo));
-    writes.emplace_back(m_dsetRaster->makeWrite(0, eParticles, &dbi_particles));
+    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eFrameInfo, &dbi_frameinfo));
+    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eParticles, &dbi_particles));
     // #INSPECTOR : Inspector bindings are done in inspectorViewportResize()
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
@@ -413,13 +415,14 @@ private:
   // Creating the descriptor set and all compute shaders
   void createComputeShaderObjectAndLayout()
   {
-    VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(ParticleSetting)};
+    VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(DH::PushConstant)};
 
     // Create the layout used by the shader
-    m_dsetCompute->addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetCompute->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetCompute->addBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
-    m_dsetCompute->addBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    m_dsetCompute->addBinding(DH::eCompParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dsetCompute->addBinding(DH::eCompSort, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dsetCompute->addBinding(DH::eCompSetting, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_dsetCompute->addBinding(DH::eThreadInspection, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    m_dsetCompute->addBinding(DH::eThreadMetadata, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
 
     m_dsetCompute->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
     m_dsetCompute->initPipeLayout(1, &push_constant_ranges);
@@ -504,16 +507,22 @@ private:
     }
 
     // Buffer used by raster with updated information at each frame
-    m_bFrameInfo = m_alloc->createBuffer(sizeof(FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
+
+    // Buffer holding the particle settings
+    m_bParticleSetting = m_alloc->createBuffer(sizeof(DH::ParticleSetting),
+                                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    m_dutil->DBG_NAME(m_bParticleSetting.buffer);
 
     // Buffer of the particles, used for the simulation
     m_bParticles = m_alloc->createBuffer(cmd, m_particles, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     m_dutil->DBG_NAME(m_bParticles.buffer);
 
     // Buffer used for sorting particles spatially
-    m_bSpatialInfo = m_alloc->createBuffer(m_particles.size() * sizeof(SpatialInfo),
+    m_bSpatialInfo = m_alloc->createBuffer(m_particles.size() * sizeof(DH::SpatialInfo),
                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     m_dutil->DBG_NAME(m_bSpatialInfo.buffer);
 
@@ -530,7 +539,7 @@ private:
 
     if((m_settings.play || m_settings.runOnce))
     {
-      ParticleSetting& pSetting                 = m_particleSetting;
+      DH::ParticleSetting& pSetting             = m_particleSetting;
       pSetting.poly6ScalingFactor               = 4 / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 8));
       pSetting.spikyPow3ScalingFactor           = 10 / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 5));
       pSetting.spikyPow2ScalingFactor           = 6 / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 4));
@@ -550,25 +559,28 @@ private:
       // Push descriptor set
       const VkDescriptorBufferInfo in_desc0{m_bParticles.buffer, 0, VK_WHOLE_SIZE};
       const VkDescriptorBufferInfo in_desc1{m_bSpatialInfo.buffer, 0, VK_WHOLE_SIZE};
-      const VkDescriptorBufferInfo in_desc2{g_inspectorElement->getComputeInspectionBuffer(0), 0, VK_WHOLE_SIZE};
-      const VkDescriptorBufferInfo in_desc3{g_inspectorElement->getComputeMetadataBuffer(0), 0, VK_WHOLE_SIZE};
+      const VkDescriptorBufferInfo in_desc2{m_bParticleSetting.buffer, 0, VK_WHOLE_SIZE};
+      const VkDescriptorBufferInfo in_desc3{g_inspectorElement->getComputeInspectionBuffer(0), 0, VK_WHOLE_SIZE};
+      const VkDescriptorBufferInfo in_desc4{g_inspectorElement->getComputeMetadataBuffer(0), 0, VK_WHOLE_SIZE};
 
       std::vector<VkWriteDescriptorSet> writes;
-      writes.push_back(m_dsetCompute->makeWrite(0, eCompParticles, &in_desc0));
-      writes.push_back(m_dsetCompute->makeWrite(0, eCompSort, &in_desc1));
-      writes.push_back(m_dsetCompute->makeWrite(0, eThreadInspection, &in_desc2));
-      writes.push_back(m_dsetCompute->makeWrite(0, eThreadMetadata, &in_desc3));
+      writes.push_back(m_dsetCompute->makeWrite(0, DH::eCompParticles, &in_desc0));
+      writes.push_back(m_dsetCompute->makeWrite(0, DH::eCompSort, &in_desc1));
+      writes.push_back(m_dsetCompute->makeWrite(0, DH::eCompSetting, &in_desc2));
+      writes.push_back(m_dsetCompute->makeWrite(0, DH::eThreadInspection, &in_desc3));
+      writes.push_back(m_dsetCompute->makeWrite(0, DH::eThreadMetadata, &in_desc4));
       vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_dsetCompute->getPipeLayout(), 0,
                                 static_cast<uint32_t>(writes.size()), writes.data());
 
       // Bind compute shader
       const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
 
-      int numBlocks          = getNumBlocks();
-      pSetting.numWorkGroups = glm::vec3(numBlocks, 1, 1);
+      int numBlocks             = getNumBlocks();
+      m_pushConst.numWorkGroups = glm::vec3(numBlocks, 1, 1);
+
+      vkCmdUpdateBuffer(cmd, m_bParticleSetting.buffer, 0, sizeof(DH::ParticleSetting), &m_particleSetting);
 
       dispatch(cmd, eExternalForcesShd, numBlocks);
-#if USING_SPACIAL_INFO
       {
         auto tsort = g_profiler->timeRecurring("Sorting", cmd);  // #PROFILER
 
@@ -584,9 +596,9 @@ private:
         {
           for(int stepIndex = 0; stepIndex < stageIndex + 1; stepIndex++)
           {
-            m_particleSetting.groupWidth  = 1 << (stageIndex - stepIndex);
-            m_particleSetting.groupHeight = 2 * m_particleSetting.groupWidth - 1;
-            m_particleSetting.stepIndex   = stepIndex;
+            m_pushConst.groupWidth  = 1 << (stageIndex - stepIndex);
+            m_pushConst.groupHeight = 2 * m_pushConst.groupWidth - 1;
+            m_pushConst.stepIndex   = stepIndex;
 
             // Run the sorting step on the GPU
             dispatch(cmd, eBitonicSort, nextPowerOfTwo(NUM_PARTICLES) / 2);
@@ -594,7 +606,6 @@ private:
         }
         dispatch(cmd, eBitonicSortOffsets, NUM_PARTICLES);  // Calculate offset
       }
-#endif
       dispatch(cmd, eCalculateDensitiesShd, numBlocks);
       dispatch(cmd, eCalculatePressureForceShd, numBlocks);
       dispatch(cmd, eCalculateViscosityShd, numBlocks);
@@ -607,11 +618,11 @@ private:
     auto sec = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
 
     // Update Frame buffer uniform buffer
-    FrameInfo finfo{};
+    DH::FrameInfo finfo{};
     finfo.proj = glm::ortho(-1.F * m_gBuffers->getAspectRatio(), 1.F * m_gBuffers->getAspectRatio(), 1.F, -1.F, -1.F, 1.F);
     finfo.radius = m_settings.particleRadius;
     finfo.scale  = 1 / m_particleSetting.boundsMultiplier;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(FrameInfo), &finfo);
+    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // Drawing the primitives in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -635,7 +646,7 @@ private:
 
     // Push constant information to the shaders
     vkCmdPushConstants(cmd, m_dsetRaster->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                       sizeof(PushConstant), &m_pushConst);
+                       sizeof(DH::PushConstant), &m_pushConst);
 
     // Bind the vertex buffer and its offset, and the index buffer used for indexed drawing.
     const VkDeviceSize offsets{0};
@@ -727,8 +738,8 @@ private:
     const VkDescriptorBufferInfo inspectorInspection{g_inspectorElement->getFragmentInspectionBuffer(0), 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo inspectorMetadata{g_inspectorElement->getFragmentMetadataBuffer(0), 0, VK_WHOLE_SIZE};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dsetRaster->makeWrite(0, eFragInspectorData, &inspectorInspection));
-    writes.emplace_back(m_dsetRaster->makeWrite(0, eFragInspectorMeta, &inspectorMetadata));
+    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eFragInspectorData, &inspectorInspection));
+    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eFragInspectorMeta, &inspectorMetadata));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
@@ -737,7 +748,8 @@ private:
   {
     const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
     vkCmdBindShadersEXT(cmd, 1, stages, &m_shaders[shaderID]);
-    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(ParticleSetting), &m_particleSetting);
+    //vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::ParticleSetting), &m_particleSetting);
+    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
     vkCmdDispatch(cmd, numBlocks, 1, 1);
   }
 
@@ -761,6 +773,7 @@ private:
     m_alloc->destroy(m_bFrameInfo);
     m_alloc->destroy(m_bParticles);
     m_alloc->destroy(m_bSpatialInfo);
+    m_alloc->destroy(m_bParticleSetting);
 
     for(auto shader : m_shaders)
       vkDestroyShaderEXT(m_app->getDevice(), shader, NULL);
@@ -783,22 +796,23 @@ private:
   VkFormat m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
 
   // Scene resources
-  nvh::PrimitiveMesh    m_rasterParticle;
-  std::vector<Particle> m_particles;
+  nvh::PrimitiveMesh        m_rasterParticle;
+  std::vector<DH::Particle> m_particles;
   struct PrimitiveMeshVk
   {
-    nvvk::Buffer vertices;                                 // Buffer of the vertices
-    nvvk::Buffer indices;                                  // Buffer of the indices
-  } m_bParticle;                                           // Geometry
-  nvvk::Buffer                            m_bParticles;    // All Positions
-  nvvk::Buffer                            m_bSpatialInfo;  // Hash Spatial Info
-  nvvk::Buffer                            m_bFrameInfo;
+    nvvk::Buffer vertices;                                     // Buffer of the vertices
+    nvvk::Buffer indices;                                      // Buffer of the indices
+  } m_bParticle;                                               // Geometry
+  nvvk::Buffer                            m_bParticles;        // All Positions
+  nvvk::Buffer                            m_bSpatialInfo;      // Hash Spatial Info
+  nvvk::Buffer                            m_bParticleSetting;  // Particle Settings
+  nvvk::Buffer                            m_bFrameInfo;        // Raster frame info
   std::array<VkShaderEXT, numCompShaders> m_shaders = {};
 
   // Pipeline
   std::unique_ptr<nvvk::DescriptorSetContainer> m_dsetRaster;                         // Descriptor set
   std::unique_ptr<nvvk::DescriptorSetContainer> m_dsetCompute;                        // Descriptor set
-  PushConstant                                  m_pushConst        = {};              // Information sent to the shader
+  DH::PushConstant                              m_pushConst        = {};              // Information sent to the shader
   VkPipeline                                    m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
 };
 
@@ -839,13 +853,13 @@ int main(int argc, char** argv)
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
-  app->addElement(test);                                                   // Command line Testing application
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());         // File,  Help
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());  // Window title
-  app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));            // NVML monitor
-  app->addElement(g_profiler);                                             // #PROFILER GPU profiler
-  app->addElement(g_inspectorElement);                                     // #INSPECTOR Vk object inspector
-  app->addElement(std::make_shared<RealtimeAnalysis>());                   // This sample
+  app->addElement(test);                                            // Command line Testing application
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());  // File,  Help
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info  // Window title
+  app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));  // NVML monitor
+  app->addElement(g_profiler);                                   // #PROFILER GPU profiler
+  app->addElement(g_inspectorElement);                           // #INSPECTOR Vk object inspector
+  app->addElement(std::make_shared<RealtimeAnalysis>());         // This sample
 
 
   app->run();

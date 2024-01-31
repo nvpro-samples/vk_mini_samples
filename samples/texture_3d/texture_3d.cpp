@@ -624,7 +624,7 @@ int main(int argc, char** argv)
   app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
   app->addElement(std::make_shared<Texture3dSample>());
 
   app->run();

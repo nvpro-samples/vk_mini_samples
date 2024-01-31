@@ -100,12 +100,14 @@ If you are new to this repository, the first samples to read to better understan
 | [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) | [ ] | [ ] |
 | [barycentric_wireframe](samples/barycentric_wireframe) | Draw wifreframe in a a single pass using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) |  [ ] | [x] |
 | [texture 3d](samples/texture_3d) | Create a 3D texture and do ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) | [x] | [x] |
-| [position fetch](samples/ray_tracing_position_fetch) | Using VK_KHR_ray_tracing_position_fetch. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [ ] | [ ] |
-| [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [ ] |
-| [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray quary | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [ ] | [ ] |
+| [position fetch](samples/ray_tracing_position_fetch) | Using VK_KHR_ray_tracing_position_fetch. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [ ] | [x] |
+| [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [x] |
+| [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray quary | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [ ] | [x] |
 | [shader_object](samples/shader_object) | Using shader object and dynamic pipline | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] |
 | [compute_only](samples/compute_only) | Simple compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] |
 | [gpu_monitor](samples/gpu_monitor) | Showing GPU usage | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] |
+| [realtime_analysis](samples/realtime_analysis) | Displaying in realtime GPU informations | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [ ] | [x] |
+| [motion_blur](samples/ray_trace_motion_blur) | Tracing object having motion, using the NVIDIA raytrace extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [ ] | [x] |
 
 ## HLSL
 

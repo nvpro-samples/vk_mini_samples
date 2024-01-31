@@ -1,5 +1,6 @@
 //
 // From the GLSL spec, section 4.1. 'asic Types'
+// Took from source/slang/glsl.meta.slang
 //
 
 public typealias vec2 = vector<float, 2>;
@@ -136,120 +137,13 @@ public typealias usamplerCubeArrayShadow = SamplerCubeArrayShadow<uint>;
 public typealias isamplerCubeArrayShadow = SamplerCubeArrayShadow<int>;
 public typealias samplerCubeArrayShadow = SamplerCubeArrayShadow<float>;
 
-[ForceInline]
-public vector<T,4> texelFetch<T:__BuiltinArithmeticType, let N : int> (Sampler1D<vector<T,N>> sampler, int p, int lod)
-{
-    return __vectorReshape<4>(sampler.Load(int2(p, lod)));
-}
-
-[ForceInline]
-public vector<T,4> texelFetch<T:__BuiltinArithmeticType, let N : int> (Sampler2D<vector<T,N>> sampler, ivec2 p, int lod)
-{
-    return __vectorReshape<4>(sampler.Load(int3(p, lod)));
-}
-
-[ForceInline]
-public vector<T,4> texelFetch<T:__BuiltinArithmeticType, let N : int> (Sampler3D<vector<T,N>> sampler, ivec3 p, int lod)
-{
-    return __vectorReshape<4>(sampler.Load(int4(p, lod)));
-}
-
-[ForceInline]
-public vector<T,4> texelFetch<T:__BuiltinArithmeticType, let N : int> (Sampler1DArray<vector<T,N>> sampler, ivec2 p, int lod)
-{
-    return __vectorReshape<4>(sampler.Load(int3(p, lod)));
-}
-
-[ForceInline]
-public vector<T,4> texelFetch<T:__BuiltinArithmeticType, let N : int> (Sampler2DArray<vector<T,N>> sampler, ivec3 p, int lod)
-{
-    return __vectorReshape<4>(sampler.Load(int4(p, lod)));
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (Sampler1D<vector<T,N>> sampler, float p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (Sampler2D<vector<T,N>> sampler, float2 p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (Sampler3D<vector<T,N>> sampler, float3 p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (SamplerCube<vector<T,N>> sampler, float3 p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public float texture<T:__BuiltinFloatingPointType, let N : int> (Sampler1DShadow<vector<T,N>> sampler, float2 p)
-{
-    return sampler.SampleCmp(p.x, p.y);
-}
-
-[ForceInline]
-public float texture<T:__BuiltinFloatingPointType, let N : int> (Sampler2DShadow<vector<T,N>> sampler, float3 p)
-{
-    return sampler.SampleCmp(p.xy, p.z);
-}
-
-[ForceInline]
-public float texture<T:__BuiltinFloatingPointType, let N : int> (SamplerCubeShadow<vector<T,N>> sampler, float4 p)
-{
-    return sampler.SampleCmp(p.xyz, p.w);
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (Sampler1DArray<vector<T,N>> sampler, float2 p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (Sampler2DArray<vector<T,N>> sampler, float3 p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public vector<T,4> texture<T:__BuiltinFloatingPointType, let N : int> (SamplerCubeArray<vector<T,N>> sampler, float4 p, float bias = 0.0)
-{
-    return __vectorReshape<4>(sampler.SampleBias(p, bias));
-}
-
-[ForceInline]
-public float texture<T:__BuiltinFloatingPointType, let N : int> (Sampler1DArrayShadow<vector<T,N>> sampler, float3 p)
-{
-    return sampler.SampleCmp(p.xy, p.z);
-}
-
-[ForceInline]
-public float texture<T:__BuiltinFloatingPointType, let N : int> (Sampler2DArrayShadow<vector<T,N>> sampler, float4 p)
-{
-    return sampler.SampleCmp(p.xyz, p.w);
-}
-
-__generic<T:__BuiltinFloatingPointType, let N : int, shape:__ITextureShape, let sampleCount: int, let isArray:int, let format:int>
-public vector<T,4> textureGrad(__TextureImpl<vector<T,N>, shape, isArray, 0, sampleCount, 0, 1, 1, format> sampler, vector<float, shape.dimensions+isArray> P, vector<float,shape.planeDimensions> dPdx, vector<float,shape.planeDimensions> dPdy)
-{
-    return __vectorReshape<4>(sampler.SampleGrad(P, dPdx, dPdy));
-}
-
 static /*out*/ float4 gl_Position : SV_Position;
 static /*out*/ float gl_PointSize : SV_PointSize;
 static /*out*/ vec4 gl_FragCoord : SV_Position;
 static /*out*/ float gl_FragDepth : SV_Depth;
 static /*out*/ int gl_FragStencilRef : SV_StencilRef;
 
+static uvec3 gl_NumWorkGroups;
 static /*public out*/ uvec3 gl_GlobalInvocationID : SV_DispatchThreadID;
 static /*public out*/ uvec3 gl_WorkGroupID : SV_GroupID;
 static /*public out*/ uvec3 gl_LocalInvocationIndex : SV_GroupIndex;
@@ -270,153 +164,8 @@ static /*in*/ int gl_VertexIndex : SV_VertexID;
 static /*in*/ int gl_ViewIndex : SV_ViewID;
 static /*in*/ int gl_ViewportIndex : SV_ViewportArrayIndex;
 
-
-// Override operator* behavior to compute algebric product of matrices and vectors.
-
-[OverloadRank(15)]
-[ForceInline]
-public matrix<float, N, N> operator*<let N : int>(matrix<float, N, N> m1, matrix<float, N, N> m2)
-{
-    return mul(m2, m1);
-}
-
-[OverloadRank(15)]
-[ForceInline]
-public matrix<half, N, N> operator*<let N : int>(matrix<half, N, N> m1, matrix<half, N, N> m2)
-{
-    return mul(m2, m1);
-}
-
-[OverloadRank(15)]
-[ForceInline]
-public matrix<double, N, N> operator*<let N : int>(matrix<double, N, N> m1, matrix<double, N, N> m2)
-{
-    return mul(m2, m1);
-}
-
-[ForceInline]
-[OverloadRank(15)]
-public matrix<T, R, L> operator*<T:__BuiltinFloatingPointType, let L : int, let C : int, let R : int>(matrix<T, C, L> m1, matrix<T, R, C> m2)
-{
-    return mul(m2, m1);
-}
-
-[ForceInline]
-[OverloadRank(15)]
-public vector<T, R> operator*<T:__BuiltinFloatingPointType, let C : int, let R : int>(vector<T, C> v, matrix<T, R, C> m)
-{
-    return mul(m, v);
-}
-
-[ForceInline]
-[OverloadRank(15)]
-public vector<T, C> operator*<T:__BuiltinFloatingPointType, let C : int, let R : int>(matrix<T, R, C> m, vector<T, R> v)
-{
-    return mul(v, m);
-}
-
-__intrinsic_op(mul)
-public matrix<T, N, M> matrixCompMult<T:__BuiltinFloatingPointType, let N : int, let M : int>(matrix<T,N,M> left, matrix<T,N,M> right);
-
-__intrinsic_op(cmpLE)
-public vector<bool, N> lessThanEqual<T, let N:int>(vector<T, N> x, vector<T, N> y);
-__intrinsic_op(cmpLT)
-public vector<bool, N> lessThan<T, let N:int>(vector<T, N> x, vector<T, N> y);
-__intrinsic_op(cmpGT)
-public vector<bool, N> greaterThan<T, let N:int>(vector<T, N> x, vector<T, N> y);
-__intrinsic_op(cmpGE)
-public vector<bool, N> greaterThanEqual<T, let N:int>(vector<T, N> x, vector<T, N> y);
-__intrinsic_op(cmpEQ)
-public vector<bool, N> equal<T, let N:int>(vector<T, N> x, vector<T, N> y);
-__intrinsic_op(cmpNE)
-public vector<bool, N> notEqual<T, let N:int>(vector<T, N> x, vector<T, N> y);
-
-__generic<T>
-public extension vector<T, 2>
-{
-    [ForceInline] public __init(vector<T, 3> bigger) { this = bigger.xy; }
-    [ForceInline] public __init(vector<T, 4> bigger) { this = bigger.xy; }
-}
-
-__generic<T>
-public extension vector<T, 3>
-{
-    [ForceInline] public __init(vector<T, 4> bigger) { this = bigger.xyz; }
-}
-
-[ForceInline]
-[OverloadRank(15)]
-public bool operator==<T:__BuiltinArithmeticType, let N : int>(vector<T, N> left, vector<T, N> right)
-{
-    return all(equal(left, right));
-}
-
-[ForceInline]
-[OverloadRank(15)]
-public bool operator!=<T:__BuiltinArithmeticType, let N : int>(vector<T, N> left, vector<T, N> right)
-{
-    return any(notEqual(left, right));
-}
-
-[ForceInline]
-[OverloadRank(14)]
-public bool operator==<T:__BuiltinFloatingPointType, let N : int>(vector<T, N> left, vector<T, N> right)
-{
-    return all(equal(left, right));
-}
-
-[ForceInline]
-[OverloadRank(14)]
-public bool operator!=<T:__BuiltinFloatingPointType, let N : int>(vector<T, N> left, vector<T, N> right)
-{
-    return any(notEqual(left, right));
-}
-
-[ForceInline]
-[OverloadRank(14)]
-public bool operator==<T:__BuiltinLogicalType, let N : int>(vector<T, N> left, vector<T, N> right)
-{
-    return all(equal(left, right));
-}
-
-[ForceInline]
-[OverloadRank(14)]
-public bool operator!=<T:__BuiltinLogicalType, let N : int>(vector<T, N> left, vector<T, N> right)
-{
-    return any(notEqual(left, right));
-}
-/*
-${{{{
-for (auto type : kBaseTypes) {
-    char const* typeName = type.name;
-    if (!type.flags) continue;
-}}}}
-[ForceInline]
-[OverloadRank(15)]
-public bool operator==<let N : int>(vector<$(typeName), N> left, vector<$(typeName), N> right)
-{
-    return all(equal(left, right));
-}
-
-[ForceInline]
-[OverloadRank(15)]
-public bool operator!=<let N : int>(vector<$(typeName), N> left, vector<$(typeName), N> right)
-{
-    return any(notEqual(left, right));
-}
-${{{{
-}
-}}}}
-
-[ForceInline] public int findLSB(int v) { return firstbitlow(v); }
-[ForceInline] public uint findLSB(uint v) { return firstbitlow(v); }
-[ForceInline] public vector<int,N> findLSB<let N:int>(vector<int,N> value)
-{
-    return firstbitlow(value);
-}
-[ForceInline] public vector<uint,N> findLSB<let N:int>(vector<uint,N> value)
-{
-    return firstbitlow(value);
-}
-*/
-
+// TODO KHR_shader_subgroup
+static /*in*/ uint gl_NumSubgroups;
+static /*in*/ uint gl_SubgroupID;
+static /*in*/ uint gl_SubgroupSize;
+static /*in*/ uint gl_SubgroupInvocationID;

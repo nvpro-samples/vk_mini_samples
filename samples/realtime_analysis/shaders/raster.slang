@@ -17,11 +17,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+
 #include "common/shaders/glsl_type.slang"
 #include "device_host.h"
 
-
-static float4 gl_FragCoord;
 void updateBuiltins(float4 fragCoord)
 {
   gl_FragCoord = fragCoord;
@@ -31,7 +30,7 @@ void updateBuiltins(float4 fragCoord)
 #define INSPECTOR_DESCRIPTOR_SET 0
 #define INSPECTOR_INSPECTION_DATA_BINDING eFragInspectorData
 #define INSPECTOR_METADATA_BINDING eFragInspectorMeta
-#include "dh_inspector.hlsli"
+#include "common/shaders/dh_inspector.hlsli"
 
 [[vk::push_constant]] ConstantBuffer<PushConstant> pushConst;
 [[vk::binding(eFrameInfo)]] ConstantBuffer<FrameInfo> frameInfo;

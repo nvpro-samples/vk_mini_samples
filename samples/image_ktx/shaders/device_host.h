@@ -17,9 +17,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifdef __glsl
+#ifdef _glsl
 #define static
-#endif  // __cplusplus
+#endif  // _glsl
 
 static const int BKtxFrameInfo = 0;
 static const int BKtxTex       = 1;

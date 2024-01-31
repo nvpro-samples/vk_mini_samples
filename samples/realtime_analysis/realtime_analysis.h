@@ -13,7 +13,7 @@ enum
   numCompShaders
 };
 
-static ParticleSetting TestA = {
+static DH::ParticleSetting TestA = {
     .gravity                = -9.8,
     .collisionDamping       = 0.25,
     .smoothingRadius        = 0.25,
@@ -24,7 +24,7 @@ static ParticleSetting TestA = {
     .boundsMultiplier       = 10,
 };
 
-static ParticleSetting TestB = {
+static DH::ParticleSetting TestB = {
     .gravity                = 0,
     .collisionDamping       = 0.95,
     .smoothingRadius        = 0.35,
@@ -35,7 +35,7 @@ static ParticleSetting TestB = {
     .boundsMultiplier       = 12,
 };
 
-static ParticleSetting TestC = {
+static DH::ParticleSetting TestC = {
     .gravity                = -3,
     .collisionDamping       = 0.90,
     .smoothingRadius        = 0.65,
@@ -46,7 +46,7 @@ static ParticleSetting TestC = {
     .boundsMultiplier       = 10,
 };
 
-static ParticleSetting TestD = {
+static DH::ParticleSetting TestD = {
     .gravity                = 0,
     .collisionDamping       = 0.95,
     .smoothingRadius        = 0.3,

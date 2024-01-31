@@ -304,7 +304,7 @@ int main(int argc, char** argv)
   g_logger.setLogLevel(LOGBITS_ALL);
 
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = PROJECT_NAME " Example";
+  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync            = true;
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;

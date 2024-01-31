@@ -28,8 +28,10 @@ if(NOT USE_HLSL)
   add_subdirectory(ray_query_position_fetch)   # No support for fetch
   add_subdirectory(ray_tracing_position_fetch) # No support for fetch
   add_subdirectory(ser_pathtrace) # no support for SER
+  add_subdirectory(realtime_analysis) # Missing some functions to make realtime analysis
+  add_subdirectory(ray_trace_motion_blur) # no motion
 endif()
 
-if(NOT USE_HLSL) # Not yet implemented
+if(NOT USE_HLSL AND NOT USE_SLANG) # Not yet implemented
   add_subdirectory(tiny_shader_toy)
 endif()

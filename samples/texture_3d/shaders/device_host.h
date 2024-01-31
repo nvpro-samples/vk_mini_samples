@@ -17,9 +17,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifdef __glsl
+#ifdef _glsl
 #define inline
-#endif
+#endif  // _glsl
 
 struct PushConstant
 {

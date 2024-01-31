@@ -13,25 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
+
+// Code converted from: https://github.com/SebLague/Fluid-Sim
 
 
 // Includes
 #include "common/shaders/glsl_type.slang"
 #include "device_host.h"
 
-#define INSPECTOR_MODE_COMPUTE
-#define INSPECTOR_DESCRIPTOR_SET 0
-#define INSPECTOR_INSPECTION_DATA_BINDING eThreadInspection
-#define INSPECTOR_METADATA_BINDING eThreadMetadata
-#include "common/shaders/dh_inspector.hlsli"
-
-[[vk::push_constant]] ConstantBuffer<ParticleSetting> setting;
+[[vk::push_constant]] ConstantBuffer<PushConstant> pushC;
 [[vk::binding(eCompParticles)]] RWStructuredBuffer<Particle> particles;
 [[vk::binding(eCompSort)]] RWStructuredBuffer<SpatialInfo> spatialInfo;
+[[vk::binding(eCompSetting)]] ConstantBuffer<ParticleSetting> setting;
 
+ #define INSPECTOR_MODE_COMPUTE 
+ #define INSPECTOR_DESCRIPTOR_SET 0 
+ #define INSPECTOR_INSPECTION_DATA_BINDING eThreadInspection
+ #define INSPECTOR_METADATA_BINDING eThreadMetadata
+ #include "common/shaders/dh_inspector.hlsli"
 
 #include "fluid_maths_2D.glsl"
 
@@ -39,10 +41,9 @@ void updateBuiltins(uint3 numWorkGroup, uint3 groupID, uint groupThreadID)
 {
   gl_NumWorkGroups = numWorkGroup;
   gl_WorkGroupID = groupID;
-  gl_SubgroupSize = 32;
+  gl_SubgroupSize = WaveGetLaneCount();
   gl_SubgroupID = groupThreadID / gl_SubgroupSize;
-  gl_SubgroupInvocationID = groupThreadID % gl_SubgroupSize;
-
+  gl_SubgroupInvocationID = WaveGetLaneIndex();
 }
 
 
@@ -368,7 +369,7 @@ void calculatePressureForce(uint3 threadIdx : SV_DispatchThreadID,
                             uint3 groupID : SV_GroupID,
                             uint groupThreadID : SV_GroupThreadID)
 {
-  updateBuiltins(setting.numWorkGroups, groupID, groupThreadID);
+  updateBuiltins(pushC.numWorkGroups, groupID, groupThreadID);
 
   uint particleID = threadIdx.x;
   if (particleID >= setting.numParticles)
@@ -457,9 +458,9 @@ void bitonicSort(uint3 threadIdx : SV_DispatchThreadID)
     return;
   uint i = particleID;
 
-  uint hIndex = i & (setting.groupWidth - 1);
-  uint indexLeft = hIndex + (setting.groupHeight + 1) * (i / setting.groupWidth);
-  uint rightStepSize = setting.stepIndex == 0 ? setting.groupHeight - 2 * hIndex : (setting.groupHeight + 1) / 2;
+  uint hIndex = i & (pushC.groupWidth - 1);
+  uint indexLeft = hIndex + (pushC.groupHeight + 1) * (i / pushC.groupWidth);
+  uint rightStepSize = pushC.stepIndex == 0 ? pushC.groupHeight - 2 * hIndex : (pushC.groupHeight + 1) / 2;
   uint indexRight = indexLeft + rightStepSize;
 
   // Exit if out of bounds (for non-power of 2 input sizes)

@@ -793,7 +793,7 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = PROJECT_NAME " Example";
+  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync            = false;
   spec.vkSetup          = nvvk::ContextCreateInfo(false);  // #MICROMESH cannot have validation layers (crash)
   spec.vkSetup.apiMajor = 1;
@@ -829,13 +829,13 @@ int main(int argc, char** argv)
   if(!app->getContext()->hasDeviceExtension(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME))
   {
     LOGE("ERROR: Micro-Mesh not supported");
-    exit(1);
+    exit(0);
   }
 
   if(!app->getContext()->hasDeviceExtension(VK_NV_DISPLACEMENT_MICROMAP_EXTENSION_NAME))
   {
     LOGE("ERROR: Micro-Mesh displacement not supported");
-    exit(1);
+    exit(0);  // Requiring a beta driver
   }
 
   // Create the test framework
@@ -844,8 +844,8 @@ int main(int argc, char** argv)
   // Add all application elements
   app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());         // Menu / Quit
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());  // Window title info
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());  // Menu / Quit
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
   app->addElement(std::make_shared<MicromeshDisplacement>());
 
 

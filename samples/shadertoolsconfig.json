@@ -1,8 +1,0 @@
-{
-  "hlsl.additionalIncludeDirectories": [
-    "..\\common\\shaders"
-  ],
-  "hlsl.preprocessorDefinitions": {
-    "__hlsl": 1
-  }
-}

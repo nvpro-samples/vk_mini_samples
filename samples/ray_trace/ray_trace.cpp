@@ -657,7 +657,7 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = PROJECT_NAME " Example";
+  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync            = true;
   spec.vkSetup.apiMajor = 1;
   spec.vkSetup.apiMinor = 3;
@@ -682,10 +682,10 @@ int main(int argc, char** argv)
 
   // Add all application elements
   app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ElementCamera>());              // Camera manipulation
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());         // Menu / Quit
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());  // Window title info
-  app->addElement(std::make_shared<Raytracing>());                         // Sample
+  app->addElement(std::make_shared<nvvkhl::ElementCamera>());       // Camera manipulation
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());  // Menu / Quit
+  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
+  app->addElement(std::make_shared<Raytracing>());  // Sample
 
   app->run();
   app.reset();

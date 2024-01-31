@@ -1,26 +1,51 @@
+/*
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Shared between Host and Device
-
-
-#define USING_SPACIAL_INFO 1
 
 // Number of particles in the simulation
 #define NUM_PARTICLES 15000
 
 #define WORKGROUP_SIZE 128
 
-#define eFrameInfo 0
-#define eParticles 1
-#define eFragInspectorData 2
-#define eFragInspectorMeta 3
+#ifdef _glsl
+#define static
+#endif
 
-#define eCompParticles 0
-#define eCompSort 1
-#define eThreadInspection 2
-#define eThreadMetadata 3
+static const int eFrameInfo         = 0;
+static const int eParticles         = 1;
+static const int eFragInspectorData = 2;
+static const int eFragInspectorMeta = 3;
+
+static const int eCompParticles    = 0;
+static const int eCompSort         = 1;
+static const int eCompSetting      = 2;
+static const int eThreadInspection = 3;
+static const int eThreadMetadata   = 4;
 
 struct PushConstant
 {
-  vec4 color;
+  vec4  color;
+  uint  groupWidth;
+  uint  groupHeight;
+  uint  stepIndex;
+  uvec3 numWorkGroups;
 };
 
 struct FrameInfo
@@ -66,17 +91,11 @@ struct ParticleSetting
   float spikyPow2DerivativeScalingFactor;
 
   // aligned 64
-  uint  groupWidth;
-  uint  groupHeight;
-  uint  stepIndex;
   float boundsMultiplier;
-
+  int   _pad0;
   //
   vec2 boundsSize;
   vec2 interactionInputPoint;
   vec2 obstacleSize;
   vec2 obstacleCentre;
-
-  uvec3 numWorkGroups;
-  int   _pad;
 };

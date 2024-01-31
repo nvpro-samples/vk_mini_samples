@@ -157,7 +157,7 @@ function(create_sample  PROJECT_NAME)
         set(_GLSL_FLAGS 
           -I${SAMPLE_FOLDER}/shaders 
           -I${NVPRO_CORE_DIR} 
-          -g -D__glsl)
+          -g -D_glsl)
         list(APPEND _GLSL_FLAGS ${ARGS_FLAGS})
 
         # Compiling shaders to Spir-V header
@@ -167,7 +167,7 @@ function(create_sample  PROJECT_NAME)
             DST "${SAMPLE_FOLDER}/_autogen" 
             VULKAN_TARGET "vulkan1.3"
             HEADER ON
-            DEPENDENCY ${VULKANSDK_BUILD_DEPENDENCIES}
+            DEPENDENCY ON
             FLAGS ${_GLSL_FLAGS}
             )
 
@@ -202,13 +202,18 @@ function(create_sample  PROJECT_NAME)
 
     # target definitions for GLSL, HLSL and SLANG
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=${USE_GLSL})
+    if(${USE_GLSL})
+      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="GLSL")
+    endif()
     if(${USE_SLANG})
       target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SLANG=1)
+      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="Slang")
     else()
       target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SLANG=0)
     endif()
     if(${USE_HLSL})
       target_compile_definitions(${PROJECT_NAME} PRIVATE USE_HLSL=1)
+      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="HLSL")
     else()
       target_compile_definitions(${PROJECT_NAME} PRIVATE USE_HLSL=0)
     endif()
