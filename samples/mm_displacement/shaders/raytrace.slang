@@ -200,7 +200,7 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   uint hitKind = HitKind();
   if(hitKind == gl_HitKindFrontFacingMicroTriangleNV || hitKind == gl_HitKindBackFacingMicroTriangleNV)
   {
-    float3 color = temperature(P.y * 2.0F);
+    float3 color = landscapeColor(P.y * 2.0F);
     
     if(pushConst.numBaseTriangles > 0) // Add wireframe
       color = wireFrame(color, barycentrics);

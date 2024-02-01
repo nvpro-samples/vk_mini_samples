@@ -151,7 +151,9 @@ vec3 ggxEvaluate(vec3 V, vec3 N, vec3 L, vec3 albedo, float metallic, float roug
 #define gl_HitKindBackFacingMicroTriangleNV 223
 //-----------------------------------------------------------------------
 
-// utility for temperature
+// Utility for temperature and landscapeColor:
+// Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at
+// low, high, and (low + high) * 0.5.
 float fade(float low, float high, float value)
 {
   float mid   = (low + high) * 0.5;
@@ -160,8 +162,8 @@ float fade(float low, float high, float value)
   return smoothstep(0.0, 1.0, x);
 }
 
-// Return a cold-hot color based on intensity [0-1]
-vec3 temperature(float intensity)
+// Return a landscape color based on height [0-1]
+vec3 landscapeColor(float height)
 {
   const vec3 water = vec3(0.0, 0.0, 0.5);
   const vec3 sand  = vec3(0.8, 0.7, 0.4);
@@ -170,11 +172,11 @@ vec3 temperature(float intensity)
   const vec3 snow  = vec3(1.0, 1.0, 1.0);
 
 
-  vec3 color = (fade(-0.25, 0.25, intensity) * water   //
-                + fade(0.0, 0.5, intensity) * sand     //
-                + fade(0.25, 0.75, intensity) * green  //
-                + fade(0.5, 1.0, intensity) * rock     //
-                + smoothstep(0.75, 1.0, intensity) * snow);
+  vec3 color = (fade(-0.25, 0.25, height) * water   //
+                + fade(0.0, 0.5, height) * sand     //
+                + fade(0.25, 0.75, height) * green  //
+                + fade(0.5, 1.0, height) * rock     //
+                + smoothstep(0.75, 1.0, height) * snow);
   return color;
 }
 
@@ -214,7 +216,7 @@ void main()
   uint hitKind = gl_HitKindEXT;
   if(hitKind == gl_HitKindFrontFacingMicroTriangleNV || hitKind == gl_HitKindBackFacingMicroTriangleNV)
   {
-    payload.color = temperature(P.y * 2.0F);
+    payload.color = landscapeColor(P.y * 2.0F);
 
     // Add wireframe
     if(pc.numBaseTriangles > 0)

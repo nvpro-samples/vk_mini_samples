@@ -149,33 +149,6 @@ vec3 ggxEvaluate(vec3 V, vec3 N, vec3 L, vec3 albedo, float metallic, float roug
 #define gl_HitKindBackFacingMicroTriangleNV 223
 //-----------------------------------------------------------------------
 
-// utility for temperature
-float fade(float low, float high, float value)
-{
-  float mid   = (low + high) * 0.5;
-  float range = (high - low) * 0.5;
-  float x     = 1.0 - clamp(abs(mid - value) / range, 0.0, 1.0);
-  return smoothstep(0.0, 1.0, x);
-}
-
-// Return a cold-hot color based on intensity [0-1]
-vec3 temperature(float intensity)
-{
-  const vec3 water = vec3(0.0, 0.0, 0.5);
-  const vec3 sand  = vec3(0.8, 0.7, 0.4);
-  const vec3 green = vec3(0.1, 0.4, 0.1);
-  const vec3 rock  = vec3(0.4, 0.4, 0.4);
-  const vec3 snow  = vec3(1.0, 1.0, 1.0);
-
-
-  vec3 color = (fade(-0.25, 0.25, intensity) * water   //
-                + fade(0.0, 0.5, intensity) * sand     //
-                + fade(0.25, 0.75, intensity) * green  //
-                + fade(0.5, 1.0, intensity) * rock     //
-                + smoothstep(0.75, 1.0, intensity) * snow);
-  return color;
-}
-
 
 void main()
 {

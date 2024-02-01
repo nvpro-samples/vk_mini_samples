@@ -536,9 +536,6 @@ private:
     m_rtSet->addBinding(B_index, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
     m_rtSet->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
 
-    nvvk::Specialization specialization;
-    specialization.add(0, m_useSER ? 1 : 0);
-
     // Creating all shaders
     enum StageIndices
     {
@@ -577,6 +574,12 @@ private:
     m_dutil->setObjectName(stages[eRaygen].module, "Raygen");
     m_dutil->setObjectName(stages[eMiss].module, "Miss");
     m_dutil->setObjectName(stages[eClosestHit].module, "Closest Hit");
+#endif
+
+#if !USE_SLANG
+    nvvk::Specialization specialization;
+    specialization.add(0, m_useSER ? 1 : 0);
+    stages[eRaygen].pSpecializationInfo = specialization.getSpecialization();
 #endif
 
     // Shader groups

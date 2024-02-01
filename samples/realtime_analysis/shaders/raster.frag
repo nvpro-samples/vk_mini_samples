@@ -47,7 +47,9 @@ layout(binding = eParticles, scalar) buffer Particles_
 };
 
 
-// utility for temperature
+// Utility for temperature and landscapeColor:
+// Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at
+// low, high, and (low + high) * 0.5.
 float fade(float low, float high, float value)
 {
   float mid   = (low + high) * 0.5;

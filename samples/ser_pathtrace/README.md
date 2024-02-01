@@ -21,3 +21,6 @@ As a result when activating SER, we can see that the execution is better distrib
 
 ![](docs/ser_2.png)
 
+## Slang Note
+
+SER is currently always enabled in the shaders for Slang. It can be turned off by editing the value of `USE_SER` in `shaders/pathtrace.slang`.

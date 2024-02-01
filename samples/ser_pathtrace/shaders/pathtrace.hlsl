@@ -18,13 +18,15 @@
  */
 
 
+#include "common/shaders/glsl_type.hlsli"
 #include "device_host.h"
 #include "dh_bindings.h"
 
-#include "sky.hlsli"
-#include "ggx.hlsli"
-#include "constants.hlsli"
-#include "random.hlsli"
+#include "common/shaders/sky.hlsli"
+#include "common/shaders/ggx.hlsli"
+#include "common/shaders/constants.hlsli"
+#include "common/shaders/functions.hlsli"
+#include "common/shaders/random.hlsli"
 
 // Bindings
 [[vk::constant_id(0)]] const int USE_SER = 0;

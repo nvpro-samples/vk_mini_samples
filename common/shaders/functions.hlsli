@@ -111,7 +111,9 @@ float3 IntegerToColor(uint val)
   return float3(sin(freq * val) * .5 + .5);
 }
 
-// utility for temperature
+// Utility for temperature and landscapeColor:
+// Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at
+// low, high, and (low + high) * 0.5.
 float fade(float low, float high, float value)
 {
   float mid = (low + high) * 0.5;
@@ -123,6 +125,23 @@ float fade(float low, float high, float value)
 // Return a cold-hot color based on intensity [0-1]
 float3 temperature(float intensity)
 {
+  const float3 blue   = float3(0.0, 0.0, 1.0);
+  const float3 cyan   = float3(0.0, 1.0, 1.0);
+  const float3 green  = float3(0.0, 1.0, 0.0);
+  const float3 yellow = float3(1.0, 1.0, 0.0);
+  const float3 red    = float3(1.0, 0.0, 0.0);
+
+  float3 color = (fade(-0.25, 0.25, intensity) * blue    //
+                  + fade(0.0, 0.5, intensity) * cyan     //
+                  + fade(0.25, 0.75, intensity) * green  //
+                  + fade(0.5, 1.0, intensity) * yellow   //
+                  + smoothstep(0.75, 1.0, intensity) * red);
+  return color;
+}
+
+// Return a landscape color based on height [0-1]
+float3 landscapeColor(float height)
+{
   const float3 water = float3(0.0, 0.0, 0.5);
   const float3 sand = float3(0.8, 0.7, 0.4);
   const float3 green = float3(0.1, 0.4, 0.1);
@@ -130,11 +149,11 @@ float3 temperature(float intensity)
   const float3 snow = float3(1.0, 1.0, 1.0);
 
 
-  float3 color = (fade(-0.25, 0.25, intensity) * water //
-                + fade(0.0, 0.5, intensity) * sand //
-                + fade(0.25, 0.75, intensity) * green //
-                + fade(0.5, 1.0, intensity) * rock //
-                + smoothstep(0.75, 1.0, intensity) * snow);
+  float3 color = (fade(-0.25, 0.25, height) * water //
+                + fade(0.0, 0.5, height) * sand //
+                + fade(0.25, 0.75, height) * green //
+                + fade(0.5, 1.0, height) * rock //
+                + smoothstep(0.75, 1.0, height) * snow);
   return color;
 }
 

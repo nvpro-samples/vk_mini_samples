@@ -12,6 +12,7 @@ add_subdirectory(ray_query)
 add_subdirectory(shader_printf)
 add_subdirectory(ray_trace)
 add_subdirectory(rectangle)
+add_subdirectory(ser_pathtrace)
 add_subdirectory(shader_object)
 add_subdirectory(simple_polygons)
 add_subdirectory(solid_color)
@@ -27,7 +28,6 @@ if(NOT USE_HLSL)
   add_subdirectory(barycentric_wireframe) # Bug with EXT_fragment_shader_barycentric
   add_subdirectory(ray_query_position_fetch)   # No support for fetch
   add_subdirectory(ray_tracing_position_fetch) # No support for fetch
-  add_subdirectory(ser_pathtrace) # no support for SER
   add_subdirectory(realtime_analysis) # Missing some functions to make realtime analysis
   add_subdirectory(ray_trace_motion_blur) # no motion
 endif()

@@ -32,7 +32,6 @@
 
 // clang-format off
 layout(location = 0) rayPayloadInEXT HitPayload payload;
-layout(constant_id = 0) const int USE_SER = 0;
 hitAttributeEXT vec3 objAttribs; //layout(location = 0) hitObjectAttributeNV vec3 objAttribs;
 
 layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
