@@ -89,7 +89,8 @@ class SerPathtrace : public nvvkhl::IAppElement
   enum
   {
     eImgTonemapped,
-    eImgRendered
+    eImgRendered,
+    eImgHeatmap,
   };
 
 public:
@@ -155,12 +156,28 @@ public:
       {
         PropertyEditor::begin();
         {
-          changed |= PropertyEditor::entry("Heatmap", [&] { return ImGui::Checkbox("", (bool*)&m_pushConst.heatmap); });
           if(PropertyEditor::entry("Use SER", [&] { return ImGui::Checkbox("", (bool*)&m_useSER); }))
           {
             changed = true;
             vkDeviceWaitIdle(m_device);
             createRtxPipeline();
+          }
+
+          if(PropertyEditor::entry("Heatmap", [&] {
+               static const ImVec4 highlightColor = ImVec4(118.f / 255.f, 185.f / 255.f, 0.f, 1.f);
+               ImVec4 selectedColor = m_showHeatmap ? highlightColor : ImGui::GetStyleColorVec4(ImGuiCol_Button);
+               ImVec4 hoveredColor = ImVec4(selectedColor.x * 1.2f, selectedColor.y * 1.2f, selectedColor.z * 1.2f, 1.f);
+               ImGui::PushStyleColor(ImGuiCol_Button, selectedColor);
+               ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoveredColor);
+               ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, 5));
+               bool result = ImGui::ImageButton("##but", m_gBuffers->getDescriptorSet(eImgHeatmap),
+                                                ImVec2(100 * m_gBuffers->getAspectRatio(), 100));
+               ImGui::PopStyleColor(2);
+               ImGui::PopStyleVar();
+               return result;
+             }))
+          {
+            m_showHeatmap = !m_showHeatmap;
           }
         }
         PropertyEditor::end();
@@ -209,7 +226,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer image
-      ImGui::Image(m_gBuffers->getDescriptorSet(eImgTonemapped), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_gBuffers->getDescriptorSet(m_showHeatmap ? eImgHeatmap : eImgTonemapped), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -226,21 +243,15 @@ public:
       return;
     }
 
-    float     view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    glm::vec3 eye;
-    glm::vec3 center;
-    glm::vec3 up;
-    CameraManip.getLookat(eye, center, up);
-
     // Update Frame buffer uniform buffer
     DH::FrameInfo finfo{};
     const auto&   clip = CameraManip.getClipPlanes();
     finfo.view         = CameraManip.getMatrix();
-    finfo.proj         = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
+    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), m_gBuffers->getAspectRatio(), clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.projInv = glm::inverse(finfo.proj);
     finfo.viewInv = glm::inverse(finfo.view);
-    finfo.camPos  = eye;
+    finfo.camPos  = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // Update the sky
@@ -350,7 +361,7 @@ private:
 
     // Setting camera to see the scene
     CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({0.0F, 2.0F, static_cast<float>(num_obj) * obj_spacing}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    CameraManip.setLookat({0.0F, 2.0F, static_cast<float>(num_obj) * obj_spacing * 1.5f}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
 
     // Default parameters for overall material
     m_pushConst.intensity             = 1.0F;
@@ -360,8 +371,6 @@ private:
     m_pushConst.frame                 = 0;
     m_pushConst.fireflyClampThreshold = 10;
     m_pushConst.maxSamples            = 2;
-    m_pushConst.heatmap               = 0;
-
 
     // Default Sky values
     m_skyParams = nvvkhl_shaders::initSkyShaderParameters();
@@ -371,9 +380,9 @@ private:
   void createGbuffers(const glm::vec2& size)
   {
     // Rendering image targets
-    m_viewSize                          = size;
-    std::vector<VkFormat> color_buffers = {m_colorFormat, m_colorFormat};  // tonemapped, original
-    m_gBuffers                          = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
+    m_viewSize = size;
+    std::vector<VkFormat> color_buffers = {m_colorFormat, m_colorFormat, m_colorFormat};  // tonemapped, original, heatmap
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
                                                    VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
                                                    color_buffers, m_depthFormat);
   }
@@ -527,6 +536,7 @@ private:
     // Create Binding Set
     m_rtSet->addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
     m_rtSet->addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_outHeatmap, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
     m_rtSet->addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
     m_rtSet->addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
     m_rtSet->addBinding(B_heatStats, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
@@ -653,6 +663,7 @@ private:
     descASInfo.accelerationStructureCount = 1;
     descASInfo.pAccelerationStructures    = &tlas;
     VkDescriptorImageInfo  imageInfo{{}, m_gBuffers->getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL};
+    VkDescriptorImageInfo  heatInfo{{}, m_gBuffers->getColorImageView(eImgHeatmap), VK_IMAGE_LAYOUT_GENERAL};
     VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo dbi_heatstats{m_bHeatStats.buffer, 0, VK_WHOLE_SIZE};
@@ -672,6 +683,7 @@ private:
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &descASInfo));
     writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &imageInfo));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_outHeatmap, &heatInfo));
     writes.emplace_back(m_rtSet->makeWrite(0, B_frameInfo, &dbi_unif));
     writes.emplace_back(m_rtSet->makeWrite(0, B_skyParam, &dbi_sky));
     writes.emplace_back(m_rtSet->makeWrite(0, B_heatStats, &dbi_heatstats));
@@ -772,7 +784,8 @@ private:
   nvvk::Buffer                 m_bSkyParams;
   nvvk::Buffer                 m_bHeatStats;
 
-  bool m_useSER{false};
+  bool m_useSER      = true;
+  bool m_showHeatmap = false;
 
   // Data and setting
   std::vector<nvh::PrimitiveMesh> m_meshes;
@@ -814,7 +827,14 @@ auto main(int argc, char** argv) -> int
   VkPhysicalDeviceShaderClockFeaturesKHR clockFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
   spec.vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
   spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-  spec.vkSetup.addDeviceExtension("VK_NV_ray_tracing_invocation_reorder");
+
+  VkPhysicalDeviceShaderSMBuiltinsFeaturesNV smBuiltinFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_FEATURES_NV};
+  spec.vkSetup.addDeviceExtension(VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME, false, &smBuiltinFeature);
+
+  VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV reorderFeature{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV};
+  spec.vkSetup.addDeviceExtension(VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, false, &reorderFeature);
+
 #if USE_HLSL  // DXC is automatically adding the extension
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
   spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);

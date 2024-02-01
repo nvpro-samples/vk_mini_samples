@@ -26,10 +26,11 @@
 #include "dh_bindings.h"
 
 // Bindings
-static const int USE_SER = 1;
+static const int USE_SER = 1; // Missing Specialization constant feature #Slang
 [[vk::push_constant]]  ConstantBuffer<PushConstant> pushConst;
 [[vk::binding(B_tlas)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
+[[vk::binding(B_outHeatmap)]] RWTexture2D<float4> outHeatmap;
 [[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
 [[vk::binding(B_heatStats)]] RWStructuredBuffer<HeatStats> heatStats;
@@ -344,7 +345,6 @@ void rgenMain()
   bool first_frame = (pushConst.frame == 0);
 
   // Debug - Heatmap
-  if(pushConst.heatmap == 1)
   {
     uint64_t end = ReadClock();
     uint duration = uint(end - start);
@@ -359,11 +359,12 @@ void rgenMain()
     float high = float(maxDuration) * 0.50;
 
     float val = clamp(float(duration) / high, 0.0F, 1.0F);
-    pixel_color = temperature(val);
+    float3 heat_color = temperature(val);
 
-    first_frame = true;
     // Wrap & SM visualization
-    //pixel_color = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);
+    // heat_color = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);
+
+    outHeatmap[int2(launchID)] = float4(heat_color, 1.0);
   }
 
   // Saving result

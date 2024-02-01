@@ -51,6 +51,7 @@ layout(location = 0) rayPayloadEXT HitPayload payload;
 
 layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
+layout(set = 0, binding = B_outHeatmap, rgba32f) uniform image2D heatmap;
 layout(set = 0, binding = B_frameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
 layout(set = 0, binding = B_skyParam) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
 layout(set = 0, binding = B_heatStats) buffer HeatStats_ { HeatStats heatStats; };
@@ -62,14 +63,12 @@ layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[
 
 layout(location = 0) hitObjectAttributeNV vec3 objAttribs;
 
-layout(constant_id = 0) const int USE_SER = 0;
+layout(constant_id = 0) const int USE_SER = 1;
 
 // clang-format on
 
 
 #include "gethit.h"
-
-#define USE_RAYQUERY 1
 
 layout(push_constant) uniform RtxPushConstant_
 {
@@ -303,7 +302,7 @@ void main()
   bool first_frame = (pc.frame == 0);
 
   // Debug - Heatmap
-  if(pc.heatmap == 1)
+  //if(pc.heatmap == 1)
   {
     uint64_t end      = clockRealtimeEXT();
     uint     duration = uint(end - start);
@@ -318,11 +317,12 @@ void main()
     float high = float(maxDuration) * 0.50;
 
     float val   = clamp(float(duration) / high, 0.0F, 1.0F);
-    pixel_color = temperature(val);
+    vec3 heat_color = temperature(val);
 
-    first_frame = true;
     // Wrap & SM visualization
-    //pixel_color = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);
+    // heatcolor = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);
+
+    imageStore(heatmap, ivec2(gl_LaunchIDEXT.xy), vec4(heat_color, 1.0F));
   }
 
   // Saving result

@@ -22,8 +22,8 @@
 
 #define B_tlas 0
 #define B_outImage 1
-#define B_frameInfo 2
-//#define B_sceneDesc   3
+#define B_outHeatmap 2
+#define B_frameInfo 3
 #define B_skyParam 4
 #define B_materials 5
 #define B_instances 6
