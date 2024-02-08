@@ -31,11 +31,8 @@ struct PushConstant
 
 struct FrameInfo
 {
-  mat4 proj;
-  mat4 view;
   mat4 projInv;
   mat4 viewInv;
-  vec3 camPos;
 };
 
 

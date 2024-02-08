@@ -135,8 +135,8 @@ void rgenMain()
   const float2 pixelCenter = launchID;
   const float2 inUV = pixelCenter / launchSize;
   const float2 d = inUV * 2.0 - 1.0;
-  const float4 target = mul(frameInfo.projInv, float4(d.x, d.y, 0.01, 1.0));
   const uint rayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+  const float4 target = mul(frameInfo.projInv, float4(d.x, d.y, 1.0, 1.0));
 
   RayDesc ray;
   ray.Origin = mul(frameInfo.viewInv, float4(0.0, 0.0, 0.0, 1.0)).xyz;

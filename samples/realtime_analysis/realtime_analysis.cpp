@@ -149,7 +149,7 @@ public:
     // #INSPECTOR
     nvvkhl::ElementInspector::InitInfo inspectInfo{
         .device                   = m_device,
-        .transferQueueFamilyIndex = m_app->getQueueT().familyIndex,
+        .graphicsQueueFamilyIndex = m_app->getQueueGCT().familyIndex,
         .allocator                = m_alloc.get(),
         .imageCount               = 1u,
         .bufferCount              = 2u,
@@ -187,15 +187,15 @@ public:
     ImGui::TextDisabled("%d FPS / %.3fms", static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
     PE::begin();
     ImGui::SeparatorText("Visual");
-    PE::entry("Radius", [&] { return ImGui::SliderFloat("##1", &m_settings.particleRadius, 0.005, 0.05); });
-    PE::entry("Volume", [&] { return ImGui::SliderFloat("##1", (float*)&pS.boundsMultiplier, 1.0, 15.0); });
+    PE::entry("Radius", [&] { return ImGui::SliderFloat("##1", &m_settings.particleRadius, 0.005f, 0.05f); });
+    PE::entry("Volume", [&] { return ImGui::SliderFloat("##1", (float*)&pS.boundsMultiplier, 1.0f, 15.0f); });
     ImGui::SeparatorText("Physics");
     PE::entry("Gravity", [&] { return ImGui::SliderFloat("##1", &pS.gravity, -10.0, 0); });
     PE::entry("Collision Damping", [&] {
       return ImGui::SliderFloat("##1", &pS.collisionDamping, 0.0, 1, "%.5f", ImGuiSliderFlags_Logarithmic);
     });
     PE::entry("Smoothing Radius", [&] {
-      return ImGui::SliderFloat("##1", &pS.smoothingRadius, 0.2, 2, "%.5f", ImGuiSliderFlags_Logarithmic);
+      return ImGui::SliderFloat("##1", &pS.smoothingRadius, 0.2f, 2, "%.5f", ImGuiSliderFlags_Logarithmic);
     });
     PE::entry("Target Density", [&] { return ImGui::SliderFloat("##1", &pS.targetDensity, 0.0, 500); });
     PE::entry("Pressure Multiplier", [&] { return ImGui::SliderFloat("##1", &pS.pressureMultiplier, 0.0, 100); });
@@ -285,11 +285,14 @@ public:
     renderParticles(cmd);
 
     // #INSPECTOR
-    g_inspectorElement->inspectBuffer(cmd, 0);
-    g_inspectorElement->inspectBuffer(cmd, 1);
-    g_inspectorElement->inspectImage(cmd, 0, VK_IMAGE_LAYOUT_GENERAL);
-    g_inspectorElement->inspectFragmentVariables(cmd, 0);
-    g_inspectorElement->inspectComputeVariables(cmd, 0);
+    {
+      auto _scopeInspection = m_dutil->scopeLabel(cmd, "Inspection");
+      g_inspectorElement->inspectBuffer(cmd, 0);
+      g_inspectorElement->inspectBuffer(cmd, 1);
+      g_inspectorElement->inspectImage(cmd, 0, VK_IMAGE_LAYOUT_GENERAL);
+      g_inspectorElement->inspectFragmentVariables(cmd, 0);
+      g_inspectorElement->inspectComputeVariables(cmd, 0);
+    }
   }
 
 
@@ -491,8 +494,8 @@ private:
 #endif
 
     // Create the shaders
-    NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), shaderCreateInfos.size(), shaderCreateInfos.data(), NULL,
-                                  m_shaders.data()));
+    NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), static_cast<int>(shaderCreateInfos.size()),
+                                  shaderCreateInfos.data(), NULL, m_shaders.data()));
   }
 
   void createVkBuffers()
@@ -535,16 +538,17 @@ private:
 
   void computeSimulation(VkCommandBuffer cmd)
   {
-    auto sec = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
+    auto _scope = m_dutil->DBG_SCOPE(cmd);
+    auto sec    = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
 
     if((m_settings.play || m_settings.runOnce))
     {
       DH::ParticleSetting& pSetting             = m_particleSetting;
-      pSetting.poly6ScalingFactor               = 4 / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 8));
-      pSetting.spikyPow3ScalingFactor           = 10 / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 5));
-      pSetting.spikyPow2ScalingFactor           = 6 / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 4));
-      pSetting.spikyPow3DerivativeScalingFactor = 30 / (glm::pow(pSetting.smoothingRadius, 5) * glm::pi<float>());
-      pSetting.spikyPow2DerivativeScalingFactor = 12 / (glm::pow(pSetting.smoothingRadius, 4) * glm::pi<float>());
+      pSetting.poly6ScalingFactor               = 4.f / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 8.f));
+      pSetting.spikyPow3ScalingFactor           = 10.f / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 5.f));
+      pSetting.spikyPow2ScalingFactor           = 6.f / (glm::pi<float>() * glm::pow(pSetting.smoothingRadius, 4.f));
+      pSetting.spikyPow3DerivativeScalingFactor = 30.f / (glm::pow(pSetting.smoothingRadius, 5.f) * glm::pi<float>());
+      pSetting.spikyPow2DerivativeScalingFactor = 12.f / (glm::pow(pSetting.smoothingRadius, 4.f) * glm::pi<float>());
       pSetting.numParticles                     = NUM_PARTICLES;
       pSetting.deltaTime                        = std::min(1.f / 60.0f, ImGui::GetIO().DeltaTime);
       pSetting.boundsSize               = glm::vec2(m_gBuffers->getAspectRatio(), 1) * pSetting.boundsMultiplier;
@@ -579,12 +583,15 @@ private:
       m_pushConst.numWorkGroups = glm::vec3(numBlocks, 1, 1);
 
       vkCmdUpdateBuffer(cmd, m_bParticleSetting.buffer, 0, sizeof(DH::ParticleSetting), &m_particleSetting);
+      memoryBarrier(cmd);  // Make sure the buffer is ready before executing any dispach shader
 
-      dispatch(cmd, eExternalForcesShd, numBlocks);
+
+      dispatch(cmd, eExternalForcesShd, numBlocks, "ExternalForce");
       {
-        auto tsort = g_profiler->timeRecurring("Sorting", cmd);  // #PROFILER
+        auto _scopeSort = m_dutil->scopeLabel(cmd, "Sort");
+        auto tsort      = g_profiler->timeRecurring("Sort", cmd);  // #PROFILER
 
-        dispatch(cmd, eUpdateSpatialHashShd, numBlocks);
+        dispatch(cmd, eUpdateSpatialHashShd, numBlocks, "Hash");
 
         // Sorting: https://en.wikipedia.org/wiki/Bitonic_sorter
         // Launch each step of the sorting algorithm (once the previous step is complete)
@@ -604,18 +611,30 @@ private:
             dispatch(cmd, eBitonicSort, nextPowerOfTwo(NUM_PARTICLES) / 2);
           }
         }
-        dispatch(cmd, eBitonicSortOffsets, NUM_PARTICLES);  // Calculate offset
+        dispatch(cmd, eBitonicSortOffsets, NUM_PARTICLES, "Offsets");  // Calculate offset
       }
-      dispatch(cmd, eCalculateDensitiesShd, numBlocks);
-      dispatch(cmd, eCalculatePressureForceShd, numBlocks);
-      dispatch(cmd, eCalculateViscosityShd, numBlocks);
-      dispatch(cmd, eUpdatePositionsShd, numBlocks);
+      dispatch(cmd, eCalculateDensitiesShd, numBlocks, "Density");
+      dispatch(cmd, eCalculatePressureForceShd, numBlocks, "Pressure");
+      dispatch(cmd, eCalculateViscosityShd, numBlocks, "Viscosity");
+      dispatch(cmd, eUpdatePositionsShd, numBlocks, "Position");
     }
+  }
+
+  void memoryBarrier(VkCommandBuffer cmd)
+  {
+    VkMemoryBarrier mb{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+    };
+    VkPipelineStageFlags srcDstStage{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+    vkCmdPipelineBarrier(cmd, srcDstStage, srcDstStage, 0, 1, &mb, 0, nullptr, 0, nullptr);
   }
 
   void renderParticles(VkCommandBuffer cmd)
   {
-    auto sec = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
+    auto _scope = m_dutil->DBG_SCOPE(cmd);
+    auto sec    = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
 
     // Update Frame buffer uniform buffer
     DH::FrameInfo finfo{};
@@ -654,7 +673,7 @@ private:
     vkCmdBindIndexBuffer(cmd, m_bParticle.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 
     // Draw all particles in a single draw call, 2 triangles: always 6 indices
-    vkCmdDrawIndexed(cmd, 6, m_particles.size(), 0, 0, 0);
+    vkCmdDrawIndexed(cmd, 6, static_cast<int>(m_particles.size()), 0, 0, 0);
 
     vkCmdEndRendering(cmd);  // End the rendering
   }
@@ -665,25 +684,33 @@ private:
   {
     using EI = nvvkhl::ElementInspector;
     {
-      EI::BufferInspectionInfo info{};
-      EI::appendStructToFormat(info.format, EI::formatVector2(EI::eFloat32, ""), "position");
-      EI::appendStructToFormat(info.format, EI::formatVector2(EI::eFloat32, ""), "predictedPosition");
-      EI::appendStructToFormat(info.format, EI::formatVector2(EI::eFloat32, ""), "velocity");
-      EI::appendStructToFormat(info.format, EI::formatVector2(EI::eFloat32, ""), "density");
-      info.entryCount   = NUM_PARTICLES;
-      info.name         = "Particles";
-      info.sourceBuffer = m_bParticles.buffer;
+      EI::BufferInspectionInfo info{
+          .name         = "Particles",
+          .sourceBuffer = m_bParticles.buffer,
+          .format =
+              {
+                  {EI::eF32Vec2, "position"},
+                  {EI::eF32Vec2, "predictedPosition"},
+                  {EI::eF32Vec2, "velocity"},
+                  {EI::eF32Vec2, "density"},
+              },
+          .entryCount = NUM_PARTICLES,
+      };
       g_inspectorElement->initBufferInspection(0, info);
     }
     {
-      EI::BufferInspectionInfo info{};
-      EI::appendStructToFormat(info.format, EI::formatUint32(""), "originalIndex");
-      EI::appendStructToFormat(info.format, EI::formatUint32(""), "hash");
-      EI::appendStructToFormat(info.format, EI::formatUint32(""), "key");
-      EI::appendStructToFormat(info.format, EI::formatUint32(""), "offset");
-      info.entryCount   = NUM_PARTICLES;
-      info.name         = "HashInfo";
-      info.sourceBuffer = m_bSpatialInfo.buffer;
+      EI::BufferInspectionInfo info{
+          .name         = "HashInfo",
+          .sourceBuffer = m_bSpatialInfo.buffer,
+          .format =
+              {
+                  {EI::eUint32, "originalIndex"},
+                  {EI::eUint32, "hash"},
+                  {EI::eUint32, "key"},
+                  {EI::eUint32, "offset"},
+              },
+          .entryCount = NUM_PARTICLES,
+      };
       g_inspectorElement->initBufferInspection(1, info);
     }
   }
@@ -694,7 +721,7 @@ private:
     using EI = nvvkhl::ElementInspector;
     EI::ComputeInspectionInfo info{
         .name             = "Pressure",
-        .comment          = "",
+        .format           = {{EI::eF32Vec2, "pressure"}, {EI::eUint32, "Num Elem"}},
         .gridSizeInBlocks = {getNumBlocks(), 1, 1},  // What dispatch receives
         .blockSize        = {WORKGROUP_SIZE, 1, 1},  // Workgroup size, as defined in the shader
         .minBlock         = {0, 0, 0},
@@ -702,8 +729,7 @@ private:
         .minWarp          = {0u},
         .maxWarp          = {~0u},
     };
-    EI::appendStructToFormat(info.format, EI::formatVector2(EI::eFloat32, ""), "pressure");
-    EI::appendStructToFormat(info.format, EI::formatUint32(""), "Num Elem");
+
     g_inspectorElement->initComputeInspection(0, info);
   }
 
@@ -727,7 +753,7 @@ private:
     // Inspection of a variable in the fragment shader within an area of the frame
     EI::FragmentInspectionInfo fragInspectInfo{
         .name        = "My Fragment Inspection",
-        .format      = EI::formatFloat32("velocity"),
+        .format      = {{EI::eF32Vec2, "velocity"}},
         .renderSize  = glm::uvec2(size.width, size.height),
         .minFragment = glm::uvec2(0, 0),  // Inspection min/max corner, will be updated at rendering
         .maxFragment = glm::uvec2(2, 2),  // time, using the mouse position.
@@ -744,13 +770,18 @@ private:
   }
 
   // Dispatch computer shader
-  void dispatch(VkCommandBuffer cmd, int shaderID, int numBlocks)
+  void dispatch(VkCommandBuffer cmd, int shaderID, int numBlocks, const std::string& label = "")
   {
+    VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0f, 1.0f, 1.0f, 1.0f}};
+    if(!label.empty())
+      vkCmdBeginDebugUtilsLabelEXT(cmd, &s);
+
     const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
     vkCmdBindShadersEXT(cmd, 1, stages, &m_shaders[shaderID]);
-    //vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::ParticleSetting), &m_particleSetting);
     vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
     vkCmdDispatch(cmd, numBlocks, 1, 1);
+    if(!label.empty())
+      vkCmdEndDebugUtilsLabelEXT(cmd);
   }
 
   uint32_t nextPowerOfTwo(uint32_t n)
@@ -861,6 +892,7 @@ int main(int argc, char** argv)
   app->addElement(g_inspectorElement);                           // #INSPECTOR Vk object inspector
   app->addElement(std::make_shared<RealtimeAnalysis>());         // This sample
 
+  g_profiler->setLabelUsage(false);  // Not using the "auto debug scope naming", using our own instead
 
   app->run();
 

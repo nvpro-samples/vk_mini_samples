@@ -104,34 +104,34 @@ void traceRay(RayDesc ray, inout HitPayload payload)
 {
   payload.hitT = 0.0F;
   uint rayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
-  if(USE_SER == 1)
+  if (pushConst.useSER == 1)
   {
-    HitObject hitObj = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
-    ReorderThread(hitObj);
-    
-    vec3 attribs = hitObj.GetAttributes < vec3 > ();
-    
-    RayDesc rayDesc = hitObj.GetRayDesc();
+      HitObject hitObj = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
+      ReorderThread(hitObj);
 
-    payload.hitT = rayDesc.TMax;
-    
-    if(hitObj.IsHit())
-    {
-      int meshID = hitObj.GetInstanceIndex();
-      int triID = hitObj.GetPrimitiveIndex();
-      float4x3 objectToWorld = hitObj.GetObjectToWorld();
-      float4x3 worldToObject = hitObj.GetWorldToObject();
-      HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, attribs);
-      payload.pos = hit.pos;
-      payload.nrm = hit.nrm;
-      payload.instanceIndex = hitObj.GetInstanceID();     
-    }
-    
-    HitObject::Invoke(topLevelAS, hitObj, payload);
+      float3 attribs = hitObj.GetAttributes<float3>();
+
+      RayDesc rayDesc = hitObj.GetRayDesc();
+
+      payload.hitT = rayDesc.TMax;
+
+      if (hitObj.IsHit())
+      {
+          int meshID = hitObj.GetInstanceIndex();
+          int triID = hitObj.GetPrimitiveIndex();
+          float4x3 objectToWorld = hitObj.GetObjectToWorld();
+          float4x3 worldToObject = hitObj.GetWorldToObject();
+          HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, attribs);
+          payload.pos = hit.pos;
+          payload.nrm = hit.nrm;
+          payload.instanceIndex = hitObj.GetInstanceID();
+      }
+
+      HitObject::Invoke(topLevelAS, hitObj, payload);
   }
   else
   {
-    TraceRay(topLevelAS, rayFlags, 0xff, 0, 0, 0, ray, payload);
+      TraceRay(topLevelAS, rayFlags, 0xff, 0, 0, 0, ray, payload);
   }
 }
 
@@ -143,19 +143,18 @@ bool traceShadow(RayDesc ray, inout HitPayload payload)
   payload.hitT = 0.0F;
   uint rayFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER;
   bool isHit;
-  if(USE_SER == 1)
+  if (pushConst.useSER == 1)
   {
-    HitObject hit = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
-    isHit = hit.IsHit();
+      HitObject hit = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
+      isHit = hit.IsHit();
   }
   else
   {
-    TraceRay(topLevelAS, rayFlags, 0xff, 0, 0, 0, ray, payload);
-    isHit = payload.hitT < INFINITE;
+      TraceRay(topLevelAS, rayFlags, 0xff, 0, 0, 0, ray, payload);
+      isHit = payload.hitT < INFINITE;
   }
   return isHit;
 }
-
 
 //-----------------------------------------------------------------------
 //-----------------------------------------------------------------------
@@ -164,108 +163,105 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
   float3 radiance = float3(0.0F, 0.0F, 0.0F);
   float3 throughput = float3(1.0F, 1.0F, 1.0F);
 
-  //Materials materials = Materials(sceneDesc.materialAddress);
+  // Materials materials = Materials(sceneDesc.materialAddress);
 
-  for(int depth = 0; depth < pushConst.maxDepth; depth++)
+  for (int depth = 0; depth < pushConst.maxDepth; depth++)
   {
-    traceRay(r, payload);
+      traceRay(r, payload);
 
-    // Hitting the environment, then exit
-    if(payload.hitT == INFINITE)
-    {
-      float3 sky_color = proceduralSky(skyInfo, r.Direction, 0.0F);
-      return radiance + (sky_color * throughput);
-    }
-
-    // Retrieve the Instance buffer information
-    uint matID = instanceInfo[payload.instanceIndex].materialID;
-  
-    // Retrieve the material color
-    float4 albedo = materials[matID];
-   
-    float pdf = 0.0F;
-    float3 V = -r.Direction;
-    float3 L = normalize(skyInfo.directionToLight);
-
-    // Setting up the material
-    PbrMaterial pbrMat;
-    pbrMat.albedo = albedo;
-    pbrMat.roughness = pushConst.roughness;
-    pbrMat.metallic = pushConst.metallic;
-    pbrMat.normal = payload.nrm;
-    pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
-    pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pushConst.metallic);
-
-
-    // Add dummy divergence
-    // This sample shader is too simple to show the benefits of sorting
-    // rays, with this we create some artificial workload depending on the
-    // material ID
-    float3 dummy = payload.nrm;
-    uint dummyLoop = (matID * 128) & (1024 - 1);
-    for(uint i = 0; i < dummyLoop; i++)
-    {
-      dummy = sin(dummy);
-    }
-
-    pbrMat.albedo.xyz += dummy * 0.01;
-
-    float3 contrib = float3(0, 0, 0);
-
-    // Evaluation of direct light (sun)
-    bool nextEventValid = (dot(L, payload.nrm) > 0.0f);
-    if(nextEventValid)
-    {
-      BsdfEvaluateData evalData;
-      evalData.k1 = -r.Direction;
-      evalData.k2 = normalize(skyInfo.directionToLight);
-      bsdfEvaluate(evalData, pbrMat);
-
-      const float3 w = pushConst.intensity.xxx;
-      contrib += w * evalData.bsdf_diffuse;
-      contrib += w * evalData.bsdf_glossy;
-      contrib *= throughput;
-    }
-
-
-    // Sample BSDF
-    {
-      BsdfSampleData sampleData;
-      sampleData.k1 = -r.Direction; // outgoing direction
-      sampleData.xi = float4(rand(seed), rand(seed), rand(seed), rand(seed));
-
-      bsdfSample(sampleData, pbrMat);
-      if(sampleData.event_type == BSDF_EVENT_ABSORB)
+      // Hitting the environment, then exit
+      if (payload.hitT == INFINITE)
       {
-        break; // Need to add the contribution ?
+          float3 sky_color = proceduralSky(skyInfo, r.Direction, 0.0F);
+          return radiance + (sky_color * throughput);
       }
 
-      throughput *= sampleData.bsdf_over_pdf;
-      r.Origin = offsetRay(payload.pos, payload.nrm);
-      r.Direction = sampleData.k2;
-    }
+      // Retrieve the Instance buffer information
+      uint matID = instanceInfo[payload.instanceIndex].materialID;
 
+      // Retrieve the material color
+      float4 albedo = materials[matID];
 
-    // Russian-Roulette (minimizing live state)
-    float rrPcont = min(max(throughput.x, max(throughput.y, throughput.z)) + 0.001F, 0.95F);
-    if(rand(seed) >= rrPcont)
-      break; // paths with low throughput that won't contribute
-    throughput /= rrPcont; // boost the energy of the non-terminated paths
+      float pdf = 0.0F;
+      float3 V = -r.Direction;
+      float3 L = normalize(skyInfo.directionToLight);
 
-    // We are adding the contribution to the radiance only if the ray is not occluded by an object.
-    if(nextEventValid)
-    {
-      RayDesc shadowRay;
-      shadowRay.Origin = r.Origin;
-      shadowRay.Direction = L;
-      shadowRay.TMin = 0.01;
-      shadowRay.TMax = INFINITE;
-      bool inShadow = traceShadow(shadowRay, payload);
-      if(!inShadow)
+      // Setting up the material
+      PbrMaterial pbrMat;
+      pbrMat.albedo = albedo;
+      pbrMat.roughness = pushConst.roughness;
+      pbrMat.metallic = pushConst.metallic;
+      pbrMat.normal = payload.nrm;
+      pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
+      pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pushConst.metallic);
+
+      // Add dummy divergence
+      // This sample shader is too simple to show the benefits of sorting
+      // rays, with this we create some artificial workload depending on the
+      // material ID
+      float3 dummy = payload.nrm;
+      uint dummyLoop = (matID * 128) & (1024 - 1);
+      for (uint i = 0; i < dummyLoop; i++)
       {
-        radiance += contrib;
+          dummy = sin(dummy);
       }
-    }
+
+      pbrMat.albedo.xyz += dummy * 0.01;
+
+      float3 contrib = float3(0, 0, 0);
+
+      // Evaluation of direct light (sun)
+      bool nextEventValid = (dot(L, payload.nrm) > 0.0f);
+      if (nextEventValid)
+      {
+          BsdfEvaluateData evalData;
+          evalData.k1 = -r.Direction;
+          evalData.k2 = normalize(skyInfo.directionToLight);
+          bsdfEvaluate(evalData, pbrMat);
+
+          const float3 w = pushConst.intensity.xxx;
+          contrib += w * evalData.bsdf_diffuse;
+          contrib += w * evalData.bsdf_glossy;
+          contrib *= throughput;
+      }
+
+      // Sample BSDF
+      {
+          BsdfSampleData sampleData;
+          sampleData.k1 = -r.Direction; // outgoing direction
+          sampleData.xi = float4(rand(seed), rand(seed), rand(seed), rand(seed));
+
+          bsdfSample(sampleData, pbrMat);
+          if (sampleData.event_type == BSDF_EVENT_ABSORB)
+          {
+              break; // Need to add the contribution ?
+          }
+
+          throughput *= sampleData.bsdf_over_pdf;
+          r.Origin = offsetRay(payload.pos, payload.nrm);
+          r.Direction = sampleData.k2;
+      }
+
+      // Russian-Roulette (minimizing live state)
+      float rrPcont = min(max(throughput.x, max(throughput.y, throughput.z)) + 0.001F, 0.95F);
+      if (rand(seed) >= rrPcont)
+          break;             // paths with low throughput that won't contribute
+      throughput /= rrPcont; // boost the energy of the non-terminated paths
+
+      // We are adding the contribution to the radiance only if the ray is not occluded by an object.
+      if (nextEventValid)
+      {
+          RayDesc shadowRay;
+          shadowRay.Origin = r.Origin;
+          shadowRay.Direction = L;
+          shadowRay.TMin = 0.01;
+          shadowRay.TMax = INFINITE;
+          bool inShadow = traceShadow(shadowRay, payload);
+          if (!inShadow)
+          {
+              radiance += contrib;
+          }
+      }
   }
 
   return radiance;
@@ -303,14 +299,13 @@ float3 samplePixel(inout uint seed, inout HitPayload payload)
 
   // Removing fireflies
   float lum = dot(radiance, float3(0.212671F, 0.715160F, 0.072169F));
-  if(lum > pushConst.fireflyClampThreshold)
+  if (lum > pushConst.fireflyClampThreshold)
   {
-    radiance *= pushConst.fireflyClampThreshold / lum;
+      radiance *= pushConst.fireflyClampThreshold / lum;
   }
 
   return radiance;
 }
-
 
 uint64_t ReadClock()
 {
@@ -328,17 +323,17 @@ void rgenMain()
   float2 launchSize = float2(DispatchRaysDimensions().xy);
 
   uint64_t start = ReadClock(); // Debug - Heatmap
-  
+
   // Initialize the random number
   uint seed = xxhash32(uint3(uint2(launchID.xy), pushConst.frame));
 
   HitPayload payload;
-  
+
   // Sampling n times the pixel
   float3 pixel_color = float3(0.0F, 0.0F, 0.0F);
-  for(int s = 0; s < pushConst.maxSamples; s++)
+  for (int s = 0; s < pushConst.maxSamples; s++)
   {
-    pixel_color += samplePixel(seed, payload);
+      pixel_color += samplePixel(seed, payload);
   }
   pixel_color /= pushConst.maxSamples;
 
@@ -346,37 +341,37 @@ void rgenMain()
 
   // Debug - Heatmap
   {
-    uint64_t end = ReadClock();
-    uint duration = uint(end - start);
+      uint64_t end = ReadClock();
+      uint duration = uint(end - start);
 
-    // log maximum of current frame
-    uint statsIndex = uint(pushConst.frame) & 1;
-    InterlockedMax(heatStats[0].maxDuration[statsIndex], duration, heatStats[0].maxDuration[statsIndex]);
-    // use previous frame's maximum
-    uint maxDuration = heatStats[0].maxDuration[statsIndex ^ 1];
+      // log maximum of current frame
+      uint statsIndex = uint(pushConst.frame) & 1;
+      InterlockedMax(heatStats[0].maxDuration[statsIndex], duration, heatStats[0].maxDuration[statsIndex]);
+      // use previous frame's maximum
+      uint maxDuration = heatStats[0].maxDuration[statsIndex ^ 1];
 
-    // lower ceiling to see some more red ;)
-    float high = float(maxDuration) * 0.50;
+      // lower ceiling to see some more red ;)
+      float high = float(maxDuration) * 0.50;
 
-    float val = clamp(float(duration) / high, 0.0F, 1.0F);
-    float3 heat_color = temperature(val);
+      float val = clamp(float(duration) / high, 0.0F, 1.0F);
+      float3 heat_color = temperature(val);
 
-    // Wrap & SM visualization
-    // heat_color = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);
+      // Wrap & SM visualization
+      // heat_color = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);
 
-    outHeatmap[int2(launchID)] = float4(heat_color, 1.0);
+      outHeatmap[int2(launchID)] = float4(heat_color, 1.0);
   }
 
   // Saving result
-  if(first_frame)
+  if (first_frame)
   { // First frame, replace the value in the buffer
-    outImage[int2(launchID)] = float4(pixel_color, 1.0);
+      outImage[int2(launchID)] = float4(pixel_color, 1.0);
   }
   else
   { // Do accumulation over time
-    float a = 1.0F / float(pushConst.frame + 1);
-    float3 old_color = outImage[int2(launchID)].xyz; //imageLoad(image, ivec2(gl_LaunchIDEXT.xy)).xyz;
-    outImage[int2(launchID)] = float4(lerp(old_color, pixel_color, a), 1.0F);
+      float a = 1.0F / float(pushConst.frame + 1);
+      float3 old_color = outImage[int2(launchID)].xyz; // imageLoad(image, ivec2(gl_LaunchIDEXT.xy)).xyz;
+      outImage[int2(launchID)] = float4(lerp(old_color, pixel_color, a), 1.0F);
   }
 }
 

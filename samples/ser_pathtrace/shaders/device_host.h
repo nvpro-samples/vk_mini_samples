@@ -30,6 +30,7 @@ struct PushConstant
   int   frame;
   float fireflyClampThreshold;
   int   maxSamples;
+  int   useSER;
 };
 
 

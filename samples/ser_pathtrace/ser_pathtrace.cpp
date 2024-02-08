@@ -107,9 +107,10 @@ public:
     m_rtSet      = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_app->getContext().get(), m_alloc.get());
 
-    // Requesting ray tracing properties
+    // Requesting ray tracing properties and reorder properties
     VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-    prop2.pNext = &m_rtProperties;
+    m_rtProperties.pNext = &m_reorderProperties;
+    prop2.pNext          = &m_rtProperties;
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
     // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
@@ -156,6 +157,11 @@ public:
       {
         PropertyEditor::begin();
         {
+          PropertyEditor::entry("SER Mode", fmt::format("{}", m_reorderProperties.rayTracingInvocationReorderReorderingHint
+                                                                      == VK_RAY_TRACING_INVOCATION_REORDER_MODE_REORDER_NV ?
+                                                                  "Active" :
+                                                                  "Not Available"));
+
           if(PropertyEditor::entry("Use SER", [&] { return ImGui::Checkbox("", (bool*)&m_useSER); }))
           {
             changed = true;
@@ -261,6 +267,7 @@ public:
     vkCmdFillBuffer(cmd, m_bHeatStats.buffer, (uint32_t(m_frame) & 1) * sizeof(uint32_t), sizeof(uint32_t), 1);
 
     m_pushConst.frame = m_frame;
+    m_pushConst.useSER = m_useSER;
 
     VkMemoryBarrier memBarrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     memBarrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -800,6 +807,9 @@ private:
   int              m_maxFrames{10000};
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
+  VkPhysicalDeviceRayTracingInvocationReorderPropertiesNV m_reorderProperties{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_PROPERTIES_NV};
+
   nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper
   nvvk::RaytracingBuilderKHR m_rtBuilder;
   nvvkhl::PipelineContainer  m_rtPipe;

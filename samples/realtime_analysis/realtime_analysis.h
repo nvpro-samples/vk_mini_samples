@@ -14,46 +14,46 @@ enum
 };
 
 static DH::ParticleSetting TestA = {
-    .gravity                = -9.8,
-    .collisionDamping       = 0.25,
-    .smoothingRadius        = 0.25,
+    .gravity                = -9.8f,
+    .collisionDamping       = 0.25f,
+    .smoothingRadius        = 0.25f,
     .targetDensity          = 200,
     .pressureMultiplier     = 15,
     .nearPressureMultiplier = 15,
-    .viscosityStrength      = 0.01,
+    .viscosityStrength      = 0.01f,
     .boundsMultiplier       = 10,
 };
 
 static DH::ParticleSetting TestB = {
     .gravity                = 0,
-    .collisionDamping       = 0.95,
-    .smoothingRadius        = 0.35,
+    .collisionDamping       = 0.95f,
+    .smoothingRadius        = 0.35f,
     .targetDensity          = 200,
     .pressureMultiplier     = 40,
     .nearPressureMultiplier = 30,
-    .viscosityStrength      = 0.06,
+    .viscosityStrength      = 0.06f,
     .boundsMultiplier       = 12,
 };
 
 static DH::ParticleSetting TestC = {
     .gravity                = -3,
-    .collisionDamping       = 0.90,
-    .smoothingRadius        = 0.65,
+    .collisionDamping       = 0.90f,
+    .smoothingRadius        = 0.65f,
     .targetDensity          = 200,
     .pressureMultiplier     = 50,
     .nearPressureMultiplier = 20,
-    .viscosityStrength      = 0.04,
+    .viscosityStrength      = 0.04f,
     .boundsMultiplier       = 10,
 };
 
 static DH::ParticleSetting TestD = {
     .gravity                = 0,
-    .collisionDamping       = 0.95,
-    .smoothingRadius        = 0.3,
+    .collisionDamping       = 0.95f,
+    .smoothingRadius        = 0.3f,
     .targetDensity          = 13,
     .pressureMultiplier     = 1,
     .nearPressureMultiplier = 1,
-    .viscosityStrength      = 0.02,
+    .viscosityStrength      = 0.02f,
     .boundsMultiplier       = 9,
 };
 

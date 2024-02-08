@@ -101,9 +101,11 @@ function(create_sample  PROJECT_NAME)
     message(STATUS "Processing Project ${PROJECT_NAME}")
     add_executable(${PROJECT_NAME})
     
-    if (MSVC)
-      add_compile_options(/W3)       # warning level 3
-    endif()
+    # Force good level of warnings
+    target_compile_options(${PROJECT_NAME} PRIVATE
+      $<$<CXX_COMPILER_ID:MSVC>:/W3>
+      $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall>
+    )
 
     set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
     set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)

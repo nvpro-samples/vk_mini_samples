@@ -33,27 +33,23 @@
 */
 //////////////////////////////////////////////////////////////////////////
 
-#include <array>
-#include <vulkan/vulkan_core.h>
+
+#define IMGUI_DEFINE_MATH_OPERATORS  // ImGUI ImVec maths
 
 #define VMA_IMPLEMENTATION
+#include "imgui/imgui_axis.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "imgui/imgui_helper.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/buffers_vk.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
 #include "nvvk/raytraceKHR_vk.hpp"
 #include "nvvk/sbtwrapper_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/shaders/dh_sky.h"
@@ -108,8 +104,7 @@ public:
     m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Requesting ray tracing properties
-    VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-    prop2.pNext = &m_rtProperties;
+    VkPhysicalDeviceProperties2 prop2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &m_rtProperties};
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
     // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
@@ -134,8 +129,7 @@ public:
   void onResize(uint32_t width, uint32_t height) override
   {
     nvh::ScopedTimer st(__FUNCTION__);
-
-    createGbuffers({width, height});
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), VkExtent2D{width, height}, m_colorFormat, m_depthFormat);
     writeRtDesc();
   }
 
@@ -170,35 +164,47 @@ public:
       // Display the G-Buffer image
       ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
+      {  // Display orientation axis at the bottom left corner of the window
+        float  axisSize = 25.F;
+        ImVec2 pos      = ImGui::GetWindowPos();
+        pos.y += ImGui::GetWindowSize().y;
+        pos += ImVec2(axisSize * 1.1F, -axisSize * 1.1F) * ImGui::GetWindowDpiScale();  // Offset
+        ImGuiH::Axis(pos, CameraManip.getMatrix(), axisSize);
+      }
+
       ImGui::End();
       ImGui::PopStyleVar();
     }
   }
 
+  void memoryBarrier(VkCommandBuffer cmd)
+  {
+    VkMemoryBarrier mb{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+    };
+    VkPipelineStageFlags srcDstStage{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+    vkCmdPipelineBarrier(cmd, srcDstStage, srcDstStage, 0, 1, &mb, 0, nullptr, 0, nullptr);
+  }
 
   void onRender(VkCommandBuffer cmd) override
   {
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
-    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    glm::vec3   eye;
-    glm::vec3   center;
-    glm::vec3   up;
-    CameraManip.getLookat(eye, center, up);
+    const float      view_aspect_ratio = m_gBuffers->getAspectRatio();
+    const glm::vec2& clip              = CameraManip.getClipPlanes();
 
-    // Update Frame buffer uniform buffer
-    DH::FrameInfo    finfo{};
-    const glm::vec2& clip = CameraManip.getClipPlanes();
-    finfo.view            = CameraManip.getMatrix();
-    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
-    finfo.proj[1][1] *= -1;
-    finfo.projInv = glm::inverse(finfo.proj);
-    finfo.viewInv = glm::inverse(finfo.view);
-    finfo.camPos  = eye;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    // Camera matrices
+    glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), CameraManip.getAspectRatio(),
+                                           CameraManip.getClipPlanes().x, CameraManip.getClipPlanes().y);
+    proj[1][1] *= -1;  // Vulkan has it inverted
 
-    // Update the sky
-    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);
+    // Update uniform buffers
+    DH::FrameInfo finfo{.projInv = glm::inverse(proj), .viewInv = glm::inverse(CameraManip.getMatrix())};
+    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);  // Update FrameInfo
+    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);  // Update the sky
+    memoryBarrier(cmd);  // Make sure the data has moved to device before rendering
 
     // Ray trace
     std::vector<VkDescriptorSet> desc_sets{m_rtSet->getSet()};
@@ -207,9 +213,9 @@ public:
                             desc_sets.data(), 0, nullptr);
     vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
 
-    const std::array<VkStridedDeviceAddressRegionKHR, 4>& regions = m_sbt.getRegions();
-    const VkExtent2D&                                     size    = m_app->getViewportSize();
-    vkCmdTraceRaysKHR(cmd, &regions[0], &regions[1], &regions[2], &regions[3], size.width, size.height, 1);
+    const std::array<VkStridedDeviceAddressRegionKHR, 4>& bindingTables = m_sbt.getRegions();
+    const VkExtent2D&                                     size          = m_app->getViewportSize();
+    vkCmdTraceRaysKHR(cmd, &bindingTables[0], &bindingTables[1], &bindingTables[2], &bindingTables[3], size.width, size.height, 1);
   }
 
 private:
@@ -266,15 +272,6 @@ private:
   }
 
 
-  void createGbuffers(const glm::vec2& size)
-  {
-    // Rendering image targets
-    m_viewSize = size;
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
-                                                   VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
-                                                   m_colorFormat, m_depthFormat);
-  }
-
   // Create all Vulkan buffer data
   void createVkBuffers()
   {
@@ -311,9 +308,7 @@ private:
     inst_info.reserve(m_nodes.size());
     for(const nvh::Node& node : m_nodes)
     {
-      DH::InstanceInfo info{};
-      info.transform  = node.localMatrix();
-      info.materialID = node.material;
+      DH::InstanceInfo info{.transform = node.localMatrix(), .materialID = node.material};
       inst_info.push_back(info);
     }
     m_bInstInfoBuffer =
@@ -335,26 +330,30 @@ private:
     const auto max_primitive_count = static_cast<uint32_t>(prim.triangles.size());
 
     // Describe buffer as array of VertexObj.
-    VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
-    triangles.vertexFormat             = VK_FORMAT_R32G32B32A32_SFLOAT;  // vec3 vertex position data.
-    triangles.vertexData.deviceAddress = vertexAddress;
-    triangles.vertexStride             = sizeof(nvh::PrimitiveVertex);
-    triangles.indexType                = VK_INDEX_TYPE_UINT32;
-    triangles.indexData.deviceAddress  = indexAddress;
-    triangles.maxVertex                = static_cast<uint32_t>(prim.vertices.size()) - 1;
-    //triangles.transformData; // Identity
+    VkAccelerationStructureGeometryTrianglesDataKHR triangles{
+        .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+        .vertexFormat = VK_FORMAT_R32G32B32A32_SFLOAT,  // vec3 vertex position data
+        .vertexData   = {.deviceAddress = vertexAddress},
+        .vertexStride = sizeof(nvh::PrimitiveVertex),
+        .maxVertex    = static_cast<uint32_t>(prim.vertices.size()) - 1,
+        .indexType    = VK_INDEX_TYPE_UINT32,
+        .indexData    = {.deviceAddress = indexAddress},
+    };
 
     // Identify the above data as containing opaque triangles.
-    VkAccelerationStructureGeometryKHR as_geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-    as_geom.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    as_geom.flags              = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
-    as_geom.geometry.triangles = triangles;
+    VkAccelerationStructureGeometryKHR as_geom{
+        .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+        .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
+        .geometry     = {.triangles = triangles},
+        .flags        = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR | VK_GEOMETRY_OPAQUE_BIT_KHR,
+    };
 
-    VkAccelerationStructureBuildRangeInfoKHR offset{};
-    offset.firstVertex     = 0;
-    offset.primitiveCount  = max_primitive_count;
-    offset.primitiveOffset = 0;
-    offset.transformOffset = 0;
+    VkAccelerationStructureBuildRangeInfoKHR offset{
+        .primitiveCount  = max_primitive_count,
+        .primitiveOffset = 0,
+        .firstVertex     = 0,
+        .transformOffset = 0,
+    };
 
     // Our BLAS is made from only one geometry, but could be made of many geometries
     nvvk::RaytracingBuilderKHR::BlasInput input;
@@ -397,15 +396,14 @@ private:
     tlas.reserve(m_nodes.size());
     for(const nvh::Node& node : m_nodes)
     {
-      const VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
-
-      VkAccelerationStructureInstanceKHR ray_inst{};
-      ray_inst.transform           = nvvk::toTransformMatrixKHR(node.localMatrix());  // Position of the instance
-      ray_inst.instanceCustomIndex = node.mesh;                                       // gl_InstanceCustomIndexEXT
-      ray_inst.accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(node.mesh);
-      ray_inst.instanceShaderBindingTableRecordOffset = 0;  // We will use the same hit group for all objects
-      ray_inst.flags                                  = flags;
-      ray_inst.mask                                   = 0xFF;
+      VkAccelerationStructureInstanceKHR ray_inst{
+          .transform           = nvvk::toTransformMatrixKHR(node.localMatrix()),  // Position of the instance
+          .instanceCustomIndex = static_cast<uint32_t>(node.mesh),                // gl_InstanceCustomIndexEX
+          .mask                = 0xFF,                                            // All objects
+          .instanceShaderBindingTableRecordOffset = 0,  // We will use the same hit group for all object
+          .flags                                  = VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR,
+          .accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(node.mesh),
+      };
       tlas.emplace_back(ray_inst);
     }
     m_rtBuilder.buildTlas(tlas, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
@@ -479,11 +477,11 @@ private:
 
 
     // Shader groups
-    VkRayTracingShaderGroupCreateInfoKHR group{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
-    group.anyHitShader       = VK_SHADER_UNUSED_KHR;
-    group.closestHitShader   = VK_SHADER_UNUSED_KHR;
-    group.generalShader      = VK_SHADER_UNUSED_KHR;
-    group.intersectionShader = VK_SHADER_UNUSED_KHR;
+    VkRayTracingShaderGroupCreateInfoKHR group{.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+                                               .generalShader      = VK_SHADER_UNUSED_KHR,
+                                               .closestHitShader   = VK_SHADER_UNUSED_KHR,
+                                               .anyHitShader       = VK_SHADER_UNUSED_KHR,
+                                               .intersectionShader = VK_SHADER_UNUSED_KHR};
 
     std::vector<VkRayTracingShaderGroupCreateInfoKHR> shader_groups;
     // Raygen
@@ -505,25 +503,28 @@ private:
     // Push constant: we want to be able to update constants used by the shaders
     const VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant)};
 
-    VkPipelineLayoutCreateInfo pipeline_layout_create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipeline_layout_create_info.pushConstantRangeCount = 1;
-    pipeline_layout_create_info.pPushConstantRanges    = &push_constant;
-
     // Descriptor sets: one specific to ray tracing, and one shared with the rasterization pipeline
     std::vector<VkDescriptorSetLayout> rt_desc_set_layouts = {m_rtSet->getLayout()};  // , m_pContainer[eGraphic].dstLayout};
-    pipeline_layout_create_info.setLayoutCount = static_cast<uint32_t>(rt_desc_set_layouts.size());
-    pipeline_layout_create_info.pSetLayouts    = rt_desc_set_layouts.data();
+    VkPipelineLayoutCreateInfo pipeline_layout_create_info{
+        .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount         = static_cast<uint32_t>(rt_desc_set_layouts.size()),
+        .pSetLayouts            = rt_desc_set_layouts.data(),
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &push_constant,
+    };
     vkCreatePipelineLayout(m_device, &pipeline_layout_create_info, nullptr, &p.layout);
     m_dutil->DBG_NAME(p.layout);
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
-    VkRayTracingPipelineCreateInfoKHR ray_pipeline_info{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
-    ray_pipeline_info.stageCount                   = static_cast<uint32_t>(stages.size());  // Stages are shaders
-    ray_pipeline_info.pStages                      = stages.data();
-    ray_pipeline_info.groupCount                   = static_cast<uint32_t>(shader_groups.size());
-    ray_pipeline_info.pGroups                      = shader_groups.data();
-    ray_pipeline_info.maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH;  // Ray depth
-    ray_pipeline_info.layout                       = p.layout;
+    VkRayTracingPipelineCreateInfoKHR ray_pipeline_info{
+        .sType                        = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+        .stageCount                   = static_cast<uint32_t>(stages.size()),  // Stages are shader
+        .pStages                      = stages.data(),
+        .groupCount                   = static_cast<uint32_t>(shader_groups.size()),
+        .pGroups                      = shader_groups.data(),
+        .maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH,  // Ray dept
+        .layout                       = p.layout,
+    };
     vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &ray_pipeline_info, nullptr, &p.plines[0]);
     m_dutil->DBG_NAME(p.plines[0]);
 
@@ -543,9 +544,9 @@ private:
   {
     // Write to descriptors
     VkAccelerationStructureKHR tlas = m_rtBuilder.getAccelerationStructure();
-    VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
-    desc_as_info.accelerationStructureCount = 1;
-    desc_as_info.pAccelerationStructures    = &tlas;
+    VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
+                                                              .accelerationStructureCount = 1,
+                                                              .pAccelerationStructures    = &tlas};
     const VkDescriptorImageInfo  image_info{{}, m_gBuffers->getColorImageView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
@@ -577,9 +578,6 @@ private:
 
   void destroyResources()
   {
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-
     for(PrimitiveMeshVk& m : m_bMeshes)
     {
       m_alloc->destroy(m.vertices);
@@ -594,7 +592,6 @@ private:
     m_gBuffers.reset();
 
     m_rtPipe.destroy(m_device);
-
     m_sbt.destroy();
     m_rtBuilder.destroy();
   }
@@ -602,12 +599,11 @@ private:
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*                          m_app{nullptr};
+  nvvkhl::Application*                          m_app = nullptr;
   std::unique_ptr<nvvk::DebugUtil>              m_dutil;
   std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer> m_rtSet;  // Descriptor set
 
-  glm::vec2                        m_viewSize    = {1, 1};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
@@ -617,18 +613,14 @@ private:
   // Resources
   struct PrimitiveMeshVk
   {
-    nvvk::Buffer vertices;  // Buffer of the vertices
-    nvvk::Buffer indices;   // Buffer of the indices
+    nvvk::Buffer vertices;
+    nvvk::Buffer indices;
   };
-  std::vector<PrimitiveMeshVk> m_bMeshes;
+  std::vector<PrimitiveMeshVk> m_bMeshes;  // Each primitive holds a buffer of vertices and indices
   nvvk::Buffer                 m_bFrameInfo;
-  nvvk::Buffer                 m_bPrimInfo;
-  nvvk::Buffer                 m_bSceneDesc;  // SceneDescription
   nvvk::Buffer                 m_bInstInfoBuffer;
   nvvk::Buffer                 m_bMaterials;
   nvvk::Buffer                 m_bSkyParams;
-
-  std::vector<VkSampler> m_samplers;
 
   // Data and setting
   struct Material
@@ -640,14 +632,12 @@ private:
   std::vector<Material>           m_materials;
 
   // Pipeline
-  DH::PushConstant m_pushConst{};                        // Information sent to the shader
-  VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
-  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  DH::PushConstant m_pushConst{};  // Information sent to the shader
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper
-  nvvk::RaytracingBuilderKHR m_rtBuilder;
-  nvvkhl::PipelineContainer  m_rtPipe;
+  nvvk::SBTWrapper           m_sbt;        // Shading binding table wrapper
+  nvvk::RaytracingBuilderKHR m_rtBuilder;  // Helper for building Top and bottom level acceleration structures
+  nvvkhl::PipelineContainer  m_rtPipe;     // Hold pipelines and layout
 };
 
 
