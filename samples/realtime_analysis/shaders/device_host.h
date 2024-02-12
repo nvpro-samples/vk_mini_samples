@@ -45,7 +45,6 @@ struct PushConstant
   uint  groupWidth;
   uint  groupHeight;
   uint  stepIndex;
-  uvec3 numWorkGroups;
 };
 
 struct FrameInfo

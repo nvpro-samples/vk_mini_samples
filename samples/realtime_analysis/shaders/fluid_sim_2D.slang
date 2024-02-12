@@ -37,9 +37,20 @@
 
 #include "fluid_maths_2D.glsl"
 
-void updateBuiltins(uint3 numWorkGroup, uint3 groupID, uint groupThreadID)
+int3 GetWorkgroupCount()
 {
-  gl_NumWorkGroups = numWorkGroup;
+    __target_switch
+    {
+    case glsl: __intrinsic_asm "gl_NumWorkGroups";
+    case spirv: return spirv_asm {
+        result:$$int3 = OpLoad builtin(NumWorkgroups:int3);
+    };
+    }
+}
+
+void updateBuiltins(uint3 groupID, uint groupThreadID)
+{
+  gl_NumWorkGroups = GetWorkgroupCount();
   gl_WorkGroupID = groupID;
   gl_SubgroupSize = WaveGetLaneCount();
   gl_SubgroupID = groupThreadID / gl_SubgroupSize;
@@ -369,7 +380,7 @@ void calculatePressureForce(uint3 threadIdx : SV_DispatchThreadID,
                             uint3 groupID : SV_GroupID,
                             uint groupThreadID : SV_GroupThreadID)
 {
-  updateBuiltins(pushC.numWorkGroups, groupID, groupThreadID);
+  updateBuiltins(groupID, groupThreadID);
 
   uint particleID = threadIdx.x;
   if (particleID >= setting.numParticles)

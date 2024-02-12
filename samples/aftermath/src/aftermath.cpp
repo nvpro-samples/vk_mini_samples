@@ -537,15 +537,16 @@ private:
   TdrReason m_tdrReason{eNone};
 
 
-  VkExtent2D                m_viewSize{0, 0};
-  VkFormat                  m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
-  VkFormat                  m_depthFormat = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
-  nvvkhl::PipelineContainer m_pipe;                                    // Multiple pipelines
-  nvvk::Buffer              m_vertices;                                // Buffer of the vertices
-  nvvk::Buffer              m_indices;                                 // Buffer of the indices
-  VkClearColorValue         m_clearColor{{0.0F, 0.0F, 0.0F, 1.0F}};    // Clear color
-  VkDevice                  m_device = VK_NULL_HANDLE;                 // Convenient
-  int                       m_currentPipe{0};
+  VkExtent2D                m_viewSize    = {0, 0};
+  VkFormat                  m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;    // Color format of the image
+  VkFormat                  m_depthFormat = VK_FORMAT_UNDEFINED;         // Depth format of the depth buffer
+  nvvkhl::PipelineContainer m_pipe;                                      // Multiple pipelines
+  nvvk::Buffer              m_vertices;                                  // Buffer of the vertices
+  nvvk::Buffer              m_indices;                                   // Buffer of the indices
+  VkClearColorValue         m_clearColor  = {{0.0F, 0.0F, 0.0F, 1.0F}};  // Clear color
+  VkDevice                  m_device      = VK_NULL_HANDLE;              // Convenient
+  int                       m_currentPipe = 0;
+  int                       m_frameNumber = 0;
 
   std::vector<nvh::PrimitiveMesh> m_meshes;
   nvvk::Texture                   m_texture;

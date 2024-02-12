@@ -579,11 +579,10 @@ private:
       // Bind compute shader
       const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
 
-      int numBlocks             = getNumBlocks();
-      m_pushConst.numWorkGroups = glm::vec3(numBlocks, 1, 1);
+      int numBlocks = getNumBlocks();
 
       vkCmdUpdateBuffer(cmd, m_bParticleSetting.buffer, 0, sizeof(DH::ParticleSetting), &m_particleSetting);
-      memoryBarrier(cmd);  // Make sure the buffer is ready before executing any dispach shader
+      memoryBarrier(cmd);  // Make sure the buffer is ready before executing any dispatch shader
 
 
       dispatch(cmd, eExternalForcesShd, numBlocks, "ExternalForce");

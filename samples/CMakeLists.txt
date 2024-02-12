@@ -17,6 +17,7 @@ add_subdirectory(shader_object)
 add_subdirectory(simple_polygons)
 add_subdirectory(solid_color)
 add_subdirectory(texture_3d)
+add_subdirectory(barycentric_wireframe) # Bug with EXT_fragment_shader_barycentric
 
 # Following are restricted samples
 
@@ -25,7 +26,6 @@ if(NOT USE_SLANG)
 endif()
 
 if(NOT USE_HLSL) 
-  add_subdirectory(barycentric_wireframe) # Bug with EXT_fragment_shader_barycentric
   add_subdirectory(ray_query_position_fetch)   # No support for fetch
   add_subdirectory(ray_tracing_position_fetch) # No support for fetch
   add_subdirectory(realtime_analysis) # Missing some functions to make realtime analysis

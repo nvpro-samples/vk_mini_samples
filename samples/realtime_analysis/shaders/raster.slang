@@ -77,7 +77,7 @@ VSout vertexMain(VSin input)
   VSout output;
   output.sv_position = mul(frameInfo.proj, float4(particle, 0.0, 1.0));
   output.stage.uv = input.uv;
-  output.stage.id = InstanceIndex();
+  output.stage.id = particleID;
 
   return output;
 }

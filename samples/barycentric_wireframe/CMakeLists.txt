@@ -9,8 +9,8 @@ create_sample(${PROJECT_NAME}
     ${SHD_DIR}/raster.frag
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
-  # SHADER_HLSL
-  #   ${SHD_DIR}/raster.hlsl 
+  SHADER_HLSL
+     ${SHD_DIR}/raster.hlsl 
   SHADER_SLANG
     ${SHD_DIR}/raster.slang
 )

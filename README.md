@@ -1,24 +1,16 @@
 # Vulkan Samples
 
-This repository holds many samples, showing various aspect of Vulkan, debugging tips and usage of other Nvidia tools. It has a dependency on [nvpro_core](https://github.com/nvpro-samples/nvpro_core) for some core Vulkan helper classes and other small utilities. All projects are using [GLFW](https://www.glfw.org/download) and [Dear ImGui](https://github.com/ocornut/imgui)
+This repository contains many examples showing different aspects of Vulkan, debugging tips, and using other Nvidia tools. See the [samples](#Samples) section below.
 
-Each sample have its own documentation written in [Markdown](https://github.github.com/gfm/) describing what was done and where to get more information.
+Each sample has its own documentation that describes the functionality and where to get more information.
+
+Dependencies
+*  [nvpro_core](https://github.com/nvpro-samples/nvpro_core) : Vulkan helper classes and other small utilities.
+
 
 ## Build
 
-### Easy Method (Windows)
-
-Clone this repository
-
-```bash
-git clone https://github.com/nvpro-samples/vk_mini_samples.git
-```
-
-1. Deploy.bat : pull and update all dependencies.
-2. Build.bat : build all projects in release and optionally to debug.
-3. Install.bat : copy the binaries and dlls to the `_install` directory.
-
-### Hand Made
+Cloning repositories
 
 ``` bash
 git clone --recursive --shallow-submodules https://github.com/nvpro-samples/nvpro_core.git
@@ -34,53 +26,20 @@ cd build
 cmake ..
 ```
 
-**Note**: If there are missing dependencies in `nvpro_core`, run the following command in nvpro_core directory.
+### Extra SDK
 
-``` bash
-git submodule update --init --recursive --checkout --force
-```
+The Aftermath sample requires to download the SDK separately:  [Nsight Aftermath SDK](https://developer.nvidia.com/nsight-aftermath)
 
-### HLSL or SLANG
 
-The samples can use two other shading languages besides GLSL, [HLSL](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl) and [SLANG](https://github.com/shader-slang/slang). To switch between them, select one of option: USE_HLSL or USE_SLANG. Then regenerate CMake and the solution will be updated with compatible projects and their shaders.
+### GLSL, HLSL or SLANG
+
+By default, the samples are created using GLSL. However, many of them also have equivalent shaders written in [HLSL](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl) and [SLANG](https://github.com/shader-slang/slang). To switch between them, select either USE_HLSL or USE_SLANG. Afterward, regenerate CMake and the solution will update with compatible projects and their respective shaders.
 
 ![img](docs/use_shaders.png)
 
-### Extra SDK
-
-Some samples depend on other SDKs. They are only required if you intend to build these projects.
-
-* [OptiX 7.3+](https://developer.nvidia.com/designworks/optix/download) : OptiX denoiser
-* [Cuda 10.x](https://developer.nvidia.com/cuda-downloads) : OptiX denoiser
-* [Nsight Aftermath](https://developer.nvidia.com/nsight-aftermath) : Aftermath
-
 ## Samples
 
-### Application Class
-
-The examples uses many helper from nvpro_core: https://github.com/nvpro-samples/nvpro_core repository. The core of each sample uses the [Application class](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvkhl/application.hpp) to create a window, initialize the UI, and create a swapchain with the ImGui framework. The `Application` class is a modified version of the Dear ImGui Vulkan example.
-
-Samples are attached to the `Application` class as `Engines`. While the application is running, the sample will be called to render its UI or to perform rendering operations in the current frame.
-
-
-#### Init
-
-The `init()` function will create the Vulkan context using `nvvk::Context`, create the GLFW window and create the swapchains by calling `ImGui_ImplVulkanH_CreateOrResizeWindow`.
-
-#### Run
-
-The `run()` function is an infinite loop until the close event is triggered. Within the loop, each engine will be called with:
-
-* onResize : Called when the viewport size is changing
-* onUIRender : Called for anything related to UI
-* onRender : For anything to render within a frame, with the command buffer of the frame.
-* onUIMenu : To add functions to the menubar
-
-At the end of each loop the frame is rendered with `frameRender()` then the frame is presented with `framePresent()`.  
-
-### Samples
-
-If you are new to this repository, the first samples to read to better understand the framwork are [solid color](samples/solid_color) and [rectangle](samples/rectangle).
+If you are new to this repository, the first samples to read to better understand the framework are [solid color](samples/solid_color) and [rectangle](samples/rectangle).
 
 | Name | Description | Image | HLSL | Slang |
 | ------ | ------ | ---- | ---- | ---- |
@@ -98,7 +57,7 @@ If you are new to this repository, the first samples to read to better understan
 | [simple_polygons](samples/simple_polygons) | Rasterizing multiple polygonal objects.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | [x] | [x] |
 | [offscreen](samples/offscreen) | Render without window context and save image to disk.  | ![](samples/offscreen/docs/offline_th.jpg) | [x] | [x] |
 | [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) | [ ] | [ ] |
-| [barycentric_wireframe](samples/barycentric_wireframe) | Draw wifreframe in a a single pass using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) |  [ ] | [x] |
+| [barycentric_wireframe](samples/barycentric_wireframe) | Draw wifreframe in a a single pass using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) |  [x] | [x] |
 | [texture 3d](samples/texture_3d) | Create a 3D texture and do ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) | [x] | [x] |
 | [position fetch](samples/ray_tracing_position_fetch) | Using VK_KHR_ray_tracing_position_fetch. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [ ] | [x] |
 | [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [x] |
@@ -109,52 +68,60 @@ If you are new to this repository, the first samples to read to better understan
 | [realtime_analysis](samples/realtime_analysis) | Displaying in realtime GPU informations | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [ ] | [x] |
 | [motion_blur](samples/ray_trace_motion_blur) | Tracing object having motion, using the NVIDIA raytrace extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [ ] | [x] |
 
-## HLSL
 
-The two main shading languages that are used with Vulkan are:
+## Application Class
 
-* GLSL (OpenGL Shading Language)
-* HLSL (High Level Shading Language)
+The examples utilize many helpers from the [nvpro_core repository](https://github.com/nvpro-samples/nvpro_core). Each sample's core uses the [`Application`](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvkhl/application.hpp) class to create a window, initialize the UI, and create a swapchain with the ImGui framework. The `Application` class is a modified version of the Dear ImGui Vulkan example.
 
-Both GLSL and HLSL are supported by the samples. To switch between then, open CMake and under **USE**, toggle the **USE_HLSL**.
+Samples are attached to the `Application` class as `Engines`. While the application is running, the sample will be called to render its UI or to perform rendering operations in the current frame.
 
-Note: it is also possible to use a different `dxc` binary. By default, it uses the one coming with the Vulkan SDK, but there is the option to use the one of your choice. Open `Vulkan` and change the path to `Vulkan_dxc_EXECUTABLE`. If you do not see `Vulkan`, make sure the `Advanced` option is selected.
+### Init
 
-Note: To compile all samples with dxc, the [Preview Release for June 2023](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2306-preview) is needed.
+The `init()` function will create the Vulkan context using `nvvk::Context`, create the GLFW window and create the swapchains by calling `ImGui_ImplVulkanH_CreateOrResizeWindow`.
 
-| Feature       | GLSL            | HLSL | 
-| --------      | -------         | -------|
-| Ease of use   | Easier to learn | More difficult to learn |
-| Feature set   | Less powerful   | More powerful |
-| Support       | More widely supported | Less widely supported |
+### Run
 
-### Resources:
-* [HLSL to SPIR-V Feature Mapping Manual](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst)
-* [HLSL Ray Tracing](https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html)
-* [HLSL to SPIR-V Feature Mapping](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst)
-* [Porting GLSL variables to HLSL](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-variables-to-hlsl)
-* [Porting GLSL types to HLSL](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-types-to-hlsl)
-* [Porting GLSL pre-defined global variables to HLSL](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-pre-defined-global-variables-to-hlsl)
-* [Mapping between HLSL and GLSL](https://anteru.net/blog/2016/mapping-between-HLSL-and-GLSL/)
+The `run()` function is an infinite loop until the close event is triggered. Within the loop, each engine will be called (in order) with:
 
-### Spir-V intrinsics
+* onResize : Called when the viewport size is changing
+* onUIMenu : To add functions to the menubar
+* onUIRender : Called for anything related to UI
+* onRender : For anything to render within a frame, with the command buffer of the frame.
 
-* [GL_EXT_spirv_intrinsics](https://github.com/microsoft/DirectXShaderCompiler/wiki/GL_EXT_spirv_intrinsics-for-SPIR-V-code-gen)
-* [KHR Extensions](https://github.com/KhronosGroup/SPIRV-Registry/tree/main/extensions/KHR)
-* [JSON](https://github.com/KhronosGroup/SPIRV-Headers/blob/main/include/spirv/unified1/spirv.json)
-
-### Releases: 
-* [DX Compiler Preview Release for June 2023](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2306-preview)
-* [All releases](https://github.com/microsoft/DirectXShaderCompiler/releases)
+At the end of each loop the frame is rendered with `frameRender()` then the frame is presented with `framePresent()`.  
 
 
-## Slang
+## Shader Languages
 
-Some samples have also been converted to use Slang. When configurating CMake, it should download automatically one of the release. To change the version of the Slang compiler, select the path to `SLANG_EXE` in CMake. 
+Instead of directly consuming shaders in a human-readable text format, Vulkan uses SPIR-V as an intermediate representation. This allows the use of shader languages other than GLSL as long as they can target the Vulkan SPIR-V environment.
 
-To use Slang, check USE_SLANG then re-configure and re-generate.
+The samples can use any of the shader languages, and the CMake option is : USE_SLANG our USE_HLSL. Only one of the two can be true and if both are false, it default to using GLSL.
 
-### Resources
+### Slang
+
+[Slang](https://github.com/shader-slang/slang) is a high-level based shader language, similar to C++. It is one of the primary language used by researchers at NVIDIA, as it can generate not only Spir-V, but also DX12, CUDA, CPP. 
+
+Note: To change the version of the Slang compiler, select the path to `SLANG_COMPILER` in CMake. 
+
+### HLSL
+
+Microsoft's High Level Shading Language (HLSL), used by DirectX, can generate Spir-V code. The DXC compiler comes by default with recent Vulkan SDK.
+
+Note: To use a different `dxc` binary, open `Vulkan` and change the path to `Vulkan_dxc_EXECUTABLE`.
+
+
+#### Resources:
+
+HLSL 
+* HLSL to SPIR-V: [Feature Mapping Manual](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst)
+* Ray Tracing: [HLSL](https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html)
+* Porting to HLSL
+  * [GLSL variables](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-variables-to-hlsl)
+  * [GLSL types](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-types-to-hlsl)
+  * [Global Variables](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-pre-defined-global-variables-to-hlsl)
+  * [Mapping between HLSL and GLSL](https://anteru.net/blog/2016/mapping-between-HLSL-and-GLSL/)
+
+SLANG
 
 * Github: https://github.com/shader-slang/slang
 * Releases: https://github.com/shader-slang/slang/releases
@@ -163,7 +130,15 @@ To use Slang, check USE_SLANG then re-configure and re-generate.
 * Various Documentations: https://github.com/shader-slang/slang/tree/master/docs
 * Interop GLSL, SPIR-V: https://shader-slang.com/slang/user-guide/a1-04-interop.html
 
+#### Spir-V intrinsics
+
+* [GL_EXT_spirv_intrinsics](https://github.com/microsoft/DirectXShaderCompiler/wiki/GL_EXT_spirv_intrinsics-for-SPIR-V-code-gen)
+* [KHR Extensions](https://github.com/KhronosGroup/SPIRV-Registry/tree/main/extensions/KHR)
+* [JSON](https://github.com/KhronosGroup/SPIRV-Headers/blob/main/include/spirv/unified1/spirv.json)
+
+
+
 ## LICENSE
 
-Copyright 2023 NVIDIA CORPORATION. Released under Apache License,
+Copyright 2024 NVIDIA CORPORATION. Released under Apache License,
 Version 2.0. See "LICENSE" file for details.
