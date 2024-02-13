@@ -41,32 +41,32 @@ By default, the samples are created using GLSL. However, many of them also have 
 
 If you are new to this repository, the first samples to read to better understand the framework are [solid color](samples/solid_color) and [rectangle](samples/rectangle).
 
-| Name | Description | Image | HLSL | Slang |
+| Name | Description | Image | GLSL | HLSL | Slang |
 | ------ | ------ | ---- | ---- | ---- |
-| [solid_color](samples/solid_color) | Set a user custom color to a pixel wide texture and display it.  | ![](samples/solid_color/docs/solid_color_th.jpg) | [x] | [x] |
-| [rectangle](samples/rectangle) | Render a 2D rectangle to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) | [x] | [x] |
-| [aftermath](samples/aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/aftermath/docs/aftermath_th.jpg) | [x] | [ ] |
-| [image_ktx](samples/image_ktx) | Display KTX image and apply tonemap post processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | [x] | [x] |
-| [image_viewer](samples/image_viewer) | Load an image, allow to zoom and pan under mouse cursor | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] |
-| [mm_displacement](samples/mm_displacement) | Micro-mesh displacement  | ![](samples/mm_displacement/docs/micromesh_th.jpg) | [x] | [x] |
-| [mm_opacity](samples/mm_opacity) | Micromap opacity  | ![](samples/mm_opacity/docs/opacity_th.jpg) | [x] | [x] |
-| [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing  | ![](samples/msaa/docs/msaa_th.jpg) | [x] | [x] |
-| [shader_printf](samples/shader_printf) | Add printf to shader and display in a log window  | ![](samples/shader_printf/docs/printf_th.jpg) | [x] | [x] |
-| [ray_trace](samples/ray_trace) | Simple ray tracer using metalic-roughness shading, reflection and shadows and simple sky shader.  | ![](samples/ray_trace/docs/raytrace_th.jpg) | [x] | [x] |
-| [shading execution reorder](samples/ser_pathtrace) | Known also as SER, this shows how to reorder execution rays to gain a better usage of the GPU.  | ![](samples/ser_pathtrace/docs/ser_2_th.jpg) | [x] | [x] |
-| [simple_polygons](samples/simple_polygons) | Rasterizing multiple polygonal objects.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | [x] | [x] |
-| [offscreen](samples/offscreen) | Render without window context and save image to disk.  | ![](samples/offscreen/docs/offline_th.jpg) | [x] | [x] |
-| [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) | [ ] | [ ] |
-| [barycentric_wireframe](samples/barycentric_wireframe) | Draw wifreframe in a a single pass using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) |  [x] | [x] |
-| [texture 3d](samples/texture_3d) | Create a 3D texture and do ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) | [x] | [x] |
-| [position fetch](samples/ray_tracing_position_fetch) | Using VK_KHR_ray_tracing_position_fetch. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [ ] | [x] |
-| [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [x] |
-| [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray quary | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [ ] | [x] |
-| [shader_object](samples/shader_object) | Using shader object and dynamic pipline | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] |
-| [compute_only](samples/compute_only) | Simple compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] |
-| [gpu_monitor](samples/gpu_monitor) | Showing GPU usage | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] |
-| [realtime_analysis](samples/realtime_analysis) | Displaying in realtime GPU informations | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [ ] | [x] |
-| [motion_blur](samples/ray_trace_motion_blur) | Tracing object having motion, using the NVIDIA raytrace extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [ ] | [x] |
+| [solid_color](samples/solid_color) | Set a user custom color to a pixel wide texture and display it.  | ![](samples/solid_color/docs/solid_color_th.jpg) | [x] | [x] | [x] |
+| [rectangle](samples/rectangle) | Render a 2D rectangle to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) | [x] | [x] | [x] |
+| [aftermath](samples/aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/aftermath/docs/aftermath_th.jpg) | [x] | [x] | [ ] |
+| [image_ktx](samples/image_ktx) | Display KTX image and apply tonemap post processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | [x] | [x] | [x] |
+| [image_viewer](samples/image_viewer) | Load an image, allow to zoom and pan under mouse cursor | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] | [x] |
+| [mm_displacement](samples/mm_displacement) | Micro-mesh displacement  | ![](samples/mm_displacement/docs/micromesh_th.jpg) | [x] | [x] | [x] |
+| [mm_opacity](samples/mm_opacity) | Micromap opacity  | ![](samples/mm_opacity/docs/opacity_th.jpg) | [x] | [x] | [x] |
+| [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing  | ![](samples/msaa/docs/msaa_th.jpg) | [x] | [x] | [x] |
+| [shader_printf](samples/shader_printf) | Add printf to shader and display in a log window  | ![](samples/shader_printf/docs/printf_th.jpg) | [x] | [x] | [x] |
+| [ray_trace](samples/ray_trace) | Simple ray tracer using metalic-roughness shading, reflection and shadows and simple sky shader.  | ![](samples/ray_trace/docs/raytrace_th.jpg) | [x] | [x] | [x] |
+| [shading execution reorder](samples/ser_pathtrace) | Known also as SER, this shows how to reorder execution rays to gain a better usage of the GPU.  | ![](samples/ser_pathtrace/docs/ser_2_th.jpg) | [x] | [x] | [x] |
+| [simple_polygons](samples/simple_polygons) | Rasterizing multiple polygonal objects.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | [x] | [x] | [x] |
+| [offscreen](samples/offscreen) | Render without window context and save image to disk.  | ![](samples/offscreen/docs/offline_th.jpg) | [x] | [x] | [x] |
+| [tiny_shader_toy](samples/tiny_shader_toy) | Compile shader on the fly, diplay compilation errors, multiple pipeline stages.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) | [x] | [ ] | [ ] |
+| [barycentric_wireframe](samples/barycentric_wireframe) | Draw wifreframe in a a single pass using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) | [x] |  [x] | [x] |
+| [texture 3d](samples/texture_3d) | Create a 3D texture and do ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) | [x] | [x] | [x] |
+| [position fetch](samples/ray_tracing_position_fetch) | Using VK_KHR_ray_tracing_position_fetch. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [x] | [ ] | [x] |
+| [ray_query](samples/ray_query) | Doing inline raytracing in a compute shader | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [x] | [x] |
+| [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray quary | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [x] | [ ] | [x] |
+| [shader_object](samples/shader_object) | Using shader object and dynamic pipline | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] | [x] |
+| [compute_only](samples/compute_only) | Simple compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] | [x] |
+| [gpu_monitor](samples/gpu_monitor) | Showing GPU usage | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] | [x] |
+| [realtime_analysis](samples/realtime_analysis) | Displaying in realtime GPU informations | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [x] | [ ] | [x] |
+| [motion_blur](samples/ray_trace_motion_blur) | Tracing object having motion, using the NVIDIA raytrace extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [x] | [ ] | [x] |
 
 
 ## Application Class
@@ -89,6 +89,8 @@ The `run()` function is an infinite loop until the close event is triggered. Wit
 * onRender : For anything to render within a frame, with the command buffer of the frame.
 
 At the end of each loop the frame is rendered with `frameRender()` then the frame is presented with `framePresent()`.  
+
+![application-loop](docs/Application-loop.png)
 
 
 ## Shader Languages

@@ -36,8 +36,8 @@
 [[vk::push_constant]]  ConstantBuffer<PushConstant> pushConst;
 [[vk::binding(B_tlas)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
-[[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(B_sceneDesc)]] StructuredBuffer<SceneDescription> sceneDesc;
+[[vk::binding(B_cameraInfo)]] ConstantBuffer<CameraInfo> cameraInfo;
+[[vk::binding(B_sceneDesc)]] ConstantBuffer<SceneDescription> sceneDesc;
 
 
 
@@ -92,8 +92,8 @@ HitState getHitState(int meshID, int triID, float4x3 objectToWorld, float4x3 wor
   const vec3 barycentrics = vec3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
   
   uint64_t primOffset = sizeof(PrimMeshInfo) * meshID;
-  uint64_t vertAddress = vk::RawBufferLoad < uint64_t > (sceneDesc[0].primInfoAddress + primOffset);
-  uint64_t indexAddress = vk::RawBufferLoad < uint64_t > (sceneDesc[0].primInfoAddress + primOffset + sizeof(uint64_t));
+  uint64_t vertAddress = vk::RawBufferLoad < uint64_t > (sceneDesc.primInfoAddress + primOffset);
+  uint64_t indexAddress = vk::RawBufferLoad < uint64_t > (sceneDesc.primInfoAddress + primOffset + sizeof(uint64_t));
 
   uint64_t indexOffset = sizeof(uint3) * triID;
   uint3 triangleIndex = vk::RawBufferLoad <uint3 > (indexAddress + indexOffset);
@@ -173,7 +173,7 @@ void traceRay(RayDesc ray, inout HitPayload payload)
 //
 bool traceShadow(RayDesc ray)
 {
-  RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES | RAY_FLAG_FORCE_OPAQUE > q;
+  RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH > q;
   q.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xFF, ray);
   q.Proceed();
   return (q.CommittedStatus() != COMMITTED_NOTHING);
@@ -213,7 +213,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     // Retrieve the Instance buffer information
     uint64_t materialIDOffest = sizeof(float4x4);
     uint64_t instOffset = sizeof(InstanceInfo) * payload.instanceIndex;
-    int matID = vk::RawBufferLoad < int > (sceneDesc[0].instInfoAddress + instOffset + materialIDOffest);
+    int matID = vk::RawBufferLoad < int > (sceneDesc.instInfoAddress + instOffset + materialIDOffest);
     
     float3 lightPos = getRandomPosition(pushConst.light.position, pushConst.light.radius, float2(rand(seed), rand(seed)));
     float distanceToLight = length(lightPos - payload.pos);
@@ -224,7 +224,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
    
     // Retrieve the material color
     uint64_t matOffset = sizeof(Material) * matID;
-    Material mat = getMaterial(sceneDesc[0].materialAddress, matOffset);
+    Material mat = getMaterial(sceneDesc.materialAddress, matOffset);
 
     // Setting up the material
     PbrMaterial pbrMat;
@@ -246,7 +246,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
       evalData.k2 = L;
       bsdfEvaluate(evalData, pbrMat);
 
-      const float3 w = sceneDesc[0].light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
+      const float3 w = sceneDesc.light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
       contrib += w * evalData.bsdf_diffuse;
       contrib += w * evalData.bsdf_glossy;
       contrib *= throughput;
@@ -304,14 +304,13 @@ float3 samplePixel(inout uint seed, float2 launchID, float2 launchSize)
 {
   // Subpixel jitter: send the ray through a different position inside the pixel each time, to provide antialiasing.
   const float2 subpixel_jitter = pushConst.frame == 0 ? float2(0.5f, 0.5f) : float2(rand(seed), rand(seed));
-  const float2 pixelCenter = launchID + subpixel_jitter;
-  const float2 inUV = pixelCenter / launchSize;
-  const float2 d = inUV * 2.0 - 1.0;
-  const float4 target = mul(frameInfo.projInv, float4(d.x, d.y, 0.01, 1.0));
+  const float2 clipCoords = (launchID + subpixel_jitter) / launchSize * 2.0 - 1.0;
+  float4 viewCoords = mul(cameraInfo.projInv, float4(clipCoords, -1.0, 1.0)); 
+  viewCoords /= viewCoords.w; 
 
   RayDesc ray;
-  ray.Origin = mul(frameInfo.viewInv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-  ray.Direction = mul(frameInfo.viewInv, float4(normalize(target.xyz), 0.0)).xyz;
+  ray.Origin = float3(cameraInfo.viewInv[0].w, cameraInfo.viewInv[1].w, cameraInfo.viewInv[2].w);
+  ray.Direction = normalize(mul(cameraInfo.viewInv, viewCoords).xyz - ray.Origin);
   ray.TMin = 0.001;
   ray.TMax = INFINITE;
 

@@ -130,10 +130,14 @@ public:
 
   void onResize(uint32_t width, uint32_t height) override
   {
-    createGbuffers({width, height});
+    // Create two G-Buffers: the tonemapped image and the original rendered image
+    std::vector<VkFormat> color_buffers = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT};  // tonemapped, original
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), VkExtent2D{width, height}, color_buffers);
+
+    // Update the tonemapper with the information of the new G-Buffers
     m_tonemapper->updateComputeDescriptorSets(m_gBuffers->getDescriptorImageInfo(eImgRendered),
                                               m_gBuffers->getDescriptorImageInfo(eImgTonemapped));
-    resetFrame();
+    resetFrame();  // Reset frame to restart the rendering
   }
 
   void onUIRender() override
@@ -183,7 +187,7 @@ public:
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
 
-      // Display the G-Buffer image
+      // Display the G-Buffer tonemapped image
       ImGui::Image(m_gBuffers->getDescriptorSet(eImgTonemapped), ImGui::GetContentRegionAvail());
 
       ImGui::End();
@@ -191,6 +195,16 @@ public:
     }
   }
 
+  void memoryBarrier(VkCommandBuffer cmd)
+  {
+    VkMemoryBarrier mb{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+    };
+    VkPipelineStageFlags srcDstStage{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+    vkCmdPipelineBarrier(cmd, srcDstStage, srcDstStage, 0, 1, &mb, 0, nullptr, 0, nullptr);
+  }
 
   void onRender(VkCommandBuffer cmd) override
   {
@@ -201,49 +215,28 @@ public:
       return;
     }
 
-    float     view_aspect_ratio = m_viewSize.x / m_viewSize.y;
-    glm::vec3 eye;
-    glm::vec3 center;
-    glm::vec3 up;
-    CameraManip.getLookat(eye, center, up);
-
-    // Update Frame buffer uniform buffer
-    const auto&   clip = CameraManip.getClipPlanes();
-    DH::FrameInfo finfo{};
-    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
-    finfo.proj[1][1] *= -1;
-    finfo.view    = CameraManip.getMatrix();
-    finfo.projInv = glm::inverse(finfo.proj);
-    finfo.viewInv = glm::inverse(finfo.view);
-    finfo.camPos  = eye;
-    vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    // Update Camera uniform buffer
+    const auto& clip = CameraManip.getClipPlanes();
+    glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), CameraManip.getAspectRatio(), clip.x, clip.y);
+    proj[1][1] *= -1;
+    DH::CameraInfo finfo{.projInv = glm::inverse(proj), .viewInv = glm::inverse(CameraManip.getMatrix())};
+    vkCmdUpdateBuffer(cmd, m_bCameraInfo.buffer, 0, sizeof(DH::CameraInfo), &finfo);
 
     m_pushConst.frame = m_frame;
     m_pushConst.light = m_light;
 
-    VkMemoryBarrier memBarrier = {
-        .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-    };
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &memBarrier,
-                         0, nullptr, 0, nullptr);
+    // Make sure buffer is ready to be used
+    memoryBarrier(cmd);
 
     // Ray trace
-    std::vector<VkDescriptorSet> descSets{m_rtSet->getSet()};
+    const VkExtent2D& size = m_app->getViewportSize();
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_rtPipe.plines[0]);
     pushDescriptorSet(cmd);
     vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
-
-    const auto& size = m_app->getViewportSize();
     vkCmdDispatch(cmd, (size.width + (GROUP_SIZE - 1)) / GROUP_SIZE, (size.height + (GROUP_SIZE - 1)) / GROUP_SIZE, 1);
 
-    // Making sure the rendered image is ready to be used
-    auto image_memory_barrier =
-        nvvk::makeImageMemoryBarrier(m_gBuffers->getColorImage(eImgRendered), VK_ACCESS_SHADER_READ_BIT,
-                                     VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                         nullptr, 0, nullptr, 1, &image_memory_barrier);
+    // Making sure the rendered image is ready to be used by tonemapper
+    memoryBarrier(cmd);
 
     m_tonemapper->runCompute(cmd, size);
   }
@@ -299,25 +292,14 @@ private:
     m_pushConst.light                 = m_light;
   }
 
-
-  void createGbuffers(const glm::vec2& size)
-  {
-    // Rendering image targets
-    m_viewSize                          = size;
-    std::vector<VkFormat> color_buffers = {m_colorFormat, m_colorFormat};  // tonemapped, original
-    m_gBuffers                          = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
-                                                   VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
-                                                   color_buffers, m_depthFormat);
-  }
-
   // Create all Vulkan buffer data
   void createVkBuffers()
   {
-    auto* cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_bMeshes.resize(m_meshes.size());
 
-    auto rtUsageFlag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    VkBufferUsageFlags rtUsageFlag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
     std::vector<DH::PrimMeshInfo> primInfo;
@@ -337,22 +319,22 @@ private:
       primInfo.emplace_back(info);
     }
 
-    // Creating the buffer of all primitive information
+    // Creating the buffer of all primitive/mesh information
     m_bPrimInfo = m_alloc->createBuffer(cmd, primInfo, rtUsageFlag);
     m_dutil->DBG_NAME(m_bPrimInfo.buffer);
 
-    // Create the buffer of the current frame, changing at each frame
-    m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_bFrameInfo.buffer);
+    // Create the buffer of the current camera transformation, changing at each frame
+    m_bCameraInfo = m_alloc->createBuffer(sizeof(DH::CameraInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    m_dutil->DBG_NAME(m_bCameraInfo.buffer);
 
     // Primitive instance information
     std::vector<DH::InstanceInfo> instInfo;
     for(auto& node : m_nodes)
     {
       DH::InstanceInfo info{
-          info.transform  = node.localMatrix(),
-          info.materialID = node.material,
+          .transform  = node.localMatrix(),
+          .materialID = node.material,
       };
       instInfo.emplace_back(info);
     }
@@ -372,7 +354,7 @@ private:
     };
 
     m_bSceneDesc = m_alloc->createBuffer(cmd, sizeof(DH::SceneDescription), &sceneDesc,
-                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     m_dutil->DBG_NAME(m_bSceneDesc.buffer);
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
@@ -387,26 +369,25 @@ private:
     uint32_t maxPrimitiveCount = static_cast<uint32_t>(prim.triangles.size());
 
     // Describe buffer as array of VertexObj.
-    VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
-    triangles.vertexFormat             = VK_FORMAT_R32G32B32A32_SFLOAT;  // vec3 vertex position data.
-    triangles.vertexData.deviceAddress = vertexAddress;
-    triangles.vertexStride             = sizeof(nvh::PrimitiveVertex);
-    triangles.indexType                = VK_INDEX_TYPE_UINT32;
-    triangles.indexData.deviceAddress  = indexAddress;
-    triangles.maxVertex                = static_cast<uint32_t>(prim.vertices.size()) - 1;
-    //triangles.transformData; // Identity
+    VkAccelerationStructureGeometryTrianglesDataKHR triangles{
+        .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+        .vertexFormat = VK_FORMAT_R32G32B32A32_SFLOAT,  // vec3 vertex position data
+        .vertexData   = {.deviceAddress = vertexAddress},
+        .vertexStride = sizeof(nvh::PrimitiveVertex),
+        .maxVertex    = static_cast<uint32_t>(prim.vertices.size()) - 1,
+        .indexType    = VK_INDEX_TYPE_UINT32,
+        .indexData    = {.deviceAddress = indexAddress},
+    };
 
     // Identify the above data as containing opaque triangles.
-    VkAccelerationStructureGeometryKHR asGeom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-    asGeom.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    asGeom.flags              = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
-    asGeom.geometry.triangles = triangles;
+    VkAccelerationStructureGeometryKHR asGeom{
+        .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+        .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
+        .geometry     = {.triangles = triangles},
+        .flags        = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR | VK_GEOMETRY_OPAQUE_BIT_KHR,
+    };
 
-    VkAccelerationStructureBuildRangeInfoKHR offset{};
-    offset.firstVertex     = 0;
-    offset.primitiveCount  = maxPrimitiveCount;
-    offset.primitiveOffset = 0;
-    offset.transformOffset = 0;
+    VkAccelerationStructureBuildRangeInfoKHR offset{.primitiveCount = maxPrimitiveCount};
 
     // Our BLAS is made from only one geometry, but could be made of many geometries
     nvvk::RaytracingBuilderKHR::BlasInput input;
@@ -445,15 +426,13 @@ private:
     tlas.reserve(m_nodes.size());
     for(auto& node : m_nodes)
     {
-      VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
-
-      VkAccelerationStructureInstanceKHR rayInst{};
-      rayInst.transform           = nvvk::toTransformMatrixKHR(node.localMatrix());  // Position of the instance
-      rayInst.instanceCustomIndex = node.mesh;                                       // gl_InstanceCustomIndexEXT
-      rayInst.accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(node.mesh);
-      rayInst.instanceShaderBindingTableRecordOffset = 0;  // We will use the same hit group for all objects
-      rayInst.flags                                  = flags;
-      rayInst.mask                                   = 0xFF;
+      VkAccelerationStructureInstanceKHR rayInst{
+          .transform                      = nvvk::toTransformMatrixKHR(node.localMatrix()),  // Position of the instance
+          .instanceCustomIndex            = static_cast<uint32_t>(node.mesh),                // gl_InstanceCustomIndexEX
+          .mask                           = 0xFF,
+          .flags                          = VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR,
+          .accelerationStructureReference = m_rtBuilder.getBlasDeviceAddress(node.mesh),
+      };
       tlas.emplace_back(rayInst);
     }
     m_rtBuilder.buildTlas(tlas, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
@@ -472,8 +451,8 @@ private:
     // This descriptor set, holds the top level acceleration structure and the output image
     m_rtSet->addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
     m_rtSet->addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_cameraInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_rtSet->addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
     m_rtSet->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
 
     // pushing time
@@ -502,18 +481,20 @@ private:
   void pushDescriptorSet(VkCommandBuffer cmd)
   {
     // Write to descriptors
-    VkAccelerationStructureKHR tlas = m_rtBuilder.getAccelerationStructure();
-    VkWriteDescriptorSetAccelerationStructureKHR descASInfo{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
-    descASInfo.accelerationStructureCount = 1;
-    descASInfo.pAccelerationStructures    = &tlas;
+    VkAccelerationStructureKHR                   tlas = m_rtBuilder.getAccelerationStructure();
+    VkWriteDescriptorSetAccelerationStructureKHR descASInfo{
+        .sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
+        .accelerationStructureCount = 1,
+        .pAccelerationStructures    = &tlas,
+    };
     VkDescriptorImageInfo  imageInfo{{}, m_gBuffers->getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL};
-    VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
+    VkDescriptorBufferInfo dbi_unif{m_bCameraInfo.buffer, 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo sceneDesc{m_bSceneDesc.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &descASInfo));
     writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &imageInfo));
-    writes.emplace_back(m_rtSet->makeWrite(0, B_frameInfo, &dbi_unif));
+    writes.emplace_back(m_rtSet->makeWrite(0, B_cameraInfo, &dbi_unif));
     writes.emplace_back(m_rtSet->makeWrite(0, B_sceneDesc, &sceneDesc));
 
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_rtPipe.layout, 0,
@@ -556,15 +537,12 @@ private:
 
   void destroyResources()
   {
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-
     for(auto& m : m_bMeshes)
     {
       m_alloc->destroy(m.vertices);
       m_alloc->destroy(m.indices);
     }
-    m_alloc->destroy(m_bFrameInfo);
+    m_alloc->destroy(m_bCameraInfo);
     m_alloc->destroy(m_bPrimInfo);
     m_alloc->destroy(m_bSceneDesc);
     m_alloc->destroy(m_bInstInfoBuffer);
@@ -588,12 +566,9 @@ private:
   std::unique_ptr<nvvkhl::AllocVma>              m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet;  // Descriptor set
   std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
+  std::unique_ptr<nvvkhl::GBuffer>               m_gBuffers;  // G-Buffers: color + depth
 
-  glm::vec2                        m_viewSize    = {1, 1};
-  VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
-  VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
+  VkDevice m_device = VK_NULL_HANDLE;  // Convenient
 
   // Resources
   struct PrimitiveMeshVk
@@ -602,11 +577,11 @@ private:
     nvvk::Buffer indices;   // Buffer of the indices
   };
   std::vector<PrimitiveMeshVk> m_bMeshes;
-  nvvk::Buffer                 m_bFrameInfo;
-  nvvk::Buffer                 m_bPrimInfo;
-  nvvk::Buffer                 m_bSceneDesc;  // SceneDescription
-  nvvk::Buffer                 m_bInstInfoBuffer;
-  nvvk::Buffer                 m_bMaterials;
+  nvvk::Buffer                 m_bCameraInfo;      // Camera information
+  nvvk::Buffer                 m_bPrimInfo;        // Buffer of all PrimitiveMeshVk
+  nvvk::Buffer                 m_bSceneDesc;       // Scene description with pointers to the buffers
+  nvvk::Buffer                 m_bInstInfoBuffer;  // Transformation and material per instance
+  nvvk::Buffer                 m_bMaterials;       // All materials
 
   // Data and setting
   std::vector<nvh::PrimitiveMesh> m_meshes;
@@ -614,11 +589,8 @@ private:
   std::vector<DH::Material>       m_materials;
   DH::Light                       m_light = {};
 
-
   // Pipeline
-  DH::PushConstant m_pushConst{};                        // Information sent to the shader
-  VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
-  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  DH::PushConstant m_pushConst{};  // Information sent to the shader
   int              m_frame{0};
   int              m_maxFrames{10000};
 
@@ -635,10 +607,9 @@ private:
 auto main(int argc, char** argv) -> int
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync            = false;
-  spec.vkSetup.apiMajor = 1;
-  spec.vkSetup.apiMinor = 3;
+  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync = false;
+  spec.vkSetup.setVersion(1, 3);
 
   spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
   // #VKRay: Activate the ray tracing extension

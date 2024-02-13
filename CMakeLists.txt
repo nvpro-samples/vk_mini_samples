@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 include(FetchContent)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(SLANG_VERSION  "2024.0.5")
+set(SLANG_VERSION  "2024.0.6")
 find_package(Slang)
 
 # Adding HLSL compiler function

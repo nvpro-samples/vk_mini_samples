@@ -31,15 +31,15 @@
 
 struct PrimMeshInfoSlang
 {
-    ConstBufferPointer<Vertex> vertexAddress;
-    ConstBufferPointer<uint> indexAddress;
+    Vertex* vertexAddress;
+    uint3* indexAddress;
 };
     
 struct SceneDescriptionSlang
 {
-    ConstBufferPointer<Material> materialAddress;
-    ConstBufferPointer<InstanceInfo> instInfoAddress;
-    ConstBufferPointer<PrimMeshInfoSlang> primInfoAddress;
+    Material* materialAddress;
+    InstanceInfo* instInfoAddress;
+    PrimMeshInfoSlang* primInfoAddress;
     Light light;
 };
 
@@ -47,9 +47,8 @@ struct SceneDescriptionSlang
 [[vk::push_constant]]  ConstantBuffer<PushConstant> pushConst;
 [[vk::binding(B_tlas)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
-[[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(B_sceneDesc)]] StructuredBuffer<SceneDescriptionSlang> sceneDesc;
-
+[[vk::binding(B_cameraInfo)]] ConstantBuffer<CameraInfo> cameraInfo;
+[[vk::binding(B_sceneDesc)]] ConstantBuffer<SceneDescriptionSlang> sceneDesc;
 
 
 //-----------------------------------------------------------------------
@@ -78,16 +77,12 @@ struct HitState
 HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3x4 objectToWorld3x4, int meshID, int primitiveID, float3 worldRayDirection)
 {
   HitState hit;
-  
+
   // Barycentric coordinate on the triangle
-  const vec3 barycentrics = vec3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
+  const float3 barycentrics = float3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
  
-  PrimMeshInfoSlang pimInfo = sceneDesc[0].primInfoAddress[meshID];
-  uint tIndex0 = pimInfo.indexAddress[primitiveID*3+0];
-  uint tIndex1 = pimInfo.indexAddress[primitiveID*3+1];
-  uint tIndex2 = pimInfo.indexAddress[primitiveID*3+2];
-  uint3 triangleIndex = uint3(tIndex0, tIndex1, tIndex2);
-  //uint3 triangleIndex = pimInfo.indexAddress[primitiveID];
+  PrimMeshInfoSlang pimInfo = sceneDesc.primInfoAddress[meshID];
+  uint3 triangleIndex = pimInfo.indexAddress[primitiveID];
   
   // Vertex and indices of the primitive
   Vertex v0 = pimInfo.vertexAddress[triangleIndex.x];
@@ -113,7 +108,7 @@ HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3
   hit.nrm = worldNormal;
 
   // For low tessalated, avoid internal reflection
-  vec3 r = reflect(normalize(worldRayDirection), hit.nrm);
+  float3 r = reflect(normalize(worldRayDirection), hit.nrm);
   if(dot(r, hit.geonrm) < 0)
     hit.nrm = hit.geonrm;
   
@@ -164,7 +159,7 @@ void traceRay(RayDesc ray, inout HitPayload payload)
 //
 bool traceShadow(RayDesc ray)
 {
-  RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES | RAY_FLAG_FORCE_OPAQUE > q;
+  RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
   q.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xFF, ray);
   q.Proceed();
   return (q.CommittedStatus() != COMMITTED_NOTHING);
@@ -202,7 +197,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     }
 
     // Retrieve the Instance buffer information
-    InstanceInfo instInfo = sceneDesc[0].instInfoAddress[payload.instanceIndex];
+    InstanceInfo instInfo = sceneDesc.instInfoAddress[payload.instanceIndex];
 
     float3 lightPos = getRandomPosition(pushConst.light.position, pushConst.light.radius, float2(rand(seed), rand(seed)));
     float distanceToLight = length(lightPos - payload.pos);
@@ -212,7 +207,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     float3 L = normalize(lightPos - payload.pos);
    
     // Retrieve the material color
-    Material mat = sceneDesc[0].materialAddress[instInfo.materialID];
+    Material mat = sceneDesc.materialAddress[instInfo.materialID];
     
 
     // Setting up the material
@@ -235,7 +230,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
       evalData.k2 = L;
       bsdfEvaluate(evalData, pbrMat);
 
-      const float3 w = sceneDesc[0].light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
+      const float3 w = sceneDesc.light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
       contrib += w * evalData.bsdf_diffuse;
       contrib += w * evalData.bsdf_glossy;
       contrib *= throughput;
@@ -293,14 +288,13 @@ float3 samplePixel(inout uint seed, float2 launchID, float2 launchSize)
 {
   // Subpixel jitter: send the ray through a different position inside the pixel each time, to provide antialiasing.
   const float2 subpixel_jitter = pushConst.frame == 0 ? float2(0.5f, 0.5f) : float2(rand(seed), rand(seed));
-  const float2 pixelCenter = launchID + subpixel_jitter;
-  const float2 inUV = pixelCenter / launchSize;
-  const float2 d = inUV * 2.0 - 1.0;
-  const float4 target = mul(frameInfo.projInv, float4(d.x, d.y, 0.01, 1.0));
+  const float2 clipCoords = (launchID + subpixel_jitter) / launchSize * 2.0 - 1.0;
+  float4 viewCoords = mul(cameraInfo.projInv, float4(clipCoords, -1.0, 1.0)); 
+  viewCoords /= viewCoords.w; 
 
   RayDesc ray;
-  ray.Origin = mul(frameInfo.viewInv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-  ray.Direction = mul(frameInfo.viewInv, float4(normalize(target.xyz), 0.0)).xyz;
+  ray.Origin = float3(cameraInfo.viewInv[0].w, cameraInfo.viewInv[1].w, cameraInfo.viewInv[2].w);
+  ray.Direction = normalize(mul(cameraInfo.viewInv, viewCoords).xyz - ray.Origin);
   ray.TMin = 0.001;
   ray.TMax = INFINITE;
 

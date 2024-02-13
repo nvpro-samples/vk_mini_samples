@@ -22,7 +22,7 @@
 
 #define B_tlas 0
 #define B_outImage 1
-#define B_frameInfo 2
+#define B_cameraInfo 2
 #define B_sceneDesc 3
 
 
