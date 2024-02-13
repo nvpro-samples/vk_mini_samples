@@ -42,7 +42,7 @@ By default, the samples are created using GLSL. However, many of them also have 
 If you are new to this repository, the first samples to read to better understand the framework are [solid color](samples/solid_color) and [rectangle](samples/rectangle).
 
 | Name | Description | Image | GLSL | HLSL | Slang |
-| ------ | ------ | ---- | ---- | ---- |
+| ------ | ------ | ---- | ---- | ---- | ---- |
 | [solid_color](samples/solid_color) | Set a user custom color to a pixel wide texture and display it.  | ![](samples/solid_color/docs/solid_color_th.jpg) | [x] | [x] | [x] |
 | [rectangle](samples/rectangle) | Render a 2D rectangle to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) | [x] | [x] | [x] |
 | [aftermath](samples/aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/aftermath/docs/aftermath_th.jpg) | [x] | [x] | [ ] |
