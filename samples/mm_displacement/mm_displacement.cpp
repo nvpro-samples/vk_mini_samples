@@ -71,7 +71,7 @@ using namespace glm;
 #include "nvvkhl/shaders/dh_sky.h"
 
 #include "dmm_process.hpp"
-#include "bird_curve_helper.hpp"
+#include "common/bird_curve_helper.hpp"
 
 #if USE_HLSL
 #include "_autogen/raytrace_rgenMain.spirv.h"

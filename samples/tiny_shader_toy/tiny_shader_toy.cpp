@@ -61,8 +61,8 @@ namespace fs = std::filesystem;
 #include "nvvkhl/pipeline_container.hpp"
 
 #if USE_SLANG
-#include "slang-com-ptr.h"
-
+#include <slang.h>
+#include <slang-com-ptr.h>
 
 static inline void slangCheck(SlangResult res, const char* call, const char* file, unsigned int line)
 {
@@ -77,22 +77,27 @@ static inline void slangCheck(SlangResult res, const char* call, const char* fil
 #define SLANG_CHECK(call) slangCheck(call, #call, __FILE__, __LINE__)
 
 #endif
+#include "nvvk/shaders_vk.hpp"
 
 // ShaderToy inputs
 struct InputUniforms
 {
-  glm::vec3 iResolution           = {0.F, 0.F, 0.F};
-  float     iTime                 = {0};
-  glm::vec4 iMouse                = {0.F, 0.F, 0.F, 0.F};
-  float     iTimeDelta            = {0};
-  int       iFrame                = {0};
-  int       iFrameRate            = {1};
-  float     iChannelTime[1]       = {0.F};
+  glm::vec3 iResolution = {0.F, 0.F, 0.F};
+  float     iTime       = {0};
+  glm::vec4 iMouse      = {0.F, 0.F, 0.F, 0.F};
+  float     iTimeDelta  = {0};
+  int       iFrame      = {0};
+  int       iFrameRate  = {1};
+  int       _pad0;
+  float     iChannelTime[1] = {0.F};
+  int       _pad1;
+  int       _pad2;
+  int       _pad3;
   glm::vec3 iChannelResolution[1] = {{0.F, 0.F, 0.F}};
-  int       pad1                  = {0};
 };
 
-// Simple utility that checks if a file has changed
+// Simple utility that checks if a file has changed on disk.
+// Calling hasChanged() will reset the writeTime.
 class FileCheck
 {
 public:
@@ -122,7 +127,6 @@ class TinyShaderToy : public nvvkhl::IAppElement
 {
   enum GbufItems
   {
-    eColor,
     eImage,
     eBufA0,
     eBufA1
@@ -154,32 +158,15 @@ public:
     m_fileBufferA = std::make_unique<FileCheck>(getFilePath("buffer_a.glsl"));
     m_fileImage   = std::make_unique<FileCheck>(getFilePath("image.glsl"));
 
-#if USE_SLANG
-    // Slang compiler
-    // First we need to create slang global session with work with the Slang API.
-    Slang::ComPtr<slang::IGlobalSession> slangGlobalSession;
-    SLANG_CHECK(slang::createGlobalSession(slangGlobalSession.writeRef()));
-    // Next we create a compilation session to generate SPIRV code from Slang source.
-    slang::TargetDesc targetDesc   = {};
-    targetDesc.format              = SLANG_SPIRV;
-    targetDesc.profile             = slangGlobalSession->findProfile("glsl440");
-    targetDesc.flags               = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
-    slang::SessionDesc sessionDesc = {};
-    sessionDesc.targets            = &targetDesc;
-    sessionDesc.targetCount        = 1;
-    const char* searchPaths[]      = {"", "../../tools/gfx-unit-test", "tools/gfx-unit-test"};
-    sessionDesc.searchPathCount    = (SlangInt)SLANG_COUNT_OF(searchPaths);
-    sessionDesc.searchPaths        = searchPaths;
-
-    Slang::ComPtr<slang::ISession> session;
-    SLANG_CHECK(slangGlobalSession->createSession(sessionDesc, session.writeRef()));
-#endif
-
-    // glsl compiler
+#if USE_GLSL
+    // shaderc compiler
     m_glslC = std::make_unique<nvvkhl::GlslCompiler>();
     // Add search paths
     for(const auto& path : getShaderDirs())
       m_glslC->addInclude(path);
+#elif USE_SLANG
+    SLANG_CHECK(slang::createGlobalSession(m_slangGlobalSession.writeRef()));
+#endif
 
     const std::string err_msg = compileShaders();
     if(!err_msg.empty())
@@ -187,8 +174,6 @@ public:
       LOGE("%s\n", err_msg.c_str());
       exit(1);
     }
-
-    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());  // Not all depth are supported
 
     createPipelineLayout();
     createPipelines();
@@ -282,10 +267,10 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
     if(!m_gBuffers)
       return;
-
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
 
     // Ping-Pong double buffer
     static int double_buffer{0};
@@ -323,7 +308,6 @@ private:
     const VkPushConstantRange push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
 
     m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
     m_dset->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
     m_dset->initPipeLayout(1, &push_constants);
     m_dutil->DBG_NAME(m_dset->getLayout());
@@ -338,10 +322,9 @@ private:
         {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, pos))},  // Position
     });
 
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_colorFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
+    VkPipelineRenderingCreateInfo prend_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+                                             .colorAttachmentCount    = 1,
+                                             .pColorAttachmentFormats = &m_rgba32Format};
 
     // Create the pipeline for "Image"
     {
@@ -366,21 +349,20 @@ private:
   // Buffer-A will write back to itself while Image will take Buffer-A as input
   void renderToBuffer(VkCommandBuffer cmd, VkPipeline pipeline, GbufItems inImage, GbufItems outImage)
   {
-    // Always render to unused Color buffer
-    nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView(eColor)},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_LOAD,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
+    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+
+    // Render to `outImage` buffer, depth is unused
+    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(outImage)},
+                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_LOAD_OP_CLEAR);
     r_info.pStencilAttachment = nullptr;
 
     vkCmdBeginRendering(cmd, &r_info);
     m_app->setViewport(cmd);
 
     // Writing descriptor
-    const VkDescriptorImageInfo       in_desc  = m_gBuffers->getDescriptorImageInfo(inImage);
-    const VkDescriptorImageInfo       out_desc = m_gBuffers->getDescriptorImageInfo(outImage);
+    const VkDescriptorImageInfo       in_desc = m_gBuffers->getDescriptorImageInfo(inImage);
     std::vector<VkWriteDescriptorSet> writes;
     writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
-    writes.push_back(m_dset->makeWrite(0, 1, &out_desc));
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0,
                               static_cast<uint32_t>(writes.size()), writes.data());
 
@@ -398,12 +380,9 @@ private:
 
   void createGbuffers(VkExtent2D size)
   {
-    m_viewSize = size;
-
-    // Creating the 4 buffers (see BufItems)
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), m_viewSize,
-                                                   std::vector{m_colorFormat, m_rgba32Format, m_rgba32Format, m_rgba32Format},
-                                                   m_depthFormat);
+    // Creating the 3 buffers (see BufItems)
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size,
+                                                   std::vector{m_rgba32Format, m_rgba32Format, m_rgba32Format});
   }
 
   void createGeometryBuffers()
@@ -428,27 +407,34 @@ private:
   void setCompilerOptions()
   {
     m_glslC->resetOptions();
-    m_glslC->options()->SetTargetSpirv(shaderc_spirv_version::shaderc_spirv_version_1_2);
-    m_glslC->options()->SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+    m_glslC->options()->SetTargetSpirv(shaderc_spirv_version::shaderc_spirv_version_1_3);
+    m_glslC->options()->SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
     m_glslC->options()->SetGenerateDebugInfo();
     m_glslC->options()->SetOptimizationLevel(shaderc_optimization_level_zero);
   }
 
   std::string compileShaders()
   {
+#if USE_GLSL
+    return compileGlslShaders();
+#elif USE_SLANG
+    return compileSlangShaders();
+#endif
+  }
+
+  std::string compileGlslShaders()
+  {
     nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
     std::string      error_msg;
 
     // Compile default shaders
-    setCompilerOptions();
-    const shaderc::SpvCompilationResult vert_result =
-        m_glslC->compileFile("raster.vert", shaderc_shader_kind::shaderc_vertex_shader);
-    m_glslC->options()->AddMacroDefinition("INCLUDE_FILE", "0");
-    const shaderc::SpvCompilationResult frag_result =
-        m_glslC->compileFile("raster.frag", shaderc_shader_kind::shaderc_fragment_shader);
-    m_glslC->options()->AddMacroDefinition("INCLUDE_FILE", "1");
-    const shaderc::SpvCompilationResult frag_result_a =
-        m_glslC->compileFile("raster.frag", shaderc_shader_kind::shaderc_fragment_shader);
+
+    shaderc::SpvCompilationResult vert_result;
+    shaderc::SpvCompilationResult frag_result;
+    shaderc::SpvCompilationResult frag_result_a;
+    compileGlslShader("raster.vert", shaderc_shader_kind::shaderc_vertex_shader, false, vert_result);
+    compileGlslShader("raster.frag", shaderc_shader_kind::shaderc_fragment_shader, true, frag_result);
+    compileGlslShader("raster.frag", shaderc_shader_kind::shaderc_fragment_shader, false, frag_result_a);
 
     if(vert_result.GetNumErrors() == 0 && frag_result.GetNumErrors() == 0 && frag_result_a.GetNumErrors() == 0)
     {
@@ -479,6 +465,139 @@ private:
 
     return error_msg;
   }
+
+  void compileGlslShader(const std::string& filename, shaderc_shader_kind shaderKind, bool macroImage, shaderc::SpvCompilationResult& result)
+  {
+    nvh::ScopedTimer st(__FUNCTION__);
+    setCompilerOptions();
+    if(macroImage)
+      m_glslC->options()->AddMacroDefinition("INCLUDE_IMAGE");
+    result = m_glslC->compileFile(filename, shaderKind);
+  }
+
+  std::string compileSlangShaders()
+  {
+    nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
+    std::string      error_msg;
+
+#if USE_SLANG
+    // Deleting resources, but not immediately as they are still in used
+    nvvkhl::Application::submitResourceFree([vmod = m_vmodule, fmod_i = m_fmodule, fmod_a = m_fmoduleA,
+                                             device = m_device, gp = m_pipelineImg, gp_a = m_pipelineBufA]() {
+      vkDestroyShaderModule(device, vmod, nullptr);
+      vkDestroyShaderModule(device, fmod_i, nullptr);
+      vkDestroyShaderModule(device, fmod_a, nullptr);
+      vkDestroyPipeline(device, gp, nullptr);
+      vkDestroyPipeline(device, gp_a, nullptr);
+    });
+
+    Slang::ComPtr<slang::IBlob> vertexSpirvCode;
+    Slang::ComPtr<slang::IBlob> fragmentSpirvCode;
+    Slang::ComPtr<slang::IBlob> fragmentASpirvCode;
+    error_msg += slangCompileShader("raster", "vertexMain", false, vertexSpirvCode.writeRef());
+    error_msg += slangCompileShader("raster", "fragmentMain", true, fragmentSpirvCode.writeRef());
+    error_msg += slangCompileShader("raster", "fragmentMain", false, fragmentASpirvCode.writeRef());
+    if(!error_msg.empty())
+      return error_msg;
+
+    m_vmodule = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(vertexSpirvCode->getBufferPointer()),
+                                         vertexSpirvCode->getBufferSize());
+    m_fmodule = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentSpirvCode->getBufferPointer()),
+                                         fragmentSpirvCode->getBufferSize());
+    m_fmoduleA = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentASpirvCode->getBufferPointer()),
+                                          fragmentASpirvCode->getBufferSize());
+    m_dutil->setObjectName(m_vmodule, "Vertex");
+    m_dutil->setObjectName(m_fmodule, "Image");
+    m_dutil->setObjectName(m_fmoduleA, "BufferA");
+
+#endif
+    return error_msg;
+  }
+
+#if USE_SLANG
+  std::string slangCompileShader(const std::string& moduleName, const std::string& entryPointName, bool macroImage, slang::IBlob** outCode)
+  {
+    nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
+    std::string      error_msg;
+
+    // Create a compilation session to generate SPIRV code from Slang source.
+    slang::TargetDesc targetDesc           = {};
+    targetDesc.format                      = SLANG_SPIRV;
+    targetDesc.profile                     = m_slangGlobalSession->findProfile("glsl_460");
+    targetDesc.flags                       = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
+    targetDesc.forceGLSLScalarBufferLayout = true;
+
+    slang::SessionDesc sessionDesc = {};
+    sessionDesc.targets            = &targetDesc;
+    sessionDesc.targetCount        = 1;
+    sessionDesc.allowGLSLSyntax    = true;
+
+    // Search paths
+    std::vector<std::string> searchStringPaths = getShaderDirs();
+    std::vector<const char*> searchPaths;
+    searchPaths.reserve(searchStringPaths.size());
+    for(const auto& str : searchStringPaths)
+    {
+      searchPaths.push_back(str.c_str());
+    }
+    searchPaths.push_back(PROJECT_RELDIRECTORY);
+    sessionDesc.searchPathCount = (SlangInt)(searchPaths.size());
+    sessionDesc.searchPaths     = searchPaths.data();
+
+    // Preprocessor
+    slang::PreprocessorMacroDesc marcoDesc{};
+    if(macroImage)
+    {
+      marcoDesc.name                     = "INCLUDE_IMAGE";
+      marcoDesc.value                    = "1";
+      sessionDesc.preprocessorMacroCount = 1;
+      sessionDesc.preprocessorMacros     = &marcoDesc;
+    }
+
+    Slang::ComPtr<slang::ISession> slangSession;
+    SLANG_CHECK(m_slangGlobalSession->createSession(sessionDesc, slangSession.writeRef()));
+
+    slang::IModule* rasterSlangModule = nullptr;
+    {  // Loading the Slang shader file
+      Slang::ComPtr<slang::IBlob> diagnosticBlob;
+      rasterSlangModule = slangSession->loadModule(moduleName.c_str(), diagnosticBlob.writeRef());
+      if(diagnosticBlob != nullptr)
+        error_msg = (const char*)diagnosticBlob->getBufferPointer();
+      if(!rasterSlangModule)
+        return error_msg;
+    }
+
+    Slang::ComPtr<slang::IEntryPoint> entryPoint;
+    SLANG_CHECK(rasterSlangModule->findEntryPointByName(entryPointName.c_str(), entryPoint.writeRef()));
+
+    std::vector<slang::IComponentType*> componentTypes;
+    componentTypes.push_back(rasterSlangModule);
+    componentTypes.push_back(entryPoint);  // index 0
+
+
+    Slang::ComPtr<slang::IComponentType> composedProgram;
+    {
+      Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+      SlangResult result = slangSession->createCompositeComponentType(componentTypes.data(), componentTypes.size(),
+                                                                      composedProgram.writeRef(), diagnosticsBlob.writeRef());
+      if(diagnosticsBlob != nullptr)
+        error_msg = (const char*)diagnosticsBlob->getBufferPointer();
+      if(SLANG_FAILED(result) || !error_msg.empty())
+        return error_msg;
+    }
+
+    {
+      Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+      SlangResult result = composedProgram->getEntryPointCode(0, 0, outCode, diagnosticsBlob.writeRef());
+      if(diagnosticsBlob != nullptr)
+        error_msg = (const char*)diagnosticsBlob->getBufferPointer();
+      if(SLANG_FAILED(result) || !error_msg.empty())
+        return error_msg;
+    }
+
+    return error_msg;
+  }
+#endif
 
   void updateUniforms()
   {
@@ -571,10 +690,12 @@ private:
   std::unique_ptr<FileCheck>                    m_fileBufferA;
   std::unique_ptr<FileCheck>                    m_fileImage;
 
-  VkExtent2D        m_viewSize{0, 0};
-  VkFormat          m_colorFormat  = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of fragment
+#if USE_SLANG
+  Slang::ComPtr<slang::IGlobalSession> m_slangGlobalSession;
+#endif
+
+
   VkFormat          m_rgba32Format = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the images
-  VkFormat          m_depthFormat  = VK_FORMAT_UNDEFINED;            // Depth format of the depth buffer
   VkPipeline        m_pipelineImg  = VK_NULL_HANDLE;                 // The graphic pipeline to render
   VkPipeline        m_pipelineBufA = VK_NULL_HANDLE;                 // The graphic pipeline to render
   nvvk::Buffer      m_vertices;                                      // Buffer of the vertices

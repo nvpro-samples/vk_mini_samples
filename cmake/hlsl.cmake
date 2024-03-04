@@ -17,7 +17,7 @@ if(Vulkan_dxc_EXECUTABLE)
 else()
   message(STATUS "--> Could not find DXC")
 endif()
-
+mark_as_advanced(Vulkan_dxc_EXECUTABLE)
 
 
 function(get_target stage profile_version)

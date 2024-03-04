@@ -39,6 +39,8 @@
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 
+#include "common/alloc_dma.hpp"
+
 namespace DH {
 using namespace glm;
 #include "shaders/device_host.h"  // Shared between host and device
@@ -57,37 +59,6 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
 #endif  // USE_HLSL
-
-
-//-------------------------------------------------
-// Using Device Memory Allocator, similar to VMA
-// but using a slightly different approach
-class AllocDma : public nvvk::ResourceAllocator
-{
-public:
-  explicit AllocDma(const nvvk::Context* context) { init(context); }
-  ~AllocDma() override { deinit(); }
-
-private:
-  void init(const nvvk::Context* context)
-  {
-    m_deviceMemoryAllocator = std::make_unique<nvvk::DeviceMemoryAllocator>(context->m_device, context->m_physicalDevice);
-    m_dma = std::make_unique<nvvk::DMAMemoryAllocator>(m_deviceMemoryAllocator.get());
-    nvvk::ResourceAllocator::init(context->m_device, context->m_physicalDevice, m_dma.get());
-  }
-
-  void deinit()
-  {
-    releaseStaging();
-    m_deviceMemoryAllocator->deinit();
-    m_dma->deinit();
-    nvvk::ResourceAllocator::deinit();
-  }
-
-  std::unique_ptr<nvvk::DMAMemoryAllocator>    m_dma;  // The memory allocator
-  std::unique_ptr<nvvk::DeviceMemoryAllocator> m_deviceMemoryAllocator;
-};
-
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
@@ -114,9 +85,8 @@ public:
   {
     m_app    = app;
     m_device = m_app->getDevice();
-
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc = std::make_unique<AllocDma>(m_app->getContext().get());  // Allocator
+    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
+    m_alloc  = std::make_unique<AllocDma>(m_app->getContext().get());  // Allocator
     //m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
     m_dset = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
@@ -215,20 +185,18 @@ public:
       return;
 
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
-    const float aspect_ratio = m_gBuffers->getAspectRatio();
+    const glm::vec2&                      clip = CameraManip.getClipPlanes();
 
     // Update Frame buffer uniform buffer
-    DH::FrameInfo    finfo{};
-    const glm::vec2& clip = CameraManip.getClipPlanes();
-    finfo.view            = CameraManip.getMatrix();
-    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
+    DH::FrameInfo finfo{};
+    finfo.view = CameraManip.getMatrix();
+    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), m_gBuffers->getAspectRatio(), clip.x, clip.y);
     finfo.proj[1][1] *= -1;
     finfo.camPos = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
-    // Drawing the primitives in a G-Buffer
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
+    // Drawing the primitives in G-Buffer 0
+    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(0)},
                                      m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
@@ -250,7 +218,9 @@ public:
     const VkDeviceSize offsets{0};
     for(const nvh::Node& n : m_nodes)
     {
-      PrimitiveMeshVk& m = m_meshVk[n.mesh];
+      PrimitiveMeshVk& m           = m_meshVk[n.mesh];
+      auto             num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
+
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
       m_pushConst.color   = m_materials[n.material].color;
@@ -259,7 +229,6 @@ public:
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
       vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
@@ -268,16 +237,12 @@ public:
 private:
   void createScene()
   {
-    // Meshes
-    createMesh(0.7F, 4080);
 
-    // Material
-    m_materials.push_back({.color = {.88, .88, .88}});
+    createMesh(0.7F, 4080);                             // Meshes
+    m_materials.push_back({.color = {.88, .88, .88}});  // Material
+    m_nodes.push_back({.mesh = 0});                     // Instances
 
-    // Instances
-    m_nodes.push_back({.mesh = 0});
-
-    CameraManip.setClipPlanes({0.01F, 100.0F});
+    CameraManip.setClipPlanes({0.01F, 100.0F});  // Default camera
     CameraManip.setLookat({-1.24282, 0.28388, 1.24613}, {-0.07462, -0.08036, -0.02502}, {0.00000, 1.00000, 0.00000});
   }
 
@@ -422,6 +387,13 @@ private:
         },
     };
 
+    VkColorBlendEquationEXT colorBlendEquation = {.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                  .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                  .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                  .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                  .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                  .alphaBlendOp        = VK_BLEND_OP_ADD};
+
     float                 blendConstants[4]{0.0F, 0.0F, 0.0F, 0.0F};
     VkSampleMask          sampleMask{~0U};
     VkBool32              colorBlendEnables = VK_FALSE;
@@ -449,6 +421,7 @@ private:
     vkCmdSetDepthClampEnableEXT(cmd, VK_TRUE);
     vkCmdSetPolygonModeEXT(cmd, m_settings.polygonMode);  // VK_POLYGON_MODE_FILL
     vkCmdSetRasterizationSamplesEXT(cmd, VK_SAMPLE_COUNT_1_BIT);
+    vkCmdSetColorBlendEquationEXT(cmd, 0, 1, &colorBlendEquation);
     vkCmdSetSampleMaskEXT(cmd, VK_SAMPLE_COUNT_1_BIT, &sampleMask);
     vkCmdSetAlphaToCoverageEnableEXT(cmd, VK_FALSE);
     vkCmdSetAlphaToOneEnableEXT(cmd, VK_FALSE);
@@ -464,12 +437,9 @@ private:
   //-------------------------------------------------------------------------------------------------
   // G-Buffers, a color and a depth, which are used for rendering. The result color will be displayed
   // and an image filling the ImGui Viewport window.
-  void createGbuffers(const glm::vec2& size)
+  void createGbuffers(const VkExtent2D& size)
   {
-    m_viewSize = size;
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
-                                                   VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
-                                                   m_colorFormat, m_depthFormat);
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
   }
 
   //-------------------------------------------------------------------------------------------------
@@ -499,12 +469,10 @@ private:
   void createFrameInfoBuffer()
   {
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-
-    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_frameInfo.buffer);
-
+    m_frameInfo         = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_app->submitAndWaitTempCmdBuffer(cmd);
+    m_dutil->DBG_NAME(m_frameInfo.buffer);
   }
 
   void destroyPrimitiveMeshResources()
@@ -540,7 +508,6 @@ private:
   std::shared_ptr<AllocDma>        m_alloc;
   //std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  glm::vec2                        m_viewSize    = {0, 0};
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkClearColorValue                m_clearColor  = {{0.7F, 0.7F, 0.7F, 1.0F}};     // Clear color
@@ -556,8 +523,6 @@ private:
   };
   std::vector<PrimitiveMeshVk> m_meshVk;
   nvvk::Buffer                 m_frameInfo;
-
-  std::vector<VkSampler> m_samplers;
 
   // Data and setting
   struct Material
@@ -582,11 +547,9 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync            = true;
-  spec.vkSetup          = nvvk::ContextCreateInfo(false);
-  spec.vkSetup.apiMajor = 1;
-  spec.vkSetup.apiMinor = 3;
+  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync = true;
+  spec.vkSetup.setVersion(1, 3);
 
   // #SHADER_OBJECT
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};

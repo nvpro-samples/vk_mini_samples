@@ -19,21 +19,14 @@
 
 
 /*
- This sample shows how to integrate Nsight Aftermath.
+ This sample shows how to integrate NSight Aftermath.
 
- Note: if USE_NSIGHT_AFTERMATH is not defined, this means the CMake haven't 
-       found the SDK. 
+ Note: if NVVK_SUPPORTS_AFTERMATH is not defined, this means the path to NSight Aftermath wasn't set.
        - Download the NSight Aftermath SDK
-       - Put the include/ and lib/ under aftermath/aftermath_sdk
-       - Delete CMake cache and rerun Cmake
-       - ** The CMake `NSIGHT_AFTERMATH_SDK` variable can also be set to a different directory **
+       - Open `Ungrouped Entries` and set the NSIGHT_AFTERMATH_SDK path
+       - Delete CMake cache and re-configure CMake
 */
 
-
-#include <array>
-#include <filesystem>
-#include <vulkan/vulkan_core.h>
-#include <imgui.h>
 
 #define VMA_IMPLEMENTATION
 #include "nvh/primitives.hpp"
@@ -45,183 +38,32 @@
 #include "nvvk/renderpasses_vk.hpp"
 #include "nvvk/specialization.hpp"
 #include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
+#include "nvvk/shaders_vk.hpp"
 
 namespace DH {
 using namespace glm;
 #include "shaders/device_host.h"
 }  // namespace DH
 
-template <typename T>
-std::vector<uint32_t> changeMemoryLayout(const std::vector<T>& input)
-{
-  const size_t inputSize  = sizeof(T);
-  const size_t uint32Size = sizeof(uint32_t);
-  const size_t totalSize  = input.size() * inputSize;
-
-
-  // Check if the input vector size is a multiple of sizeof(uint32_t)
-  if(totalSize % uint32Size != 0)
-  {
-    std::cout << "Error: Input vector size is not a multiple of sizeof(uint32_t)!" << std::endl;
-    return std::vector<uint32_t>();
-  }
-
-  // Calculate the number of uint32_t elements needed
-  const size_t numElements = totalSize / uint32Size;
-
-  // Create a vector with the correct size
-  std::vector<uint32_t> output(numElements);
-
-  // Copy the data from the input vector by reinterpreting the memory layout
-  std::memcpy(output.data(), input.data(), totalSize);
-
-  return output;
-}
 
 #if USE_HLSL
 #include "_autogen/raster_vertexMain.spirv.h"
 #include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd8 = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd8 = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-const auto  vert_shd  = changeMemoryLayout(vert_shd8);
-const auto  frag_shd  = changeMemoryLayout(frag_shd8);
+const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
+const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
+#elif USE_SLANG
+#include "_autogen/raster_slang.h"
 #else
 #include "_autogen/raster.frag.h"
 #include "_autogen/raster.vert.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
 #endif  // USE_HLSL
-
-#include "GLFW/glfw3.h"
-
-#ifdef USE_NSIGHT_AFTERMATH
-#include "NsightAftermathGpuCrashTracker.h"
-// Global marker map
-::GpuCrashTracker::MarkerMap       g_marker_map;
-std::unique_ptr<::GpuCrashTracker> g_aftermath_tracker;
-
-// Display errors
-#ifdef _WIN32
-#define ERR_EXIT(err_msg, err_class)                                                                                   \
-  do                                                                                                                   \
-  {                                                                                                                    \
-    MessageBox(nullptr, err_msg, err_class, MB_OK);                                                                    \
-    exit(1);                                                                                                           \
-  } while(0)
-#else
-#define ERR_EXIT(err_msg, err_class)                                                                                   \
-  do                                                                                                                   \
-  {                                                                                                                    \
-    printf("%s\n", err_msg);                                                                                           \
-    fflush(stdout);                                                                                                    \
-    exit(1);                                                                                                           \
-  } while(0)
-#endif
-
-#endif  // USE_NSIGHT_AFTERMATH
-
-
-#ifdef USE_NSIGHT_AFTERMATH
-
-// Override the default checkResult from nvvk/error_vk.cpp
-bool nvvk::checkResult(VkResult result, const char* /*file*/, int32_t /*line*/)
-{
-  if(result == VK_SUCCESS)
-  {
-    return false;
-  }
-  if(result == VK_ERROR_DEVICE_LOST)
-  {
-    // Device lost notification is asynchronous to the NVIDIA display
-    // driver's GPU crash handling. Give the Nsight Aftermath GPU crash dump
-    // thread some time to do its work before terminating the process.
-    auto tdr_termination_timeout = std::chrono::seconds(5);
-    auto t_start                 = std::chrono::steady_clock::now();
-    auto t_elapsed               = std::chrono::milliseconds::zero();
-
-    GFSDK_Aftermath_CrashDump_Status status = GFSDK_Aftermath_CrashDump_Status_Unknown;
-    AFTERMATH_CHECK_ERROR(GFSDK_Aftermath_GetCrashDumpStatus(&status));
-
-    while(status != GFSDK_Aftermath_CrashDump_Status_CollectingDataFailed
-          && status != GFSDK_Aftermath_CrashDump_Status_Finished && t_elapsed < tdr_termination_timeout)
-    {
-      // Sleep 50ms and poll the status again until timeout or Aftermath finished processing the crash dump.
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-      AFTERMATH_CHECK_ERROR(GFSDK_Aftermath_GetCrashDumpStatus(&status));
-
-      auto t_end = std::chrono::steady_clock::now();
-      t_elapsed  = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start);
-    }
-
-    if(status != GFSDK_Aftermath_CrashDump_Status_Finished)
-    {
-      std::stringstream err_msg;
-      err_msg << "Unexpected crash dump status: " << status;
-      ERR_EXIT(err_msg.str().c_str(), "Aftermath Error");
-    }
-
-    std::stringstream err_msg;
-    err_msg << "Aftermath file dumped under:\n\n";
-    err_msg << std::filesystem::current_path().string();
-
-    // Terminate on failure
-#ifdef _WIN32
-    err_msg << "\n\n\nSave path to clipboard?";
-    int ret = MessageBox(nullptr, err_msg.str().c_str(), "Nsight Aftermath", MB_YESNO | MB_ICONEXCLAMATION);
-    if(ret == IDYES)
-    {
-      ImGui::SetClipboardText(std::filesystem::current_path().string().c_str());
-    }
-#else
-    printf("%s\n", err_msg.str().c_str());
-#endif
-
-    exit(1);
-  }
-  return false;
-}
-#endif
-
-#ifdef USE_NSIGHT_AFTERMATH
-// A helper that prepends the frame number to a string
-static auto createMarkerStringForFrame(const char* marker_string, int frame_number) -> std::string
-{
-  std::stringstream ss;
-  ss << "Frame " << frame_number << ": " << marker_string;
-  return ss.str();
-};
-
-// A helper for setting a checkpoint marker
-static void setCheckpointMarker(VkCommandBuffer cmd, const std::string& marker_data, int frame_number)
-{
-  // App is responsible for handling marker memory, and for resolving the memory at crash dump generation time.
-  // The actual "const void* pCheckpointMarker" passed to setCheckpointNV in this case can be any uniquely identifying value that the app can resolve to the marker data later.
-  // For this sample, we will use this approach to generating a unique marker value:
-  // We keep a ringbuffer with a marker history of the last c_markerFrameHistory frames (currently 4).
-  unsigned int marker_map_index         = frame_number % ::GpuCrashTracker::c_markerFrameHistory;
-  auto&        current_frame_marker_map = g_marker_map[marker_map_index];
-  // Take the index into the ringbuffer, multiply by 10000, and add the total number of markers logged so far in the current frame, +1 to avoid a value of zero.
-  size_t marker_id = static_cast<uint64_t>(marker_map_index) * 10000 + current_frame_marker_map.size() + 1;
-  // This value is the unique identifier we will pass to Aftermath and internally associate with the marker data in the map.
-  current_frame_marker_map[marker_id] = marker_data;
-  vkCmdSetCheckpointNV(cmd, (const void*)marker_id);
-  // For example, if we are on frame 625, markerMapIndex = 625 % 4 = 1...
-  // The first marker for the frame will have markerID = 1 * 10000 + 0 + 1 = 10001.
-  // The 15th marker for the frame will have markerID = 1 * 10000 + 14 + 1 = 10015.
-  // On the next frame, 626, markerMapIndex = 626 % 4 = 2.
-  // The first marker for this frame will have markerID = 2 * 10000 + 0 + 1 = 20001.
-  // The 15th marker for the frame will have markerID = 2 * 10000 + 14 + 1 = 20015.
-  // So with this scheme, we can safely have up to 10000 markers per frame, and can guarantee a unique markerID for each one.
-  // There are many ways to generate and track markers and unique marker identifiers!
-};
-#endif
-
 
 class AftermathSample : public nvvkhl::IAppElement
 {
@@ -262,6 +104,10 @@ public:
   {
     {  // Setting panel
       ImGui::Begin("Settings");
+
+#if !defined(NVVK_SUPPORTS_AFTERMATH)
+      ImGui::TextColored(ImVec4(1, 0, 0, 1), "Aftermath not enabled");
+#endif
 
       if(ImGui::Button("1. Crash"))
       {
@@ -318,6 +164,11 @@ public:
     {  // Display the G-Buffer image
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
+
+#if !defined(NVVK_SUPPORTS_AFTERMATH)
+      aftermathPopup();
+#endif
+
       if(m_gBuffers)
       {
         ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
@@ -327,21 +178,37 @@ public:
     }
   }
 
+  void aftermathPopup()
+  {
+    static bool onlyOnce = true;
+    if(onlyOnce)
+      ImGui::OpenPopup("NSight Aftermath");
+    // Always center this window when appearing
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0F, 20.0F));
+    if(ImGui::BeginPopupModal("NSight Aftermath", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+      onlyOnce = false;
+      ImGui::Text("NSight Aftermath is not installed.\n");
+      ImGui::Text("This sample will work but will not dump debugging crashes.\n");
+      ImGui::Separator();
+      if(ImGui::Button("OK", ImVec2(120, 0)))
+      {
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+  }
+
   void onRender(VkCommandBuffer cmd) override
   {
     if(!m_gBuffers)
       return;
 
     const nvvk::DebugUtil::ScopedCmdLabel s_dbg = m_dutil->DBG_SCOPE(cmd);
-#if defined(USE_NSIGHT_AFTERMATH)
     m_frameNumber++;
-
-    // clear the marker map for the current frame before writing any markers
-    g_marker_map[m_frameNumber % ::GpuCrashTracker::c_markerFrameHistory].clear();
-
-    // Insert a device diagnostic checkpoint into the command stream
-    setCheckpointMarker(cmd, createMarkerStringForFrame("Draw Rect", m_frameNumber), m_frameNumber);
-#endif
 
     nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()}, m_gBuffers->getDepthImageView(),
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
@@ -360,6 +227,7 @@ public:
 
     finfo.resolution = glm::vec2(m_viewSize.width, m_viewSize.height);
     finfo.badOffset  = std::rand();  // 0xDEADBEEF;
+    finfo.errorTest  = m_currentPipe;
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     vkCmdBeginRendering(cmd, &r_info);
@@ -411,16 +279,27 @@ private:
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
     nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipe.layout, prend_info, pstate);
+#if USE_SLANG
+    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
+    for(int i = 0; i <= 10; i++)
+    {
+      nvvk::Specialization specialization;
+      specialization.add(0, i);
+      pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain").pSpecializationInfo =
+          specialization.getSpecialization();
+      pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain").pSpecializationInfo =
+          specialization.getSpecialization();
+      m_pipe.plines.push_back(pgen.createPipeline());
+      m_dutil->DBG_NAME(m_pipe.plines[i]);
+      pgen.clearShaders();
+    }
+    vkDestroyShaderModule(m_device, shaderModule, nullptr);
+#else
     pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
     pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
     m_pipe.plines.push_back(pgen.createPipeline());
     m_dutil->DBG_NAME(m_pipe.plines[0]);
     pgen.clearShaders();
-
-#ifdef USE_NSIGHT_AFTERMATH
-    g_aftermath_tracker->addShaderBinary(vert_shd);
-    g_aftermath_tracker->addShaderBinary(frag_shd);
-#endif  // USE_NSIGHT_AFTERMATH
 
     // Create many specializations (shader with constant values)
     // 1- Loop in vertex, 2- Loop in Fragment, 3- Over buffer
@@ -436,7 +315,9 @@ private:
       m_dutil->setObjectName(m_pipe.plines.back(), "Crash " + std::to_string(i));
       pgen.clearShaders();
     }
+#endif
   }
+
   void updateDescriptorSet()
   {
     // Writing to descriptors
@@ -555,29 +436,11 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync            = true;
-  spec.vkSetup.apiMajor = 1;
-  spec.vkSetup.apiMinor = 3;
-  spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  spec.vkSetup.enableAftermath = false;  // We want our integration
-
-#ifdef USE_NSIGHT_AFTERMATH
-  // Enable NV_device_diagnostic_checkpoints extension to be able to use Aftermath event markers.
-  spec.vkSetup.addDeviceExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
-  // Enable NV_device_diagnostics_config extension to configure Aftermath features.
-  VkDeviceDiagnosticsConfigCreateInfoNV aftermath_info{VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV};
-  aftermath_info.flags = VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV
-                         | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
-                         | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV;
-  spec.vkSetup.addDeviceExtension(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME, false, &aftermath_info);
-#endif
-
-  // #Aftermath - Initialization
-#ifdef USE_NSIGHT_AFTERMATH
-  g_aftermath_tracker = std::make_unique<::GpuCrashTracker>(g_marker_map);
-  g_aftermath_tracker->initialize();
-#endif
+  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync = true;
+  spec.vkSetup.setVersion(1, 3);
+  //spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+  spec.vkSetup.enableAftermath = true;  // We want Aftermath
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -592,12 +455,8 @@ int main(int argc, char** argv)
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
   app->addElement(std::make_shared<AftermathSample>());
 
-
   app->run();
   app.reset();
-#ifdef USE_NSIGHT_AFTERMATH
-  g_aftermath_tracker.reset();
-#endif
 
   return test->errorCode();
 }

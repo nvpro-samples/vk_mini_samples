@@ -33,7 +33,7 @@ The Aftermath sample requires to download the SDK separately:  [Nsight Aftermath
 
 ### GLSL, HLSL or SLANG
 
-By default, the samples are created using GLSL. However, many of them also have equivalent shaders written in [HLSL](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl) and [SLANG](https://github.com/shader-slang/slang). To switch between them, select either USE_HLSL or USE_SLANG. Afterward, regenerate CMake and the solution will update with compatible projects and their respective shaders.
+By default, the samples are created using GLSL. However, many of them also have equivalent shaders written in [HLSL](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl) and [SLANG](https://github.com/shader-slang/slang). To switch between them, select the shader language to use. Afterward, regenerate CMake and the solution will update with compatible projects and their respective shaders.
 
 ![img](docs/use_shaders.png)
 
@@ -45,7 +45,7 @@ If you are new to this repository, the first samples to read to better understan
 | ------ | ------ | ---- | ---- | ---- | ---- |
 | [solid_color](samples/solid_color) | Set a user custom color to a pixel wide texture and display it.  | ![](samples/solid_color/docs/solid_color_th.jpg) | [x] | [x] | [x] |
 | [rectangle](samples/rectangle) | Render a 2D rectangle to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) | [x] | [x] | [x] |
-| [aftermath](samples/aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/aftermath/docs/aftermath_th.jpg) | [x] | [x] | [ ] |
+| [crash_aftermath](samples/crash_aftermath) | Integrate the Nsight Aftermath SDK to an existing application | ![](samples/crash_aftermath/docs/aftermath_th.jpg) | [x] | [x] | [x] |
 | [image_ktx](samples/image_ktx) | Display KTX image and apply tonemap post processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | [x] | [x] | [x] |
 | [image_viewer](samples/image_viewer) | Load an image, allow to zoom and pan under mouse cursor | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] | [x] |
 | [mm_displacement](samples/mm_displacement) | Micro-mesh displacement  | ![](samples/mm_displacement/docs/micromesh_th.jpg) | [x] | [x] | [x] |
@@ -67,6 +67,7 @@ If you are new to this repository, the first samples to read to better understan
 | [gpu_monitor](samples/gpu_monitor) | Showing GPU usage | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] | [x] |
 | [realtime_analysis](samples/realtime_analysis) | Displaying in realtime GPU informations | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [x] | [ ] | [x] |
 | [motion_blur](samples/ray_trace_motion_blur) | Tracing object having motion, using the NVIDIA raytrace extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [x] | [ ] | [x] |
+| [memory_budget](samples/memory_budget) | Dynamically allocate memory during rendering, while staying into memory budget.| ![](samples/memory_budget/docs/mem_budget_th.jpg) | [x] | [x] | [x] |
 
 
 ## Application Class

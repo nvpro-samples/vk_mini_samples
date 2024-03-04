@@ -85,7 +85,7 @@ VSout vertexMain(VSin input)
 
 // Fragment Shader
 [shader("pixel")]
-PSout fragmentMain(PSin stage, float4 fragCoord : SV_Position)
+PSout fragmentMain(PSin stage, in float4 fragCoord : SV_Position)
 {
   updateBuiltins(fragCoord);
   

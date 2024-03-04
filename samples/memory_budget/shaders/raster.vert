@@ -16,15 +16,35 @@
  * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#version 450
 
+#extension GL_GOOGLE_include_directive : enable
 
-struct FrameInfo
+#include "device_host.h"
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNrm;
+
+layout(location = 0) out vec3 outFragPos;
+layout(location = 1) out vec3 outFragNrm;
+
+layout(set = 0, binding = 0) uniform FrameInfo_
 {
-  mat4     mpv;
-  int      badOffset;
-  int      _pad;
-  vec2     resolution;
-  float    time[2];
-  int      _pad2;
-  uint64_t bufferAddr;
+  FrameInfo frameInfo;
 };
+
+layout(push_constant) uniform PushConstant_
+{
+  PushConstant pushC;
+};
+
+void main()
+{
+  vec4 pos    = pushC.transfo * vec4(inPosition.xyz, 1.0);
+  gl_Position = frameInfo.proj * frameInfo.view * vec4(pos);
+
+  outFragPos = pos.xyz;
+  outFragNrm = inNrm;
+
+  gl_PointSize = pushC.pointSize;
+}

@@ -35,25 +35,21 @@ layout(set = 0, binding = 0) uniform FrameInfo_
 };
 layout(push_constant) uniform PushConstant_
 {
-  PushConstant pushC;
+  PushConstant pushConst;
 };
 
-//layout(set = 0, binding = 0) uniform sampler2D inTexture;
-
-vec3 simpleShading(in vec3 toEye, in vec3 normal)
+vec3 simpleShading(vec3 viewDir, vec3 lightDir, vec3 normal, vec3 color, float expo)
 {
-  vec3 color    = vec3(0.8);
-  vec3 wUpDir   = vec3(0, 1, 0);
-  vec3 lightDir = normalize(toEye);
-  vec3 eyeDir   = normalize(toEye);
-  vec3 reflDir  = normalize(-reflect(lightDir, normal));
-  // Diffuse  // + Specular
-  float lt = abs(dot(normal, lightDir));  // + pow(max(0, dot(reflDir, eyeDir)), 1.0);
-  color    = color * (lt);
-  // Ambient term (sky effect)
-  color += mix(vec3(0.8, 0.6, 0.2), vec3(0.1, 0.1, 0.4), dot(normal, wUpDir.xyz) * 0.5 + 0.5) * 0.2;
-  // Gamma correction
-  color = pow(color, vec3(1.0 / 2.2));
+  // Diffuse + Specular
+  vec3 reflDir = normalize(-reflect(lightDir, normal));
+  float lt = clamp(dot(normal, lightDir), 0, 1) + pow(max(0., dot(reflDir, viewDir)), expo);
+  color *= lt;
+
+  // Slight ambient term (sky effect)
+  vec3 skyUpDir = vec3(0, 1, 0);
+  vec3 groundColor = vec3(0.1, 0.1, 0.4);
+  vec3 skyColor = vec3(0.8, 0.6, 0.2);
+  color += mix(skyColor, groundColor, dot(normal, skyUpDir.xyz) * 0.5 + 0.5) * 0.2;
 
   return color;
 }
@@ -61,12 +57,14 @@ vec3 simpleShading(in vec3 toEye, in vec3 normal)
 
 void main()
 {
-  // Darker in the center
-  float nb_subdiv = pow(3.0F, 2);
-  vec3  cx        = floor(abs((inFragPos * nb_subdiv) + vec3(0.001))) / nb_subdiv * 2.0;
-  float factor    = pow(max(cx.x, max(cx.y, cx.z)), 1.5);
+  vec3 V = normalize(frameInfo.camPos - inFragPos); // vector that goes from the hit position towards the origin of the ray  
+  vec3 color = simpleShading(V, V, inFragNrm, pushConst.color.xyz, 16.0);
+  color = pow(color, vec3(1.0/2.2)); // Gamma correction
 
-  vec3 toEye = frameInfo.camPos - inFragPos;
-  vec3 color = simpleShading(toEye, inFragNrm) * pushC.color * factor;
-  outColor   = vec4(color, 1);
+  // Darker in the center
+  float nb_subdiv = pow(3.0F, MENGER_SUBDIV);
+  vec3 cx = floor(abs((inFragPos * nb_subdiv) + vec3(0.001))) / nb_subdiv * 2.0;
+  float factor = pow(max(cx.x, max(cx.y, cx.z)), 1.5);
+  color *= factor;
+  outColor = vec4(color, 1);
 }

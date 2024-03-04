@@ -20,12 +20,6 @@
 #include "common/shaders/glsl_type.slang"
 #include "device_host.h"
 
-
-struct VSin
-{
-  uint vertexId : SV_VertexID;
-};
-
 struct PSin
 {
   float2 uv : TEXCOORD;
@@ -50,11 +44,10 @@ struct PSout
 
 // Vertex  Shader
 [shader("vertex")]
-VSout vertexMain(VSin input)
+VSout vertexMain()
 {
   VSout output;
-
-  float2 uv = float2((input.vertexId << 1) & 2, input.vertexId & 2);
+  float2 uv = float2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
   output.stage.uv = uv;
   output.sv_position = float4(uv * 2.0f - 1.0f, 0.0f, 1.0f);
   

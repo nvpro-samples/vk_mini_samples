@@ -29,8 +29,8 @@
 #include "nvh/parallel_work.hpp"
 
 #include "mm_process.hpp"
-#include "bird_curve_helper.hpp"
-#include "bit_packer.hpp"
+#include "common/bird_curve_helper.hpp"
+#include "common/bit_packer.hpp"
 #include "nvh/alignment.hpp"
 #include <array>
 #include "nvh/timesampler.hpp"

@@ -4,12 +4,16 @@ project(vk_mini_samples LANGUAGES C CXX)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_CXX_STANDARD 20)
 
-# FetchContent is used for downloading content
-include(FetchContent)
+# CMake Package Manager 
+include(cmake/CPM.cmake)
 
+# Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(SLANG_VERSION  "2024.0.6")
+set(Slang_VERSION  "2024.0.6")
 find_package(Slang)
+
+# Adding NVTX
+CPMAddPackage(NAME NVTX GITHUB_REPOSITORY NVIDIA/NVTX GIT_TAG release-v3 SOURCE_SUBDIR c)
 
 # Adding HLSL compiler function
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
@@ -42,7 +46,6 @@ else()
 endif()
 
 
-
 # Various Paths
 set(SAMPLES_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(SAMPLES_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/common)
@@ -54,24 +57,31 @@ if(MSVC)
 endif()
 
 # Packages shared by all projects
-# _add_package_VulkanSDK()
+_add_package_NsightAftermath() 
+_add_package_VulkanSDK()
 _add_package_ZLIB()
 _add_package_ImGUI()
 _add_package_NVML()
-_add_package_ShaderC() # implicitly including Vulkan
+_add_package_ShaderC()
 
-set(VULKANSDK_BUILD_DEPENDENCIES FALSE CACHE BOOL "Build dependecies for GLSL shaders")
 
-option(USE_HLSL "Use the HLSL shaders for this sample")
-option(USE_SLANG "Use the Slang shaders for this sample")
+# Initialize variables
+set(USE_GLSL OFF )
+set(USE_HLSL OFF)
+set(USE_SLANG OFF)
 
-if(${USE_HLSL} AND ${USE_SLANG})
-  message(FATAL_ERROR "Cannot use both HLSL and Slang simultaneously.")
-endif()
-
-set(USE_GLSL 1)
-if(${USE_HLSL} OR ${USE_SLANG})
-    set(USE_GLSL 0)
+# Define the available choices for shader languages
+set(CHOICES "GLSL" "HLSL" "SLANG")
+set(USE_SHADER_LANGUAGE "GLSL" CACHE STRING "Choose the shading language to use.")
+set_property(CACHE USE_SHADER_LANGUAGE PROPERTY STRINGS ${CHOICES}) # Provide the choices to the user in the CMake GUI
+if(USE_SHADER_LANGUAGE STREQUAL "GLSL")
+   set(USE_GLSL ON)
+elseif(USE_SHADER_LANGUAGE STREQUAL "HLSL")
+    set(USE_HLSL ON)
+elseif(USE_SHADER_LANGUAGE STREQUAL "SLANG")
+    set(USE_SLANG ON)
+else()
+    message(FATAL_ERROR "Invalid choice for USE_SHADER_LANGUAGE: ${USE_SHADER_LANGUAGE}")
 endif()
 
 
@@ -131,15 +141,16 @@ function(create_sample  PROJECT_NAME)
     target_sources(${PROJECT_NAME} PRIVATE ${SAMPLE_FOLDER}/README.md)
 
     # Include paths
-    target_include_directories(${PROJECT_NAME} PRIVATE ${SAMPLES_COMMON_DIR} ${SAMPLE_FOLDER})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${SAMPLES_ROOT_DIR} ${SAMPLE_FOLDER})
 
     # Linking with other libraries
-    target_link_libraries(${PROJECT_NAME} 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         nvpro_core
         optimized ${LIBRARIES_OPTIMIZED}
         debug ${LIBRARIES_DEBUG}
         ${PLATFORM_LIBRARIES}
-         ${UNIXLINKLIBS}
+        ${UNIXLINKLIBS}
+        nvtx3-cpp
     )
 
     # Compile definitions
@@ -169,7 +180,7 @@ function(create_sample  PROJECT_NAME)
             DST "${SAMPLE_FOLDER}/_autogen" 
             VULKAN_TARGET "vulkan1.3"
             HEADER ON
-            DEPENDENCY ON
+            DEPENDENCY ${VULKAN_BUILD_DEPENDENCIES}
             FLAGS ${_GLSL_FLAGS}
             )
 
@@ -188,8 +199,8 @@ function(create_sample  PROJECT_NAME)
     endif()
 
     if(USE_SLANG)
-      target_include_directories(${PROJECT_NAME} PRIVATE ${SLANG_SDK})
-      target_link_libraries(${PROJECT_NAME} ${SLANG_LIB})
+      target_include_directories(${PROJECT_NAME} PRIVATE ${Slang_SDK})
+      target_link_libraries(${PROJECT_NAME} PRIVATE ${Slang_LIBRARY})
       if(ARGS_SHADER_SLANG) 
           foreach(SLANG_FILE ${ARGS_SHADER_SLANG})
               compile_slang_file(
@@ -203,23 +214,16 @@ function(create_sample  PROJECT_NAME)
     endif()
 
     # target definitions for GLSL, HLSL and SLANG
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=${USE_GLSL})
-    if(${USE_GLSL})
+    if(USE_GLSL)
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=1 USE_HLSL=0 USE_SLANG=0)
       target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="GLSL")
-    endif()
-    if(${USE_SLANG})
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SLANG=1)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="Slang")
-    else()
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SLANG=0)
-    endif()
-    if(${USE_HLSL})
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_HLSL=1)
+    elseif(USE_HLSL)
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=0 USE_HLSL=1 USE_SLANG=0)
       target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="HLSL")
-    else()
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_HLSL=0)
+    elseif(USE_SLANG)
+      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=0 USE_HLSL=0 USE_SLANG=1)
+      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="Slang")
     endif()
-
 
     # Copy binary
     _finalize_target( ${PROJECT_NAME} )

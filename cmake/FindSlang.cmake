@@ -1,68 +1,67 @@
 # FindSlang.cmake
 
 # Usage: 
-# set(SLANG_VERSION "2023.4.9")
+# set(Slang_VERSION "2023.4.9")
 # find_package(Slang)
 
 # Set the default Slang version
-set(SLANG_DEFAULT_VERSION "2023.5.5")
+set(Slang_DEFAULT_VERSION "2023.5.5")
 
 # Parse optional arguments
-set(SLANG_VERSION ${SLANG_DEFAULT_VERSION} CACHE INTERNAL "")
+set(Slang_VERSION ${Slang_DEFAULT_VERSION} CACHE INTERNAL "")
 
 # Download Slang SDK
 if(WIN32)
-    set(SLANG_URL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-win64.zip")
+    set(Slang_URL "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-win64.zip")
 else()
-    set(SLANG_URL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.zip")
+    set(Slang_URL "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-linux-x86_64.zip")
 endif()
 
-if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.24.0")
-    set(_EXTRA_OPTIONS DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-else()
-    set(_EXTRA_OPTIONS)
-endif()
-
-FetchContent_Declare(slangsdk
-    URL ${SLANG_URL}
-    ${_EXTRA_OPTIONS}
+CPMAddPackage(
+  NAME Slang
+  URL ${Slang_URL}
+  VERSION ${Slang_VERSION}
 )
 
-message(STATUS "Looking for Slang ${SLANG_VERSION}")
-if(NOT DEFINED SLANG_COMPILER) 
-    message(STATUS "Downloading Slang ${SLANG_VERSION}")
-    FetchContent_Populate(slangsdk)
-    message(STATUS "Done")
+if(Slang_ADDED)
+  set(Slang_SDK ${Slang_SOURCE_DIR} CACHE PATH "Path to Slang SDK root directory")
+  mark_as_advanced(Slang_SDK)
 
-    set(SLANG_SDK ${slangsdk_SOURCE_DIR} CACHE PATH "Path to Slang SDK root directory")
-    
-    if(slangsdk_SOURCE_DIR)
-        # Use the one downloaded
-        find_program(SLANG_COMPILER 
-            NAMES slangc 
-            PATHS ${slangsdk_SOURCE_DIR}/bin/windows-x64/release ${slangsdk_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
-        )
+  # Use the one downloaded
+  find_program(Slang_slangc_EXE
+      NAMES slangc 
+      HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+  )
+  # Provide the Slang compiler and SDK paths to the user
+  set(Slang_slangc_EXE ${Slang_slangc_EXE} CACHE FILEPATH "Path to Slang compiler")
 
-        find_library(SLANG_LIB 
-            NAMES slang
-            PATHS ${slangsdk_SOURCE_DIR}/bin/windows-x64/release ${slangsdk_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
-        )
+  find_library(Slang_LIBRARY
+      NAMES slang
+      HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+  )
+  mark_as_advanced(Slang_LIBRARY)
 
-    endif()
-    
-    if(NOT SLANG_COMPILER)
-        message(ERROR "Slang not found")
-    endif()
-     
-    # Provide the Slang compiler and SDK paths to the user
-    set(SLANG_COMPILER ${SLANG_COMPILER} CACHE FILEPATH "Path to Slang compiler")
-    set(SLANG_SDK ${slangsdk_SOURCE_DIR} CACHE PATH "Path to Slang SDK root directory")
-endif()
+  find_file(Slang_DLL
+        NAMES slang.dll
+        HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+  )
+  mark_as_advanced(Slang_DLL)
 
-# Test to see if compiler is working
-message(STATUS "--> using SLANGC under: ${SLANG_COMPILER}")
-execute_process(COMMAND ${SLANG_COMPILER} "-v" ERROR_VARIABLE SLANG_VERSION RESULTS_VARIABLE EXTRACT_RESULT)
-message(STATUS "--> SLANGC version: ${SLANG_VERSION}")
-if(NOT EXTRACT_RESULT EQUAL 0)
+  find_file(Slang_glslang_DLL
+        NAMES slang-glslang.dll
+        HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+  )
+  mark_as_advanced(Slang_glslang_DLL)
+
+  # Test to see if compiler is working
+  message(STATUS "--> using SLANGC under: ${Slang_slangc_EXE}")
+  execute_process(COMMAND ${Slang_slangc_EXE} "-v" ERROR_VARIABLE Slang_VERSION RESULTS_VARIABLE EXTRACT_RESULT)
+  message(STATUS "--> SLANGC version: ${Slang_VERSION}")
+  if(NOT EXTRACT_RESULT EQUAL 0)
     message("Envoking Slang compiler failed with error code: ${EXTRACT_RESULT}")
+  endif()
+
+else()
+    message(ERROR "Slang not found")
 endif()
+  

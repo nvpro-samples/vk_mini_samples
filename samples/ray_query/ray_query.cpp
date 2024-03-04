@@ -51,6 +51,8 @@
 #include "nvvkhl/tonemap_postprocess.hpp"
 #include "nvvkhl/shaders/dh_sky.h"
 
+#include "nvtx3/nvtx3.hpp"
+
 #include "shaders/dh_bindings.h"
 
 namespace DH {
@@ -295,6 +297,7 @@ private:
   // Create all Vulkan buffer data
   void createVkBuffers()
   {
+    NVTX3_FUNC_RANGE();
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_bMeshes.resize(m_meshes.size());
 
@@ -402,6 +405,8 @@ private:
   //
   void createBottomLevelAS()
   {
+    NVTX3_FUNC_RANGE();
+
     // BLAS - Storing each primitive in a geometry
     std::vector<nvvk::RaytracingBuilderKHR::BlasInput> allBlas;
     allBlas.reserve(m_meshes.size());
@@ -422,6 +427,8 @@ private:
   //
   void createTopLevelAS()
   {
+    NVTX3_FUNC_RANGE();
+
     std::vector<VkAccelerationStructureInstanceKHR> tlas;
     tlas.reserve(m_nodes.size());
     for(auto& node : m_nodes)

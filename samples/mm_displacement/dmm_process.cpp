@@ -22,9 +22,10 @@
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/noise.hpp>  // Perlin noise
+
 #include "dmm_process.hpp"
-#include "bird_curve_helper.hpp"
-#include "bit_packer.hpp"
+#include "common/bird_curve_helper.hpp"
+#include "common/bit_packer.hpp"
 #include "nvh/parallel_work.hpp"
 #include "nvh/timesampler.hpp"
 #include "nvvk/buffers_vk.hpp"

@@ -52,13 +52,11 @@ function(compile_slang_file)
     # This will contain a list of COMMAND arguments.
     set(_SLANG_COMMANDS )
     
-    set(_TARGET "spirv")
-
     # !! Compiling all entry points in a single compilation
     set(_OUT_ARG "${_OUT_DIR}/${_FILE_STEM}_slang.h")
     set(_SLANG_FLAGS
-        -profile glsl_460
-        -target ${_TARGET} 
+        -profile glsl_460+spirv_1_5
+        -target spirv
         -emit-spirv-directly
         -force-glsl-scalar-layout
         -fvk-use-entrypoint-name
@@ -70,8 +68,8 @@ function(compile_slang_file)
     list(APPEND _SLANG_FLAGS ${COMPILE_FLAGS})
 
     list(APPEND _SLANG_COMMANDS
-         COMMAND ${CMAKE_COMMAND} -E echo ${SLANG_COMPILER} ${_SLANG_FLAGS} ${COMPILE_SOURCE_FILE}  
-         COMMAND ${SLANG_COMPILER} ${_SLANG_FLAGS} ${COMPILE_SOURCE_FILE}
+         COMMAND ${CMAKE_COMMAND} -E echo ${Slang_slangc_EXE} ${_SLANG_FLAGS} ${COMPILE_SOURCE_FILE}  
+         COMMAND ${Slang_slangc_EXE} ${_SLANG_FLAGS} ${COMPILE_SOURCE_FILE}
     )
     # list(APPEND SLANG_OUTPUT_FILES ${_OUT_ARG})
     set(SLANG_OUTPUT_FILES ${_OUT_ARG})

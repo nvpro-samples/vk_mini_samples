@@ -132,15 +132,14 @@ void rgenMain()
   float2 launchID = (float2)DispatchRaysIndex().xy;
   float2 launchSize = (float2)DispatchRaysDimensions().xy;
 
-  const float2 pixelCenter = launchID;
-  const float2 inUV = pixelCenter / launchSize;
-  const float2 d = inUV * 2.0 - 1.0;
   const uint rayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
-  const float4 target = mul(frameInfo.projInv, float4(d.x, d.y, 1.0, 1.0));
+  const float2 clipCoords = launchID / launchSize * 2.0 - 1.0;
+  const float4 viewCoords = mul(frameInfo.projInv, float4(clipCoords, 1.0, 1.0));
 
   RayDesc ray;
   ray.Origin = mul(frameInfo.viewInv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-  ray.Direction = mul(frameInfo.viewInv, float4(normalize(target.xyz), 0.0)).xyz;
+  ray.Direction = mul(frameInfo.viewInv, float4(normalize(viewCoords.xyz), 0.0)).xyz;
+
   ray.TMin = 0.001;
   ray.TMax = INFINITE;
 
@@ -201,12 +200,12 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   payload.depth += 1;
   payload.weight *= pushConst.metallic; // more or less reflective
 
+  // We hit our max depth
+  if (payload.depth >= pushConst.maxDepth)
+    return;
+
   // Reflection
   float3 refl_dir = reflect(D, hitState.nrm);
-
-  // We hit our max depth
-  if(payload.depth >= pushConst.maxDepth)
-    return;
 
   // Trace bouncing ray
   RayDesc ray;
@@ -215,11 +214,6 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   ray.TMin = 0.001;
   ray.TMax = INFINITE;
   TraceRay(topLevelAS, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
-
-  // -Wpayload-access-perf
-  color = payload.color;
-  float weight = payload.weight;
-  int depth = payload.depth;
 }
 
 

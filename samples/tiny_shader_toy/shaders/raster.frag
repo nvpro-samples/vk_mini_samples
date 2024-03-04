@@ -32,19 +32,23 @@ layout(push_constant) uniform _InputUniforms
   float iTimeDelta;
   int   iFrame;
   int   iFrameRate;
+  int   _pad0;
   float iChannelTime[1];
+  int   _pad1;
+  int   _pad2;
+  int   _pad3;
   vec3  iChannelResolution[1];
 };
 
 layout(set = 0, binding = 0) uniform sampler2D iChannel0;
-layout(set = 0, binding = 1) writeonly uniform image2D oImage;
+
 
 // Shared accross all shaders
 #include "common.glsl"
 
 //---------------------------------------------
 // On compilation, using the right shader code
-#if INCLUDE_FILE == 0
+#ifdef INCLUDE_IMAGE
 #include "image.glsl"
 #else
 #include "buffer_a.glsl"
@@ -56,12 +60,12 @@ void main()
   // Initialization
   fragColor = vec4(0, 0, 0, 1);
 
-  // Calling the main function
-  mainImage(fragColor, gl_FragCoord.xy);
-
   // Inverting fragCoord from OpenGL
-  vec2 fragCoord = gl_FragCoord.xy;
-  fragCoord.y    = iResolution.y - gl_FragCoord.y;
+  vec2 invFragCoord = gl_FragCoord.xy;
+  invFragCoord.y    = iResolution.y - gl_FragCoord.y;
 
-  imageStore(oImage, ivec2(fragCoord.xy), fragColor);
+  // Calling the main function
+  mainImage(fragColor, invFragCoord.xy);
+
+  // Image is written to the attached G-Buffer
 }

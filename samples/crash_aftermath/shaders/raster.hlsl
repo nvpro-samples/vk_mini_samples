@@ -53,8 +53,8 @@ struct PSout
 [[vk::constant_id(0)]] const int CRASH_TEST = 0;
 [[vk::binding(0)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(1)]] RWStructuredBuffer<float> values;
-[[vk::binding(2)]] [[vk::combinedImageSampler]] Texture2DArray inTexture;
-[[vk::binding(2)]] [[vk::combinedImageSampler]] SamplerState inSampler;
+[[vk::binding(2)]] Texture2D inTexture[];
+[[vk::binding(2)]] SamplerState inSampler;
 
 
 // Vertex  Shader
@@ -117,7 +117,7 @@ PSout fragmentMain(PSin stage, float4 fragCoord : SV_Position)
 
   if (CRASH_TEST == 4)
   {
-    color += inTexture.Sample(inSampler, float3(stage.uv, frameInfo.badOffset + 100000000)).xyz;
+    color += inTexture[frameInfo.badOffset + 100000000].Sample(inSampler, stage.uv).xyz;
     color *= IntegerToColor(frameInfo.badOffset);
   }
 

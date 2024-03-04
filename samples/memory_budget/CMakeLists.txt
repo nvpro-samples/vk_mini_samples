@@ -1,9 +1,10 @@
 
+get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
 set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 
-create_sample(image_ktx
+create_sample(${PROJECT_NAME}
   SOURCES 
-    image_ktx.cpp 
+    memory_budget.cpp 
   SHADER_SOURCES 
     ${SHD_DIR}/raster.vert
     ${SHD_DIR}/raster.frag
@@ -15,6 +16,4 @@ create_sample(image_ktx
     ${SHD_DIR}/raster.slang
 )
 
-# KTX needs extra libraries
-_add_package_KTX()
-target_link_libraries(image_ktx PRIVATE basisu)
+unset(PROJECT_NAME)

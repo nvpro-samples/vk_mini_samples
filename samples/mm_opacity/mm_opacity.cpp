@@ -69,7 +69,7 @@ using namespace glm;
 }  // namespace DH
 
 #include "mm_process.hpp"
-#include "bird_curve_helper.hpp"
+#include "common/bird_curve_helper.hpp"
 
 //#undef USE_HLSL
 
