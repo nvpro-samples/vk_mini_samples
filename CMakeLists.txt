@@ -9,7 +9,7 @@ include(cmake/CPM.cmake)
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.0.6")
+set(Slang_VERSION  "2024.1.2")
 find_package(Slang)
 
 # Adding NVTX
@@ -56,6 +56,11 @@ if(MSVC)
     add_definitions(/wd26451)  # Arithmetic overflow, casting 4 byte value to 8 byte value
 endif()
 
+
+if(NOT VULKAN_BUILD_DEPENDENCIES)
+  set(VULKAN_BUILD_DEPENDENCIES OFF CACHE BOOL "Create dependencies on GLSL files")
+endif()
+
 # Packages shared by all projects
 _add_package_NsightAftermath() 
 _add_package_VulkanSDK()
@@ -83,7 +88,6 @@ elseif(USE_SHADER_LANGUAGE STREQUAL "SLANG")
 else()
     message(FATAL_ERROR "Invalid choice for USE_SHADER_LANGUAGE: ${USE_SHADER_LANGUAGE}")
 endif()
-
 
 # Need to be added last, as it uses defines from packages
 _add_nvpro_core_lib()

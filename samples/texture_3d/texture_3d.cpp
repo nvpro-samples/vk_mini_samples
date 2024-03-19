@@ -62,12 +62,12 @@ const auto& comp_shd = std::vector<char>{std::begin(perlin_computeMain), std::en
 #include "_autogen/perlin_slang.h"
 const auto& comp_shd = std::vector<uint32_t>{std::begin(perlinSlang), std::end(perlinSlang)};
 #else
-#include "_autogen/perlin.comp.h"
-#include "_autogen/raster.frag.h"
-#include "_autogen/raster.vert.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
-const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_comp), std::end(perlin_comp)};
+#include "_autogen/perlin.comp.glsl.h"
+#include "_autogen/raster.frag.glsl.h"
+#include "_autogen/raster.vert.glsl.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
+const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_comp_glsl), std::end(perlin_comp_glsl)};
 #endif
 
 #include "imgui/imgui_helper.h"

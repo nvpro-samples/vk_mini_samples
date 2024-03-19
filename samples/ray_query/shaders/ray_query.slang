@@ -19,9 +19,10 @@
 
 // https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html#rayquery
 
+#version 460
+
 #include "common/shaders/constants.hlsli"
 #include "common/shaders/ggx.hlsli"
-#include "common/shaders/glsl_type.slang"
 #include "common/shaders/random.hlsli"
 #include "common/shaders/sky.hlsli"
 #include "device_host.h"

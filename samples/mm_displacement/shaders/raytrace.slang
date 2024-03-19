@@ -17,7 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "common/shaders/glsl_type.slang"
+#version 460
+
 #include "device_host.h"
 #include "dh_bindings.h"
 
@@ -35,8 +36,8 @@
 [[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
 [[vk::binding(B_materials)]] StructuredBuffer<float4> materials;
 [[vk::binding(B_instances)]] StructuredBuffer<InstanceInfo> instanceInfo;
-[[vk::binding(B_vertex)]] StructuredBuffer<Vertex> vertices[];
-[[vk::binding(B_index)]] StructuredBuffer<uint3> indices[];
+[[vk::binding(B_vertex)]] uniform StructuredBuffer<Vertex> vertices[];
+[[vk::binding(B_index)]] uniform StructuredBuffer<uint3> indices[];
 
 
 //-----------------------------------------------------------------------
@@ -252,11 +253,6 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   ray.TMin = 0.001;
   ray.TMax = INFINITE;
   TraceRay(topLevelAS, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
-
-  // -Wpayload-access-perf
-  color = payload.color;
-  float weight = payload.weight;
-  int depth = payload.depth;
 }
 
 

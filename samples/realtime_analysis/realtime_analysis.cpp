@@ -38,7 +38,6 @@ NVML Monitor:
 */
 
 #include <random>
-#include <glm/gtc/matrix_transform.hpp>
 
 // clang-format off
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
@@ -46,6 +45,7 @@ NVML Monitor:
 
 #define VMA_IMPLEMENTATION
 
+#include "glm/gtc/matrix_transform.hpp"
 #include "imgui/imgui_icon.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/debug_util_vk.hpp"
@@ -72,31 +72,33 @@ using namespace glm;
 
 // Adding the compiled Vulkan shaders
 #if USE_GLSL
-#include "_autogen/raster.frag.h"
-#include "_autogen/raster.vert.h"
-#include "_autogen/calculate_densities.comp.h"
-#include "_autogen/calculate_pressure_force.comp.h"
-#include "_autogen/calculate_viscosity.comp.h"
-#include "_autogen/external_forces.comp.h"
-#include "_autogen/update_positions.comp.h"
-#include "_autogen/update_spatial_hash.comp.h"
-#include "_autogen/bitonic_sort.comp.h"
-#include "_autogen/bitonic_sort_offsets.comp.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+#include "_autogen/raster.frag.glsl.h"
+#include "_autogen/raster.vert.glsl.h"
+#include "_autogen/calculate_densities.comp.glsl.h"
+#include "_autogen/calculate_pressure_force.comp.glsl.h"
+#include "_autogen/calculate_viscosity.comp.glsl.h"
+#include "_autogen/external_forces.comp.glsl.h"
+#include "_autogen/update_positions.comp.glsl.h"
+#include "_autogen/update_spatial_hash.comp.glsl.h"
+#include "_autogen/bitonic_sort.comp.glsl.h"
+#include "_autogen/bitonic_sort_offsets.comp.glsl.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 const auto& calculateDensities_shd =
-    std::vector<uint32_t>{std::begin(calculate_densities_comp), std::end(calculate_densities_comp)};
+    std::vector<uint32_t>{std::begin(calculate_densities_comp_glsl), std::end(calculate_densities_comp_glsl)};
 const auto& calculatePressureForce_shd =
-    std::vector<uint32_t>{std::begin(calculate_pressure_force_comp), std::end(calculate_pressure_force_comp)};
+    std::vector<uint32_t>{std::begin(calculate_pressure_force_comp_glsl), std::end(calculate_pressure_force_comp_glsl)};
 const auto& calculateViscosity_shd =
-    std::vector<uint32_t>{std::begin(calculate_viscosity_comp), std::end(calculate_viscosity_comp)};
-const auto& externalForces_shd = std::vector<uint32_t>{std::begin(external_forces_comp), std::end(external_forces_comp)};
-const auto& updatePositions_shd = std::vector<uint32_t>{std::begin(update_positions_comp), std::end(update_positions_comp)};
+    std::vector<uint32_t>{std::begin(calculate_viscosity_comp_glsl), std::end(calculate_viscosity_comp_glsl)};
+const auto& externalForces_shd =
+    std::vector<uint32_t>{std::begin(external_forces_comp_glsl), std::end(external_forces_comp_glsl)};
+const auto& updatePositions_shd =
+    std::vector<uint32_t>{std::begin(update_positions_comp_glsl), std::end(update_positions_comp_glsl)};
 const auto& updateSpatialHash_shd =
-    std::vector<uint32_t>{std::begin(update_spatial_hash_comp), std::end(update_spatial_hash_comp)};
-const auto& bitonicSort_shd = std::vector<uint32_t>{std::begin(bitonic_sort_comp), std::end(bitonic_sort_comp)};
+    std::vector<uint32_t>{std::begin(update_spatial_hash_comp_glsl), std::end(update_spatial_hash_comp_glsl)};
+const auto& bitonicSort_shd = std::vector<uint32_t>{std::begin(bitonic_sort_comp_glsl), std::end(bitonic_sort_comp_glsl)};
 const auto& bitonicSortOffsets_shd =
-    std::vector<uint32_t>{std::begin(bitonic_sort_offsets_comp), std::end(bitonic_sort_offsets_comp)};
+    std::vector<uint32_t>{std::begin(bitonic_sort_offsets_comp_glsl), std::end(bitonic_sort_offsets_comp_glsl)};
 #elif USE_SLANG
 #include "_autogen/fluid_sim_2D_slang.h"
 #include "_autogen/raster_slang.h"
@@ -576,10 +578,8 @@ private:
       vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_dsetCompute->getPipeLayout(), 0,
                                 static_cast<uint32_t>(writes.size()), writes.data());
 
-      // Bind compute shader
-      const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
 
-      int numBlocks = getNumBlocks();
+      int numBlocks = getNumBlocks();  // Number of working blocks
 
       vkCmdUpdateBuffer(cmd, m_bParticleSetting.buffer, 0, sizeof(DH::ParticleSetting), &m_particleSetting);
       memoryBarrier(cmd);  // Make sure the buffer is ready before executing any dispatch shader

@@ -73,12 +73,12 @@ const auto& rmiss_shd = std::vector<char>{std::begin(raytrace_rmissMain), std::e
 #elif USE_SLANG
 #include "_autogen/raytrace_slang.h"
 #else
-#include "_autogen/raytrace.rchit.h"
-#include "_autogen/raytrace.rgen.h"
-#include "_autogen/raytrace.rmiss.h"
-const auto& rgen_shd  = std::vector<uint32_t>{std::begin(raytrace_rgen), std::end(raytrace_rgen)};
-const auto& rchit_shd = std::vector<uint32_t>{std::begin(raytrace_rchit), std::end(raytrace_rchit)};
-const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmiss), std::end(raytrace_rmiss)};
+#include "_autogen/raytrace.rchit.glsl.h"
+#include "_autogen/raytrace.rgen.glsl.h"
+#include "_autogen/raytrace.rmiss.glsl.h"
+const auto& rgen_shd  = std::vector<uint32_t>{std::begin(raytrace_rgen_glsl), std::end(raytrace_rgen_glsl)};
+const auto& rchit_shd = std::vector<uint32_t>{std::begin(raytrace_rchit_glsl), std::end(raytrace_rchit_glsl)};
+const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmiss_glsl), std::end(raytrace_rmiss_glsl)};
 #endif
 
 
@@ -191,9 +191,6 @@ public:
   void onRender(VkCommandBuffer cmd) override
   {
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
-    const float      view_aspect_ratio = m_gBuffers->getAspectRatio();
-    const glm::vec2& clip              = CameraManip.getClipPlanes();
 
     // Camera matrices
     glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), CameraManip.getAspectRatio(),

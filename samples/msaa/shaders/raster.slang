@@ -17,8 +17,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#version 460
+
 #include "common/shaders/functions.hlsli"
-#include "common/shaders/glsl_type.slang" 
 #include "device_host.h"
 
 

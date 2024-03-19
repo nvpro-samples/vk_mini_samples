@@ -5,7 +5,7 @@ create_sample(compute_only
   SOURCES 
     compute_only.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/shader.comp
+    ${SHD_DIR}/shader.comp.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
   SHADER_HLSL

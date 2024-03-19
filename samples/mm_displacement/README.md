@@ -75,7 +75,7 @@ The micromap is the opaque structure that is built using the packed/compressed d
 
 The construction of of the Micromap is similar to the construction of the acceleration structure. First it is needed to find the size required for building the object. A Micromap size and a build scratch size are returned from `vkGetMicromapBuildSizesEXT`.  The size will be returned using the information from the array of `VkMicromapUsageEXT`. 
 
-When creating the micromap and scratch buffers, they must have this usage flag: `VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT`.
+When creating the micromap buffers, they must have this usage flag: `VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT` and also `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT` for scratch buffers.
 
 The Micromap is created by calling `vkCreateMicromapEXT` using the Micromap buffer, and building the Micromap is done by calling `vkCmdBuildMicromapsEXT` with the scratch buffer, the data and the triangle information.
 

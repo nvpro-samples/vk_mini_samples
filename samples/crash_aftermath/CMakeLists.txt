@@ -4,8 +4,8 @@ create_sample(crash_aftermath
   SOURCES 
     src/crash_aftermath.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/raster.vert 
-    ${SHD_DIR}/raster.frag
+    ${SHD_DIR}/raster.vert.glsl
+    ${SHD_DIR}/raster.frag.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
   SHADER_HLSL

@@ -17,15 +17,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
-#include "common/shaders/glsl_type.slang"
+ #version 460
 #include "common/shaders/functions.hlsli"
 #include "device_host.h"
-
-void updateBuiltins(float4 fragCoord)
-{
-  gl_FragCoord = fragCoord;
-}
 
 #define INSPECTOR_MODE_FRAGMENT
 #define INSPECTOR_DESCRIPTOR_SET 0
@@ -69,9 +63,8 @@ struct PSout
 
 // Vertex  Shader
 [shader("vertex")]
-VSout vertexMain(VSin input)
+VSout vertexMain(VSin input, uint particleID: SV_InstanceID)
 {
-  uint particleID = InstanceIndex();
   float2 particle = input.position.xy * frameInfo.radius + (particles[particleID].position * frameInfo.scale * 2);
   
   VSout output;
@@ -85,10 +78,8 @@ VSout vertexMain(VSin input)
 
 // Fragment Shader
 [shader("pixel")]
-PSout fragmentMain(PSin stage, in float4 fragCoord : SV_Position)
-{
-  updateBuiltins(fragCoord);
-  
+PSout fragmentMain(PSin stage)
+{  
   uint particleID = stage.id;
   
   float2 centerOffset = (stage.uv - 0.5) * 2.0;

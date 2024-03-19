@@ -42,8 +42,8 @@ const auto& comp_shd = std::vector<uint8_t>{std::begin(shader_computeMain), std:
 #include "_autogen/shader_slang.h"
 const auto& comp_shd = std::vector<uint32_t>{std::begin(shaderSlang), std::end(shaderSlang)};
 #else
-#include "_autogen/shader.comp.h"  // Generated compiled shader
-const auto& comp_shd = std::vector<uint32_t>{std::begin(shader_comp), std::end(shader_comp)};
+#include "_autogen/shader.comp.glsl.h"  // Generated compiled shader
+const auto& comp_shd = std::vector<uint32_t>{std::begin(shader_comp_glsl), std::end(shader_comp_glsl)};
 #endif
 
 template <typename T>  // Return memory usage size

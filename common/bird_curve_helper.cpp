@@ -166,7 +166,7 @@ void BirdCurveHelper::birdLevel(int level, bool triPointUp, bool counterClockwis
 {
   m_triBary[level - 1ULL].push_back({w, u, v});  // Adding triangle barycentric coordinates
 
-  if(level >= m_birdValues.size())
+  if(level >= static_cast<int>(m_birdValues.size()))
     return;
 
   // Finding the mid-points of the triangle
@@ -260,7 +260,7 @@ BirdCurveHelper::DisplacementBlocks BirdCurveHelper::createDisplacementBlocks(ui
     // that is forming it, then we get the index of each coordinate to form
     // the block needed for the uncompressed format.
     // This will fill all four blocks using the triangles described above
-    for(int sub_tri_idx = 0; sub_tri_idx < sub_triangles.size(); sub_tri_idx++)
+    for(int sub_tri_idx = 0; sub_tri_idx < static_cast<int>(sub_triangles.size()); sub_tri_idx++)
     {
       auto& sub_tri = sub_triangles[sub_tri_idx];
       auto& block   = displacement_blocks[sub_tri_idx];

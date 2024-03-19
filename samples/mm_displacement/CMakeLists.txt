@@ -11,9 +11,9 @@ create_sample(mm_displacement
     ${SAMPLES_COMMON_DIR}/bird_curve_helper.hpp
     ${SAMPLES_COMMON_DIR}/bit_packer.hpp
   SHADER_SOURCES 
-    ${SHD_DIR}/raytrace.rgen
-    ${SHD_DIR}/raytrace.rchit
-    ${SHD_DIR}/raytrace.rmiss
+    ${SHD_DIR}/raytrace.rgen.glsl
+    ${SHD_DIR}/raytrace.rchit.glsl
+    ${SHD_DIR}/raytrace.rmiss.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
     ${SHD_DIR}/payload.h

@@ -19,14 +19,13 @@
 
 // Code converted from: https://github.com/SebLague/Fluid-Sim
 
-
+#version 450 // This is adding support fot GLSL 
 // Includes
-#include "common/shaders/glsl_type.slang"
 #include "device_host.h"
 
 [[vk::push_constant]] ConstantBuffer<PushConstant> pushC;
-[[vk::binding(eCompParticles)]] RWStructuredBuffer<Particle> particles;
-[[vk::binding(eCompSort)]] RWStructuredBuffer<SpatialInfo> spatialInfo;
+[[vk::binding(eCompParticles)]] uniform RWStructuredBuffer<Particle> particles;
+[[vk::binding(eCompSort)]] uniform RWStructuredBuffer<SpatialInfo> spatialInfo;
 [[vk::binding(eCompSetting)]] ConstantBuffer<ParticleSetting> setting;
 
  #define INSPECTOR_MODE_COMPUTE 
@@ -36,27 +35,6 @@
  #include "common/shaders/dh_inspector.hlsli"
 
 #include "fluid_maths_2D.glsl"
-
-int3 GetWorkgroupCount()
-{
-    __target_switch
-    {
-    case glsl: __intrinsic_asm "gl_NumWorkGroups";
-    case spirv: return spirv_asm {
-        result:$$int3 = OpLoad builtin(NumWorkgroups:int3);
-    };
-    }
-}
-
-void updateBuiltins(uint3 groupID, uint groupThreadID)
-{
-  gl_NumWorkGroups = GetWorkgroupCount();
-  gl_WorkGroupID = groupID;
-  gl_SubgroupSize = WaveGetLaneCount();
-  gl_SubgroupID = groupThreadID / gl_SubgroupSize;
-  gl_SubgroupInvocationID = WaveGetLaneIndex();
-}
-
 
 static const int2 offsets2D[9] =
 {
@@ -376,12 +354,8 @@ void calculateDensity(uint3 threadIdx : SV_DispatchThreadID)
 
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]
-void calculatePressureForce(uint3 threadIdx : SV_DispatchThreadID,
-                            uint3 groupID : SV_GroupID,
-                            uint groupThreadID : SV_GroupThreadID)
+void calculatePressureForce(uint3 threadIdx : SV_DispatchThreadID)
 {
-  updateBuiltins(groupID, groupThreadID);
-
   uint particleID = threadIdx.x;
   if (particleID >= setting.numParticles)
     return;

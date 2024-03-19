@@ -5,7 +5,7 @@ create_sample(ray_query_position_fetch
   SOURCES 
     ray_query_position_fetch.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/ray_query.comp
+    ${SHD_DIR}/ray_query.comp.glsl
   SHADER_HEADERS
     ${SHD_DIR}/dh_bindings.h
   SHADER_SLANG

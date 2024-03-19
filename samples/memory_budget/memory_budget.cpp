@@ -69,10 +69,10 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 #elif USE_SLANG
 #include "_autogen/raster_slang.h"
 #else
-#include "_autogen/raster.frag.h"
-#include "_autogen/raster.vert.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+#include "_autogen/raster.frag.glsl.h"
+#include "_autogen/raster.vert.glsl.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 #endif  // USE_HLSL
 
 std::shared_ptr<nvvkhl::ElementBenchmarkParameters> g_benchmark;
@@ -169,8 +169,8 @@ public:
         .instance                    = m_app->getContext()->m_instance,
         .vulkanApiVersion            = VK_API_VERSION_1_3,
     };
-    //m_alloc = std::make_unique<nvvkhl::AllocVma>(allocator_info);  // Allocator
-    m_alloc = std::make_unique<AllocDma>(m_app->getContext().get());  // Allocator
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(allocator_info);  // Allocator
+    //m_alloc = std::make_unique<AllocDma>(m_app->getContext().get());  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     createScene();
@@ -676,8 +676,8 @@ private:
   //
   nvvkhl::Application*             m_app{nullptr};
   std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  //std::shared_ptr<nvvkhl::AllocVma> m_alloc;
-  std::shared_ptr<AllocDma> m_alloc;
+  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
+  //std::shared_ptr<AllocDma> m_alloc;
 
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer

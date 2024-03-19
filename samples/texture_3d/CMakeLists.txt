@@ -5,9 +5,9 @@ create_sample(texture_3d
   SOURCES 
     texture_3d.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/raster.vert
-    ${SHD_DIR}/raster.frag
-    ${SHD_DIR}/perlin.comp
+    ${SHD_DIR}/raster.vert.glsl
+    ${SHD_DIR}/raster.frag.glsl
+    ${SHD_DIR}/perlin.comp.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
   SHADER_HLSL

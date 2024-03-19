@@ -46,8 +46,8 @@
 #include "_autogen/ray_query_slang.h"
 const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_querySlang), std::end(ray_querySlang)};
 #else
-#include "_autogen/ray_query.comp.h"
-const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_query_comp), std::end(ray_query_comp)};
+#include "_autogen/ray_query.comp.glsl.h"
+const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_query_comp_glsl), std::end(ray_query_comp_glsl)};
 #endif
 
 /// </summary> Fetching position in ray tracing ray query

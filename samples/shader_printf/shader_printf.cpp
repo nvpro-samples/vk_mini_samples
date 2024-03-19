@@ -71,10 +71,10 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 #elif USE_SLANG
 #include "_autogen/raster_slang.h"
 #else
-#include "_autogen/raster.frag.h"
-#include "_autogen/raster.vert.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert), std::end(raster_vert)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag), std::end(raster_frag)};
+#include "_autogen/raster.frag.glsl.h"
+#include "_autogen/raster.vert.glsl.h"
+const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
+const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 #endif  // USE_HLSL
 
 static nvvkhl::SampleAppLog g_logger;
@@ -319,14 +319,28 @@ int main(int argc, char** argv)
 
 
   // #debug_printf
-  VkValidationFeaturesEXT                    features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
-  std::vector<VkValidationFeatureEnableEXT>  enables{VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT};
-  std::vector<VkValidationFeatureDisableEXT> disables{};
-  features.enabledValidationFeatureCount  = static_cast<uint32_t>(enables.size());
-  features.pEnabledValidationFeatures     = enables.data();
-  features.disabledValidationFeatureCount = static_cast<uint32_t>(disables.size());
-  features.pDisabledValidationFeatures    = disables.data();
-  spec.vkSetup.instanceCreateInfoExt      = &features;
+  // Adding the GPU debug information to the KHRONOS validation layer
+  // See: https://vulkan.lunarg.com/doc/sdk/1.3.275.0/linux/khronos_validation_layer.html
+  const char*    layer_name           = "VK_LAYER_KHRONOS_validation";
+  const char*    validate_gpu_based[] = {"GPU_BASED_DEBUG_PRINTF"};
+  const VkBool32 printf_verbose       = VK_FALSE;
+  const VkBool32 printf_to_stdout     = VK_FALSE;
+  const int32_t  printf_buffer_size   = 1024;
+
+  const VkLayerSettingEXT settings[] = {
+      {layer_name, "validate_gpu_based", VK_LAYER_SETTING_TYPE_STRING_EXT,
+       static_cast<uint32_t>(std::size(validate_gpu_based)), &validate_gpu_based},
+      {layer_name, "printf_verbose", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &printf_verbose},
+      {layer_name, "printf_to_stdout", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &printf_to_stdout},
+      {layer_name, "printf_buffer_size", VK_LAYER_SETTING_TYPE_INT32_EXT, 1, &printf_buffer_size},
+  };
+
+  VkLayerSettingsCreateInfoEXT layer_settings_create_info = {
+      .sType        = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT,
+      .settingCount = static_cast<uint32_t>(std::size(settings)),
+      .pSettings    = settings,
+  };
+  spec.vkSetup.instanceCreateInfoExt = &layer_settings_create_info;
 
 
   // Create the application

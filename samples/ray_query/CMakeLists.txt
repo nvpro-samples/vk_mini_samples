@@ -5,7 +5,7 @@ create_sample(ray_query
   SOURCES 
     ray_query.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/ray_query.comp
+    ${SHD_DIR}/ray_query.comp.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
   SHADER_HLSL

@@ -208,8 +208,8 @@ bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micro
                                                                   | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT);
 
   uint64_t scratch_size = std::max(size_info.buildScratchSize, static_cast<VkDeviceSize>(4));
-  m_scratchBuffer =
-      m_alloc->createBuffer(scratch_size, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT);
+  m_scratchBuffer = m_alloc->createBuffer(scratch_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                                            | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT);
 
   // Create micromap
   VkMicromapCreateInfoEXT mm_create_info{VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT};

@@ -17,7 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "common/shaders/glsl_type.slang"
+#version 460
+
 #include "device_host.h"
 
 #define WORKGROUP_SIZE 16

@@ -71,12 +71,12 @@ const auto& rmiss_shd = std::vector<char>{std::begin(pathtrace_rmissMain), std::
 #elif USE_SLANG
 #include "_autogen/pathtrace_slang.h"
 #else
-#include "_autogen/pathtrace.rchit.h"
-#include "_autogen/pathtrace.rgen.h"
-#include "_autogen/pathtrace.rmiss.h"
-const auto& rgen_shd  = std::vector<uint32_t>{std::begin(pathtrace_rgen), std::end(pathtrace_rgen)};
-const auto& rchit_shd = std::vector<uint32_t>{std::begin(pathtrace_rchit), std::end(pathtrace_rchit)};
-const auto& rmiss_shd = std::vector<uint32_t>{std::begin(pathtrace_rmiss), std::end(pathtrace_rmiss)};
+#include "_autogen/pathtrace.rchit.glsl.h"
+#include "_autogen/pathtrace.rgen.glsl.h"
+#include "_autogen/pathtrace.rmiss.glsl.h"
+const auto& rgen_shd  = std::vector<uint32_t>{std::begin(pathtrace_rgen_glsl), std::end(pathtrace_rgen_glsl)};
+const auto& rchit_shd = std::vector<uint32_t>{std::begin(pathtrace_rchit_glsl), std::end(pathtrace_rchit_glsl)};
+const auto& rmiss_shd = std::vector<uint32_t>{std::begin(pathtrace_rmiss_glsl), std::end(pathtrace_rmiss_glsl)};
 #endif
 
 #include "nvvk/specialization.hpp"

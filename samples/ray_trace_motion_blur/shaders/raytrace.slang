@@ -17,9 +17,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#version 460
+
 #include "common/shaders/constants.hlsli"
 #include "common/shaders/ggx.hlsli"
-#include "common/shaders/glsl_type.slang"
 #include "common/shaders/random.hlsli"
 #include "common/shaders/sky.hlsli"
 #include "device_host.h"
@@ -34,9 +35,9 @@
 [[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(B_materials)]] StructuredBuffer<float4> materials;
 [[vk::binding(B_instances)]] StructuredBuffer<InstanceInfo> instanceInfo;
-[[vk::binding(B_vertex)]] StructuredBuffer<Vertex> vertices[];
-[[vk::binding(B_index)]] StructuredBuffer<uint3> indices[];
-[[vk::binding(B_triMat)]] StructuredBuffer<int> triMat[];
+[[vk::binding(B_vertex)]] uniform StructuredBuffer<Vertex> vertices[];
+[[vk::binding(B_index)]] uniform StructuredBuffer<uint3> indices[];
+[[vk::binding(B_triMat)]] uniform StructuredBuffer<int> triMat[];
 
 //-----------------------------------------------------------------------
 // Payload 

@@ -5,9 +5,9 @@ create_sample(ser_pathtrace
   SOURCES 
     ser_pathtrace.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/pathtrace.rgen
-    ${SHD_DIR}/pathtrace.rchit
-    ${SHD_DIR}/pathtrace.rmiss
+    ${SHD_DIR}/pathtrace.rgen.glsl
+    ${SHD_DIR}/pathtrace.rchit.glsl
+    ${SHD_DIR}/pathtrace.rmiss.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
     ${SHD_DIR}/dh_bindings.h

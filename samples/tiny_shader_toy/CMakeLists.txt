@@ -7,8 +7,8 @@ create_sample(${Project_Name}
   SOURCES 
     tiny_shader_toy.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/raster.vert
-    ${SHD_DIR}/raster.frag
+    ${SHD_DIR}/raster.vert.glsl
+    ${SHD_DIR}/raster.frag.glsl
   SHADER_HEADERS
     ${SHD_DIR}/buffer_a.glsl
     ${SHD_DIR}/common.glsl

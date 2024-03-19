@@ -5,8 +5,8 @@ create_sample(simple_polygons
   SOURCES 
     simple_polygons.cpp 
   SHADER_SOURCES 
-    ${SHD_DIR}/raster.vert
-    ${SHD_DIR}/raster.frag
+    ${SHD_DIR}/raster.vert.glsl
+    ${SHD_DIR}/raster.frag.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
   SHADER_HLSL

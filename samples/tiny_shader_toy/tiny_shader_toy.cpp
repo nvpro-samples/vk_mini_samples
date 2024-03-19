@@ -432,9 +432,9 @@ private:
     shaderc::SpvCompilationResult vert_result;
     shaderc::SpvCompilationResult frag_result;
     shaderc::SpvCompilationResult frag_result_a;
-    compileGlslShader("raster.vert", shaderc_shader_kind::shaderc_vertex_shader, false, vert_result);
-    compileGlslShader("raster.frag", shaderc_shader_kind::shaderc_fragment_shader, true, frag_result);
-    compileGlslShader("raster.frag", shaderc_shader_kind::shaderc_fragment_shader, false, frag_result_a);
+    compileGlslShader("raster.vert.glsl", shaderc_shader_kind::shaderc_vertex_shader, false, vert_result);
+    compileGlslShader("raster.frag.glsl", shaderc_shader_kind::shaderc_fragment_shader, true, frag_result);
+    compileGlslShader("raster.frag.glsl", shaderc_shader_kind::shaderc_fragment_shader, false, frag_result_a);
 
     if(vert_result.GetNumErrors() == 0 && frag_result.GetNumErrors() == 0 && frag_result_a.GetNumErrors() == 0)
     {
