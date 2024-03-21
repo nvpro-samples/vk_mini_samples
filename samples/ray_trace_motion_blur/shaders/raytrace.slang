@@ -35,9 +35,9 @@
 [[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
 [[vk::binding(B_materials)]] StructuredBuffer<float4> materials;
 [[vk::binding(B_instances)]] StructuredBuffer<InstanceInfo> instanceInfo;
-[[vk::binding(B_vertex)]] uniform StructuredBuffer<Vertex> vertices[];
-[[vk::binding(B_index)]] uniform StructuredBuffer<uint3> indices[];
-[[vk::binding(B_triMat)]] uniform StructuredBuffer<int> triMat[];
+[[vk::binding(B_vertex)]] StructuredBuffer<Vertex> vertices[];
+[[vk::binding(B_index)]] StructuredBuffer<uint3> indices[];
+[[vk::binding(B_triMat)]] StructuredBuffer<int> triMat[];
 
 //-----------------------------------------------------------------------
 // Payload 

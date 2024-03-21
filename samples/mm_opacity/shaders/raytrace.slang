@@ -36,8 +36,8 @@
 [[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
 [[vk::binding(B_materials)]] StructuredBuffer<float4> materials;
 [[vk::binding(B_instances)]] StructuredBuffer<InstanceInfo> instanceInfo;
-[[vk::binding(B_vertex)]] uniform StructuredBuffer<Vertex> vertices[];
-[[vk::binding(B_index)]] uniform StructuredBuffer<uint3> indices[];
+[[vk::binding(B_vertex)]] StructuredBuffer<Vertex> vertices[];
+[[vk::binding(B_index)]] StructuredBuffer<uint3> indices[];
 
 
 //-----------------------------------------------------------------------

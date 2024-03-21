@@ -100,8 +100,8 @@ struct InspectorCustomMetadata
 #endif
 
 #ifdef INSPECTOR_MODE_COMPUTE
-[[vk::binding(INSPECTOR_INSPECTION_DATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]] uniform RWStructuredBuffer<uint> inspectorInspectionData;
-[[vk::binding(INSPECTOR_METADATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]] uniform StructuredBuffer<InspectorComputeMetadata> inspectorMetadata;
+[[vk::binding(INSPECTOR_INSPECTION_DATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]]  RWStructuredBuffer<uint> inspectorInspectionData;
+[[vk::binding(INSPECTOR_METADATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]]  StructuredBuffer<InspectorComputeMetadata> inspectorMetadata;
 
 void inspect32BitValue(uint index, uint v)
 {
@@ -132,8 +132,8 @@ void inspect32BitValue(uint index, uint v)
 
 #ifdef INSPECTOR_MODE_FRAGMENT
 
-[[vk::binding(INSPECTOR_INSPECTION_DATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]] uniform RWByteAddressBuffer inspectorInspectionData;
-[[vk::binding(INSPECTOR_METADATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]] uniform StructuredBuffer<InspectorFragmentMetadata> inspectorMetadata;
+[[vk::binding(INSPECTOR_INSPECTION_DATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]]  RWByteAddressBuffer inspectorInspectionData;
+[[vk::binding(INSPECTOR_METADATA_BINDING, INSPECTOR_DESCRIPTOR_SET)]]  StructuredBuffer<InspectorFragmentMetadata> inspectorMetadata;
 
 void inspect32BitValue(uint index, uint v)
 {

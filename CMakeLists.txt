@@ -9,7 +9,7 @@ include(cmake/CPM.cmake)
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.1.2")
+set(Slang_VERSION  "2024.1.5")
 find_package(Slang)
 
 # Adding NVTX

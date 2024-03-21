@@ -24,8 +24,8 @@
 #include "device_host.h"
 
 [[vk::push_constant]] ConstantBuffer<PushConstant> pushC;
-[[vk::binding(eCompParticles)]] uniform RWStructuredBuffer<Particle> particles;
-[[vk::binding(eCompSort)]] uniform RWStructuredBuffer<SpatialInfo> spatialInfo;
+[[vk::binding(eCompParticles)]] RWStructuredBuffer<Particle> particles;
+[[vk::binding(eCompSort)]] RWStructuredBuffer<SpatialInfo> spatialInfo;
 [[vk::binding(eCompSetting)]] ConstantBuffer<ParticleSetting> setting;
 
  #define INSPECTOR_MODE_COMPUTE 
