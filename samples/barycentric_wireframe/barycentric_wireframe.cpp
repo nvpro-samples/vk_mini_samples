@@ -414,10 +414,9 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync            = true;
-  spec.vkSetup.apiMajor = 1;
-  spec.vkSetup.apiMinor = 3;
+  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync = true;
+  spec.vkSetup.setVersion(1, 3);
 
   static VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeat{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};

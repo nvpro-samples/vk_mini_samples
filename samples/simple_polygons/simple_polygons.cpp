@@ -446,10 +446,9 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync            = true;
-  spec.vkSetup.apiMajor = 1;
-  spec.vkSetup.apiMinor = 3;
+  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync = true;
+  spec.vkSetup.setVersion(1, 3);
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

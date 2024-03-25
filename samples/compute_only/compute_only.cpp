@@ -178,7 +178,7 @@ private:
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name = "The Empty Example";
+  spec.name = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vkSetup.setVersion(1, 3);
   spec.useMenu = SHOW_MENU ? true : false;
 

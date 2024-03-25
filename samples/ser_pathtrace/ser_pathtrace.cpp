@@ -266,7 +266,7 @@ public:
     // Reset maximum for current frame
     vkCmdFillBuffer(cmd, m_bHeatStats.buffer, (uint32_t(m_frame) & 1) * sizeof(uint32_t), sizeof(uint32_t), 1);
 
-    m_pushConst.frame = m_frame;
+    m_pushConst.frame  = m_frame;
     m_pushConst.useSER = m_useSER;
 
     VkMemoryBarrier memBarrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -456,7 +456,7 @@ private:
 
     // Describe buffer as array of VertexObj.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
-    triangles.vertexFormat             = VK_FORMAT_R32G32B32A32_SFLOAT;  // vec3 vertex position data.
+    triangles.vertexFormat             = VK_FORMAT_R32G32B32_SFLOAT;  // vec3 vertex position data.
     triangles.vertexData.deviceAddress = vertexAddress;
     triangles.vertexStride             = sizeof(nvh::PrimitiveVertex);
     triangles.indexType                = VK_INDEX_TYPE_UINT32;
@@ -822,10 +822,9 @@ private:
 auto main(int argc, char** argv) -> int
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name             = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync            = false;
-  spec.vkSetup.apiMajor = 1;
-  spec.vkSetup.apiMinor = 3;
+  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync = false;
+  spec.vkSetup.setVersion(1, 3);
 
   spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
   // #VKRay: Activate the ray tracing extension

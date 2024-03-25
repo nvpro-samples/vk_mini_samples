@@ -32,7 +32,11 @@ if(NOT BASE_DIRECTORY)
     REQUIRED
     DOC "Directory containing nvpro_core"
     )
+  if(NOT BASE_DIRECTORY)
+    message(FATAL_ERROR "Could not find base directory, please set BASE_DIRECTORY to folder containing nvpro_core")
+  endif()
 endif()
+
 
 # Set the install diectory in the project directory
 set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/_install" CACHE PATH "folder in which INSTALL will put everything needed to run the binaries" FORCE)

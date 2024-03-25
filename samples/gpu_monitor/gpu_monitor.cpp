@@ -33,14 +33,12 @@
 int main(int argc, char** argv)
 {
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name                  = std::string(PROJECT_NAME) + " Example";
+  spec.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync                 = true;
-  spec.vkSetup.apiMajor      = 1;
-  spec.vkSetup.apiMinor      = 3;
   spec.hasUndockableViewport = false;
   spec.width                 = 750;
   spec.height                = 400;
-
+  spec.vkSetup.setVersion(1, 3);
 
   // Setting up the layout of the application. Docking the NVML monitor in the center
   spec.dockSetup = [](ImGuiID viewportID) { ImGui::DockBuilderDockWindow("NVML Monitor", viewportID); };

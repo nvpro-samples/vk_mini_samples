@@ -304,6 +304,7 @@ private:
     VkBufferUsageFlags rtUsageFlag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                                      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
+
     // Create a buffer of Vertex and Index per mesh
     std::vector<DH::PrimMeshInfo> primInfo;
     for(size_t i = 0; i < m_meshes.size(); i++)
@@ -374,7 +375,7 @@ private:
     // Describe buffer as array of VertexObj.
     VkAccelerationStructureGeometryTrianglesDataKHR triangles{
         .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
-        .vertexFormat = VK_FORMAT_R32G32B32A32_SFLOAT,  // vec3 vertex position data
+        .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,  // vec3 vertex position data
         .vertexData   = {.deviceAddress = vertexAddress},
         .vertexStride = sizeof(nvh::PrimitiveVertex),
         .maxVertex    = static_cast<uint32_t>(prim.vertices.size()) - 1,
