@@ -162,7 +162,7 @@ void main()
   // Color at hit point
   vec3 color = ggxEvaluate(V, hit.nrm, L, albedo, pc.metallic, pc.roughness);
 
-  // Under shader, dimm the contribution
+  // Under shadow, dimm the contribution
   if(!visible)
     color *= 0.3F;
 

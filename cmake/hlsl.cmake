@@ -129,6 +129,7 @@ function(compile_hlsl_file)
           -fvk-use-scalar-layout
           -fspv-extension=KHR
           -fspv-extension=SPV_EXT_descriptor_indexing
+          # -fspv-debug=vulkan-with-source
           -E ${_ENTRY_NAME} 
           -T ${_TARGET}
           -Vn ${_VAR_NAME}

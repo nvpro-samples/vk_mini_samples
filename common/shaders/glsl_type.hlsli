@@ -1,3 +1,4 @@
+// Fof HLSL
 
 #define vec4 float4
 #define vec3 float3

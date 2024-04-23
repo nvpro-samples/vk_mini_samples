@@ -9,7 +9,7 @@ include(cmake/CPM.cmake)
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.1.5")
+set(Slang_VERSION  "2024.1.7")
 find_package(Slang)
 
 # Adding NVTX
@@ -154,6 +154,7 @@ function(create_sample  PROJECT_NAME)
     # Linking with other libraries
     target_link_libraries(${PROJECT_NAME} PRIVATE
         nvpro_core
+        common
         optimized ${LIBRARIES_OPTIMIZED}
         debug ${LIBRARIES_DEBUG}
         ${PLATFORM_LIBRARIES}
@@ -178,7 +179,8 @@ function(create_sample  PROJECT_NAME)
         set(_GLSL_FLAGS 
           -I${SAMPLE_FOLDER}/shaders 
           -I${NVPRO_CORE_DIR} 
-          -g -D_glsl)
+          -g # Tell the compiler to embed the source code in the binary
+          -D_glsl)
         list(APPEND _GLSL_FLAGS ${ARGS_FLAGS})
 
         # Compiling shaders to Spir-V header
@@ -240,15 +242,17 @@ endfunction()
 
 
 # Sub examples
+add_subdirectory(common)
 add_subdirectory(samples)
 
+#--------------------------------------------------------------------------------------------------
 # Install - copying the media directory
-install(DIRECTORY "media" 
-        CONFIGURATIONS Release 
-        DESTINATION "bin_${ARCH}")
-install(DIRECTORY "media" 
-        CONFIGURATIONS Debug 
-        DESTINATION "bin_${ARCH}_debug")
+message(STATUS "COPY ${CMAKE_CURRENT_SOURCE_DIR}/media  to  ${OUTPUT_PATH}")
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION ${OUTPUT_PATH})
+# file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION "${OUTPUT_PATH}/Debug")
+# file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/media DESTINATION "${OUTPUT_PATH}/Release")
+install(DIRECTORY "media" CONFIGURATIONS Release DESTINATION "bin_${ARCH}")
+install(DIRECTORY "media" CONFIGURATIONS Debug DESTINATION "bin_${ARCH}_debug")
 
 
 # Fake project to add files

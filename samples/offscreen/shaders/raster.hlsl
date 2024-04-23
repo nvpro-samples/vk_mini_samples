@@ -49,7 +49,7 @@ VSOut vertexMain(VSIn input)
   VSOut output;
 
   output.uv = float2((input.vertexId << 1) & 2, input.vertexId & 2);
-  output.sv_position = float4(output.uv * 2.0f - 1.0f, 0.0f, 1.0f);
+  output.sv_position = float4(output.uv * 2.0F - 1.0F, 0.0F, 1.0F);
   
   return output;
 }

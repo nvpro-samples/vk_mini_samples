@@ -6,9 +6,6 @@ create_sample(mm_opacity
     mm_process.cpp 
     mm_process.hpp 
     mm_opacity.cpp
-    ${SAMPLES_COMMON_DIR}/bird_curve_helper.cpp 
-	  ${SAMPLES_COMMON_DIR}/bird_curve_helper.hpp
-	  ${SAMPLES_COMMON_DIR}/bit_packer.hpp
   SHADER_SOURCES 
     ${SHD_DIR}/raytrace.rgen.glsl
     ${SHD_DIR}/raytrace.rchit.glsl

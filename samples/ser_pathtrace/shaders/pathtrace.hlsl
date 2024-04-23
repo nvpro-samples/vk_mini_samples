@@ -348,7 +348,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
     float3 contrib = float3(0, 0, 0);
 
     // Evaluation of direct light (sun)
-    bool nextEventValid = (dot(L, payload.nrm) > 0.0f);
+    bool nextEventValid = (dot(L, payload.nrm) > 0.0F);
     if(nextEventValid)
     {
       BsdfEvaluateData evalData;

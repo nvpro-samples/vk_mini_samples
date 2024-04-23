@@ -138,7 +138,7 @@ SLANG
 * [GL_EXT_spirv_intrinsics](https://github.com/microsoft/DirectXShaderCompiler/wiki/GL_EXT_spirv_intrinsics-for-SPIR-V-code-gen)
 * [KHR Extensions](https://github.com/KhronosGroup/SPIRV-Registry/tree/main/extensions/KHR)
 * [JSON](https://github.com/KhronosGroup/SPIRV-Headers/blob/main/include/spirv/unified1/spirv.json)
-
+* [Specification](https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html)
 
 
 ## LICENSE

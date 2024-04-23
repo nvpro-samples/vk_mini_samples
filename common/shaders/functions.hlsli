@@ -23,6 +23,11 @@
 #ifndef FUNCTIONS_HLSLI
 #define FUNCTIONS_HLSLI 1
 
+float square(float x)
+{
+  return x * x;
+}
+
 float clampedDot(float3 x, float3 y)
 {
   return clamp(dot(x, y), 0.0F, 1.0F);
@@ -39,7 +44,7 @@ void orthonormalBasis(in float3 normal, out float3 tangent, out float3 bitangent
   float a = -1.0F / (sgn + normal.z);
   float b = normal.x * normal.y * a;
 
-  tangent = float3(1.0f + sgn * normal.x * normal.x * a, sgn * b, -sgn * normal.x);
+  tangent = float3(1.0F + sgn * normal.x * normal.x * a, sgn * b, -sgn * normal.x);
   bitangent = float3(b, sgn + normal.y * normal.y * a, -normal.y);
 }
 
@@ -66,7 +71,7 @@ float3 cosineSampleHemisphere(float r1, float r2)
 float3 offsetRay(in float3 p, in float3 n)
 {
   // Smallest epsilon that can be added without losing precision is 1.19209e-07, but we play safe
-  const float epsilon = 1.0f / 65536.0f; // Safe epsilon
+  const float epsilon = 1.0F / 65536.0F; // Safe epsilon
 
   float magnitude = length(p);
   float offset = epsilon * magnitude;
@@ -110,6 +115,13 @@ float3 IntegerToColor(uint val)
   const float3 freq = float3(1.33333f, 2.33333f, 3.33333f);
   return float3(sin(freq * val) * .5 + .5);
 }
+
+// Return the luminance of a color
+float luminance(in float3 color)
+{
+  return color.x * 0.2126F + color.y * 0.7152F + color.z * 0.0722F;
+}
+
 
 // Utility for temperature and landscapeColor:
 // Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at

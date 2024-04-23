@@ -357,7 +357,7 @@ void main()
   }
   pixel_color /= pushConst.maxSamples;
 
-  bool first_frame = (pushConst.frame <= 20);
+  bool first_frame = (pushConst.frame <= 1);
   // Saving result
   if(first_frame)
   {  // First frame, replace the value in the buffer

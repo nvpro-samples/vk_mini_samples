@@ -48,7 +48,7 @@ void computeMain(uint3 threadIdx : SV_DispatchThreadID)
     return;
   float iTime = pushConst.time;
 
-  float2 uv         = (fragCoord * 2.0f - iResolution) / iResolution.y;
+  float2 uv         = (fragCoord * 2.0F - iResolution) / iResolution.y;
   float2 uv0        = uv;
   float3 finalColor = float3(0.0,0.0,0.0);
 

@@ -23,27 +23,7 @@
 
 #include "constants.hlsli"
 #include "functions.hlsli"
-
-struct PbrMaterial
-{
-  float4 albedo;
-  float roughness;
-  float metallic;
-  float3 normal;
-  float3 emissive;
-  float3 f0;
-  // KHR_materials_transmission
-  float transmission;
-  // KHR_materials_ior
-  float ior;
-  // KHR_materials_volume
-  float3 attenuationColor;
-  float attenuationDistance;
-  bool thinWalled;
-  // KHR_materials_clearcoat
-  float clearcoat;
-  float clearcoatRoughness;
-};
+#include "pbr_mat_struct.hlsli"
 
 
 #define BSDF_EVENT_ABSORB 0
@@ -60,12 +40,10 @@ struct PbrMaterial
 #define BSDF_EVENT_SPECULAR_REFLECTION (BSDF_EVENT_SPECULAR | BSDF_EVENT_REFLECTION)
 #define BSDF_EVENT_SPECULAR_TRANSMISSION (BSDF_EVENT_SPECULAR | BSDF_EVENT_TRANSMISSION)
 
-#define BSDF_USE_MATERIAL_IOR (-1.0)
+#define BSDF_USE_MATERIAL_IOR (-1.0F)
 
 struct BsdfEvaluateData
 {
-  float3 ior1; // [in] inside ior
-  float3 ior2; // [in] outside ior
   float3 k1; // [in] Toward the incoming ray
   float3 k2; // [in] Toward the sampled light
   float3 bsdf_diffuse; // [out] Diffuse contribution
@@ -75,8 +53,6 @@ struct BsdfEvaluateData
 
 struct BsdfSampleData
 {
-  float3 ior1; // [in] inside ior
-  float3 ior2; // [in] outside ior
   float3 k1; // [in] Toward the incoming ray
   float3 k2; // [in] Toward the sampled light
   float4 xi; // [in] 4 random [0..1]
@@ -85,16 +61,19 @@ struct BsdfSampleData
   int event_type; // [out] one of the event above
 };
 
-
-
-
 //-----------------------------------------------------------------------
 // The following equation models the Fresnel reflectance term of the spec equation (aka F())
 // Implementation of fresnel from [4], Equation 15
 //-----------------------------------------------------------------------
 float3 fresnelSchlick(float3 f0, float3 f90, float VdotH)
 {
-  float a = 1.0 - VdotH;
+  float a = 1.0F - VdotH;
+  float a2 = a * a;
+  return f0 + (f90 - f0) * a2 * a2 * a;
+}
+float fresnelSchlick(float f0, float f90, float VdotH)
+{
+  float a = 1.0F - VdotH;
   float a2 = a * a;
   return f0 + (f90 - f0) * a2 * a2 * a;
 }
@@ -114,7 +93,7 @@ float smithJointGGX(float NdotL, float NdotV, float alphaRoughness)
   float ggxL = NdotV * sqrt(NdotL * NdotL * (1.0F - alphaRoughnessSq) + alphaRoughnessSq);
 
   float ggx = ggxV + ggxL;
-  if (ggx > 0.0F)
+  if(ggx > 0.0F)
   {
     return 0.5F / ggx;
   }
@@ -131,7 +110,7 @@ float distributionGGX(float NdotH, float alphaRoughness)  // alphaRoughness    =
   float alphaSqr = max(alphaRoughness * alphaRoughness, 1e-07);
 
   float NdotHSqr = NdotH * NdotH;
-  float denom = NdotHSqr * (alphaSqr - 1.0) + 1.0;
+  float denom = NdotHSqr * (alphaSqr - 1.0F) + 1.0F;
 
   return alphaSqr / (M_PI * denom * denom);
 }
@@ -148,7 +127,7 @@ float3 brdfLambertian(float3 diffuseColor, float metallic)
 float3 brdfLambertian(float3 f0, float3 f90, float3 diffuseColor, float specularWeight, float VdotH)
 {
   // see https://seblagarde.wordpress.com/2012/01/08/pi-or-not-to-pi-in-game-lighting-equation/
-  return (1.0 - (specularWeight * fresnelSchlick(f0, f90, VdotH))) * (diffuseColor / M_PI);
+  return (1.0F - (specularWeight * fresnelSchlick(f0, f90, VdotH))) * (diffuseColor / M_PI);
 }
 
 //-----------------------------------------------------------------------
@@ -171,14 +150,38 @@ float3 ggxSampling(float alphaRoughness, float r1, float r2)
 {
   float alphaSqr = max(alphaRoughness * alphaRoughness, 1e-07);
 
-  float phi      = 2.0 * M_PI * r1;
-  float cosTheta = sqrt((1.0 - r2) / (1.0 + (alphaSqr - 1.0) * r2));
-  float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+  float phi = 2.0F * M_PI * r1;
+  float cosTheta = sqrt((1.0F - r2) / (1.0F + (alphaSqr - 1.0F) * r2));
+  float sinTheta = sqrt(1.0F - cosTheta * cosTheta);
 
   return float3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
 }
 
+// Return false if it produce a total internal reflection
+bool refract(float3 incident, float3 normal, float eta, out float3 transmitted)
+{
+  float cosTheta = dot(incident, normal);
+  float k = 1.0F - eta * eta * (1.0F - cosTheta * cosTheta);
+  transmitted = float3(0.0F, 0.0F, 0.0F);
+  if(k < 0.0F)
+  {
+    // Total internal reflection
+    return false;
+  }
+  else
+  {
+    transmitted = eta * incident - (eta * cosTheta + sqrt(k)) * normal;
+    return true;
+  }
+}
 
+
+float3 absorptionCoefficient(in PbrMaterial mat)
+{
+  float tmp1 = mat.attenuationDistance;
+  return tmp1 <= 0.0F ? float3(0.0F, 0.0F, 0.0F) :
+                       -float3(log(mat.attenuationColor.x), log(mat.attenuationColor.y), log(mat.attenuationColor.z)) / tmp1.xxx;
+}
 
 float3 ggxEvaluate(float3 V, float3 N, float3 L, float3 albedo, float metallic, float roughness)
 {
@@ -190,7 +193,7 @@ float3 ggxEvaluate(float3 V, float3 N, float3 L, float3 albedo, float metallic, 
 
   float3 c_min_reflectance = float3(0.04, 0.04, 0.04);
   float3 f0 = lerp(c_min_reflectance, albedo, metallic);
-  float3 f90 = float3(1.0, 1.0, 1.0);
+  float3 f90 = float3(1.0F, 1.0F, 1.0F);
 
   float3 f_diffuse = brdfLambertian(albedo, metallic);
   float3 f_specular = brdfSpecularGGX(f0, f90, roughness, VdotH, NdotL, NdotV, NdotH);
@@ -210,8 +213,11 @@ void bsdfEvaluate(inout BsdfEvaluateData data, in PbrMaterial mat)
   float3 albedo = mat.albedo.rgb;
   float metallic = mat.metallic;
   float roughness = mat.roughness;
+  float clearcoat = mat.clearcoatFactor;
+  float transmission = mat.transmissionFactor;
   float3 f0 = mat.f0;
-  float3 f90 = float3(1.0F,1.0F,1.0F);
+  float3 f90 = mat.f90;
+  float transmissionRatio = (1.0F - metallic) * transmission;
 
   // Specular roughness
   float alpha = roughness * roughness;
@@ -224,21 +230,51 @@ void bsdfEvaluate(inout BsdfEvaluateData data, in PbrMaterial mat)
   float NdotL = clampedDot(surfaceNormal, lightDir);
   float VdotH = clampedDot(viewDir, halfVector);
   float NdotH = clampedDot(surfaceNormal, halfVector);
-  float LdotH = clampedDot(lightDir, halfVector);
+  float LdotH = dot(lightDir, halfVector);
 
   // Contribution
   float3 f_diffuse = brdfLambertian(albedo, metallic);
   float3 f_specular = brdfSpecularGGX(f0, f90, alpha, VdotH, NdotL, NdotV, NdotH);
 
   // Calculate PDF (probability density function)
-  float diffuseRatio = 0.5F * (1.0F - metallic);
+  float diffuseRatio = 0.5F * clamp(1.0F - metallic - transmission, 0, 1);
   float diffusePDF = (NdotL * M_1_OVER_PI);
   float specularPDF = distributionGGX(NdotH, alpha) * NdotH / (4.0F * LdotH);
 
-  // Results
+  float brdfPdf = lerp(specularPDF, diffusePDF, diffuseRatio);
+  
+   // Calculate transmitted direction using Snell's law
+  if(transmission > 0.0F)
+  {
+    float eta = mat.eta; // Refractive index
+    float3 refractedDir;
+    bool totalInternalRefraction = refract(lightDir, surfaceNormal, eta, refractedDir);
+
+    if(!totalInternalRefraction)
+    {
+      // Adjust diffuse and specular components for transmission
+      f_diffuse = lerp(f_diffuse, float3(0.0F, 0.0F, 0.0F), transmissionRatio);
+      f_specular = lerp(f_specular, float3(0.0F, 0.0F, 0.0F), transmissionRatio);
+
+      // Calculate transmission PDF
+      float transmissionPDF = abs(dot(refractedDir, surfaceNormal));
+
+      // Mix PDFs
+      float pdf = lerp(brdfPdf, transmissionPDF, transmissionRatio);
+
+      // Results
+      data.bsdf_diffuse = f_diffuse * NdotL;
+      data.bsdf_glossy = f_specular * NdotL;
+      data.pdf = pdf;
+      return;
+    }
+  }
+
+  // If transmission didn't occur or if total internal reflection happened
+  // Evaluate BRDF for non-transmissive case
   data.bsdf_diffuse = f_diffuse * NdotL;
   data.bsdf_glossy = f_specular * NdotL;
-  data.pdf = lerp(specularPDF, diffusePDF, diffuseRatio);
+  data.pdf = brdfPdf;
 }
 
 void bsdfSample(inout BsdfSampleData data, in PbrMaterial mat)
@@ -246,8 +282,14 @@ void bsdfSample(inout BsdfSampleData data, in PbrMaterial mat)
   // Initialization
   float3 surfaceNormal = mat.normal;
   float3 viewDir = data.k1;
-  float roughness = mat.roughness;
+  float3 albedo = mat.albedo.rgb;
   float metallic = mat.metallic;
+  float roughness = mat.roughness;
+  float clearcoat = mat.clearcoatFactor;
+  float transmission = mat.transmissionFactor;
+  float f0 = luminance(mat.f0);
+  float f90 = luminance(mat.f90);
+  float eta = mat.eta;
 
   // Random numbers for importance sampling
   float r1 = data.xi.x;
@@ -255,49 +297,93 @@ void bsdfSample(inout BsdfSampleData data, in PbrMaterial mat)
   float r3 = data.xi.z;
 
   // Create tangent space
-  float3 tangent, binormal;
-  orthonormalBasis(surfaceNormal, tangent, binormal);
-
-  // Specular roughness
-  float alpha = roughness * roughness;
+  float3 tangent, bitangent;
+  orthonormalBasis(surfaceNormal, tangent, bitangent);
 
   // Find Half vector for diffuse or glossy reflection
-  float diffuseRatio = 0.5F * (1.0F - metallic);
-  float3 halfVector;
-  if (r3 < diffuseRatio)
-    halfVector = cosineSampleHemisphere(r1, r2); // Diffuse
-  else
-    halfVector = ggxSampling(alpha, r1, r2); // Glossy
+  float diffuseRatio = 0.5F * clamp(1.0F - metallic - transmission, 0 , 1);
+  float transmissionRatio = (1.0F - metallic) * transmission;
+  float3 sampleDirection = float3(0.0F, 0.0F, 0.0F);
 
-  // Transform the half vector to the hemisphere's tangent space
-  halfVector = tangent * halfVector.x + binormal * halfVector.y + surfaceNormal * halfVector.z;
 
-  // Compute the reflection direction from the sampled half vector and view direction
-  float3 reflectVector = reflect(-viewDir, halfVector);
-
-  // Early out: avoid internal reflection
-  if (dot(surfaceNormal, reflectVector) < 0.0F)
+  if(r3 < diffuseRatio)
   {
-    data.event_type = BSDF_EVENT_ABSORB;
+    sampleDirection = cosineSampleHemisphere(r1, r2); // Diffuse
+    sampleDirection = tangent * sampleDirection.x + bitangent * sampleDirection.y + surfaceNormal * sampleDirection.z;
+    data.event_type = BSDF_EVENT_DIFFUSE;
+  }
+  else
+  {
+    // Specular roughness
+    float alpha = roughness * roughness;
+    float3 halfVector = ggxSampling(alpha, r1, r2); // Glossy
+    
+    // Transform the half vector to the hemisphere's tangent space
+    halfVector = tangent * halfVector.x + bitangent * halfVector.y + surfaceNormal * halfVector.z;
+    
+    // Compute the reflection direction from the sampled half vector and view direction
+    sampleDirection = reflect(-viewDir, halfVector);
+    data.event_type = BSDF_EVENT_SPECULAR;
+
+    // If surface is rough, update surfaceNormal to follow the microfacet distribution for the rest of the calculations
+    if(roughness > 0.0F)
+    {
+      surfaceNormal = halfVector;
+    }
+  }
+
+  // Calculate if the ray goes through
+  if(r3 < transmissionRatio)
+  {
+    // Calculate transmission direction using Snell's law
+    float3 refractedDir;
+    bool refracted = refract(-viewDir, surfaceNormal, eta, refractedDir);
+    if(eta == 1.f && roughness > 0.0F)
+    {
+      refractedDir = -sampleDirection;
+    }
+    // Fresnel term
+    float VdotH = dot(viewDir, surfaceNormal);
+    float reflectance = fresnelSchlick(f0, f90, VdotH);
+
+    if(!refracted || r3 < reflectance)
+    {
+      // Total internal reflection or reflection based on Fresnel term
+      sampleDirection = reflect(-viewDir, surfaceNormal); // Reflective direction
+      data.event_type = BSDF_EVENT_SPECULAR;
+    }
+    else
+    {
+      // Transmission
+      sampleDirection = refractedDir;
+      data.event_type = BSDF_EVENT_TRANSMISSION;
+    }
+
+    // Attenuate albedo for transmission
+    albedo *= transmission;
+
+    // Result
+    data.bsdf_over_pdf = albedo;
+    data.pdf = abs(dot(surfaceNormal, sampleDirection)); //transmissionRatio;
+    data.k2 = sampleDirection;
     return;
   }
 
-  // Evaluate the refection coefficient with this new ray direction
+  // Evaluate the reflection coefficient with the new ray direction
   BsdfEvaluateData evalData;
-  evalData.ior1 = data.ior1;
-  evalData.ior2 = data.ior2;
   evalData.k1 = viewDir;
-  evalData.k2 = reflectVector;
+  evalData.k2 = sampleDirection;
   bsdfEvaluate(evalData, mat);
 
   // Return values
   data.bsdf_over_pdf = (evalData.bsdf_diffuse + evalData.bsdf_glossy) / evalData.pdf;
   data.pdf = evalData.pdf;
-  data.event_type = BSDF_EVENT_GLOSSY_REFLECTION;
-  data.k2 = reflectVector;
+  if(all((evalData.bsdf_diffuse + evalData.bsdf_glossy) == float3(0.0F, 0.0F, 0.0F)))
+    data.event_type = BSDF_EVENT_ABSORB;
+  data.k2 = sampleDirection;
 
   // Avoid internal reflection
-  if (data.pdf <= 0.0)
+  if(data.pdf <= 0.00001 || any(isnan(data.bsdf_over_pdf)))
     data.event_type = BSDF_EVENT_ABSORB;
 
   return;

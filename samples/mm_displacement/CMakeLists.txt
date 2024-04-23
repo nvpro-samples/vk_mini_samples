@@ -7,9 +7,6 @@ create_sample(mm_displacement
     dmm_process.hpp 
     mm_displacement.cpp
     vk_nv_micromesh.h
-    ${SAMPLES_COMMON_DIR}/bird_curve_helper.cpp 
-    ${SAMPLES_COMMON_DIR}/bird_curve_helper.hpp
-    ${SAMPLES_COMMON_DIR}/bit_packer.hpp
   SHADER_SOURCES 
     ${SHD_DIR}/raytrace.rgen.glsl
     ${SHD_DIR}/raytrace.rchit.glsl
