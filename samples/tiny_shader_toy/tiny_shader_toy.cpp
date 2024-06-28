@@ -151,8 +151,13 @@ public:
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc  = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc  = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+         .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+         .physicalDevice = app->getPhysicalDevice(),
+         .device         = app->getDevice(),
+         .instance       = app->getInstance(),
+    });  // Allocator
     m_dset   = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     m_fileBufferA = std::make_unique<FileCheck>(getFilePath("buffer_a.glsl"));
@@ -559,6 +564,7 @@ private:
 
     slang::IModule* rasterSlangModule = nullptr;
     {  // Loading the Slang shader file
+      nvh::ScopedTimer            st1("Slang Load Module");
       Slang::ComPtr<slang::IBlob> diagnosticBlob;
       rasterSlangModule = slangSession->loadModule(moduleName.c_str(), diagnosticBlob.writeRef());
       if(diagnosticBlob != nullptr)
@@ -577,6 +583,7 @@ private:
 
     Slang::ComPtr<slang::IComponentType> composedProgram;
     {
+      nvh::ScopedTimer            st2("Slang Compose");
       Slang::ComPtr<slang::IBlob> diagnosticsBlob;
       SlangResult result = slangSession->createCompositeComponentType(componentTypes.data(), componentTypes.size(),
                                                                       composedProgram.writeRef(), diagnosticsBlob.writeRef());
@@ -587,6 +594,7 @@ private:
     }
 
     {
+      nvh::ScopedTimer            st3("Slang Get Entry Point");
       Slang::ComPtr<slang::IBlob> diagnosticsBlob;
       SlangResult result = composedProgram->getEntryPointCode(0, 0, outCode, diagnosticsBlob.writeRef());
       if(diagnosticsBlob != nullptr)
@@ -715,11 +723,22 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvk::ContextCreateInfo vkSetup;
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -731,6 +750,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

@@ -69,8 +69,7 @@ void computeMain(uint3 threadIdx : SV_DispatchThreadID)
     float3 powerTerm = pow(0.0024 / (distanceTerm + 0.02 + smoothStepTerm) * (1.0 + cosTerm), 1.1);
     
     finalColor += powerTerm;
-}
-
+  }
   
   finalColor= pow(finalColor, 2.2);
   

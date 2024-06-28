@@ -51,7 +51,7 @@ To get messages, a Messenger need to be created with `INFO` flag to get the seve
   dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
   dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
   dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
-  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getContext()->m_instance, &dbg_messenger_create_info, nullptr, &dbg_messenger));
+  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getInstance(), &dbg_messenger_create_info, nullptr, &dbg_messenger));
   ```
 
 The callback for the messages, have been written like this. Note that we are stripping the incomming string, to make the message more clear.
@@ -75,7 +75,7 @@ The callback for the messages, have been written like this. Note that we are str
 
   ```
     // #debug_printf : Removing the callback
-  vkDestroyDebugUtilsMessengerEXT(app->getContext()->m_instance, dbg_messenger, nullptr);
+  vkDestroyDebugUtilsMessengerEXT(app->getInstance(), dbg_messenger, nullptr);
   ```
 
 

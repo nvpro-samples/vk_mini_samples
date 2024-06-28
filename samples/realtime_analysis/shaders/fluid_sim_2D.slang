@@ -19,7 +19,7 @@
 
 // Code converted from: https://github.com/SebLague/Fluid-Sim
 
-#version 450 // This is adding support fot GLSL 
+#version 450 // This is adding support for GLSL 
 // Includes
 #include "device_host.h"
 

@@ -34,15 +34,18 @@
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/images_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/shaders/dh_comp.h"
+
+#include "vk_context.hpp"
 
 namespace DH {
 using namespace glm;
@@ -73,6 +76,7 @@ const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_comp_glsl), std::
 #include "imgui/imgui_helper.h"
 #include "imgui/imgui_camera_widget.h"
 
+
 class Texture3dSample : public nvvkhl::IAppElement
 {
   struct Settings
@@ -102,7 +106,12 @@ public:
     m_device = m_app->getDevice();
 
     // Create the Vulkan allocator (VMA)
-    m_alloc       = std::make_unique<nvvkhl::AllocVma>(app->getContext().get());
+    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+              .physicalDevice = app->getPhysicalDevice(),
+              .device         = app->getDevice(),
+              .instance       = app->getInstance(),
+    });  // Allocator
     m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);
     m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
@@ -128,7 +137,7 @@ public:
 
   void onUIRender() override
   {
-    using PE          = ImGuiH::PropertyEditor;
+    namespace PE          = ImGuiH::PropertyEditor;
     auto& s           = m_settings;
     bool  redoTexture = false;
 
@@ -608,12 +617,21 @@ private:
 
 int main(int argc, char** argv)
 {
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  auto vkctx = std::make_unique<VkContext>(vkSetup);
+  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  spec.instance       = vkctx->getInstance();
+  spec.device         = vkctx->getDevice();
+  spec.physicalDevice = vkctx->getPhysicalDevice();
+  for(auto& q : vkctx->getQueueInfos())
+    spec.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

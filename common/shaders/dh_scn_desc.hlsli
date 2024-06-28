@@ -23,33 +23,74 @@
 #ifndef DH_SCN_DESC_H
 #define DH_SCN_DESC_H 1
 
-struct InstanceInfo
+struct RenderNode
 {
   float4x4 objectToWorld;
   float4x4 worldToObject;
   int materialID;
+  int renderPrimID;
 };
 
-struct Vertex
+#ifdef __SLANG__
+
+// This is all the information about a vertex buffer
+struct VertexBuf
 {
-  float4 position; // POS.xyz + UV.x
-  float4 normal; // NRM.xyz + UV.y
-  float4 tangent; // TNG.xyz + sign: 1, -1
+  float3* positionAddress;
+  float3* normalAddress;
+  uint* colorAddress;
+  float4* tangentAddress;
+  float2* texCoord0Address;
 };
 
-//struct PrimMeshInfo
-//{
-//  uint64_t vertexAddress;
-//  uint64_t indexAddress;
-//  int      materialIndex;
-//};
+// This is the GLTF Primitive structure, promoted to a Mesh.
+struct RenderPrimitive
+{
+  uint3*  indexAddress;
+  VertexBuf vertexBuffer;
+};
 
-//struct SceneDescription
-//{
-//  uint64_t materialAddress;
-//  uint64_t instInfoAddress;
-//  uint64_t primInfoAddress;
-//};
+// The scene description is a pointer to the material, render node and primitive
+// The buffers are all arrays of the above structures
+struct SceneDescription
+{
+  GltfShadeMaterial* materialAddress;
+  RenderNode* renderNodeAddress;
+  RenderPrimitive* renderPrimitiveAddress;
+};
+
+#elif __HLSL_VERSION > 1
+
+
+// This is all the information about a vertex buffer
+struct VertexBuf
+{
+  uint64_t positionAddress;
+  uint64_t normalAddress;
+  uint64_t colorAddress;
+  uint64_t tangentAddress;
+  uint64_t texCoord0Address;
+};
+
+// This is the GLTF Primitive structure, promoted to a Mesh.
+struct RenderPrimitive
+{
+  uint64_t  indexAddress;
+  VertexBuf vertexBuffer;
+};
+
+// The scene description is a pointer to the material, render node and primitive
+// The buffers are all arrays of the above structures
+struct SceneDescription
+{
+  uint64_t materialAddress;
+  uint64_t renderNodeAddress;
+  uint64_t renderPrimitiveAddress;
+};
+
+
+#endif
+
 
 // shadingModel
 #define MATERIAL_METALLICROUGHNESS 0
@@ -66,16 +107,16 @@ struct GltfShadeMaterial
   float3 emissiveFactor;
   int pbrBaseColorTexture;
 
-  int   normalTexture;
+  int normalTexture;
   float normalTextureScale;
-  int   _pad0;
+  int _pad0;
   float pbrRoughnessFactor;
 
   float pbrMetallicFactor;
-  int   pbrMetallicRoughnessTexture;
+  int pbrMetallicRoughnessTexture;
 
-  int   emissiveTexture;
-  int   alphaMode;
+  int emissiveTexture;
+  int alphaMode;
   float alphaCutoff;
 
   // KHR_materials_transmission
@@ -102,6 +143,42 @@ struct GltfShadeMaterial
   int specularColorTexture;
   // KHR_texture_transform
   float3x3 uvTransform;
+};
+
+GltfShadeMaterial getDefaultGltfMaterial()
+{
+  GltfShadeMaterial m;
+  m.pbrBaseColorFactor = float4(1,1,1,1);
+  m.emissiveFactor = float3(0,0,0);
+  m.pbrBaseColorTexture = -1;
+  m.normalTexture = -1;
+  m.normalTextureScale = 1;
+  m.pbrRoughnessFactor = 1;
+  m.pbrMetallicFactor = 1;
+  m.pbrMetallicRoughnessTexture = -1;
+  m.emissiveTexture = -1;
+  m.alphaMode = ALPHA_OPAQUE;
+  m.alphaCutoff = 0.5;
+  m.transmissionFactor = 0;
+  m.transmissionTexture = -1;
+  m.ior = 1.5;
+  m.attenuationColor = float3(1,1,1);
+  m.thicknessFactor = 0;
+  m.thicknessTexture = -1;
+  m.thinWalled = false;
+  m.attenuationDistance = 0;
+  m.clearcoatFactor = 0;
+  m.clearcoatRoughness = 0;
+  m.clearcoatTexture = -1;
+  m.clearcoatRoughnessTexture = -1;
+  m.clearcoatNormalTexture = -1;
+  m.specularFactor = 0;
+  m.specularTexture = -1;
+  m.specularColorFactor = float3(1,1,1);
+  m.specularColorTexture = -1;
+  m.uvTransform = float3x3(1,0,0,0,1,0,0,0,1);
+  
+  return m;
 };
 
 #endif

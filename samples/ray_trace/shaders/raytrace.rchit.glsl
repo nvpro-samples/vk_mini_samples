@@ -134,12 +134,6 @@ vec3 ggxEvaluate(vec3 V, vec3 N, vec3 L, vec3 albedo, float metallic, float roug
 //-----------------------------------------------------------------------
 void main()
 {
-  // We hit our max depth
-  if(payload.depth >= pc.maxDepth)
-  {
-    return;
-  }
-
   vec3 P = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
   vec3 D = normalize(gl_WorldRayDirectionEXT);
   vec3 V = -D;
@@ -174,5 +168,7 @@ void main()
   payload.depth += 1;
   payload.weight *= pc.metallic;  // more or less reflective
 
-  traceRayEXT(topLevelAS, gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.0001, refl_dir, 100.0, 0);
+  // Recursion until we hit our max depth
+  if(payload.depth < pc.maxDepth)
+    traceRayEXT(topLevelAS, gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.0001, refl_dir, 100.0, 0);
 }

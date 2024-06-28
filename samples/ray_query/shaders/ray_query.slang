@@ -108,10 +108,22 @@ HitState getHitState(float2 barycentricCoords, float3x4 worldToObject3x4, float3
   hit.geonrm = worldGeoNormal;
   hit.nrm = worldNormal;
 
+  // ** Adjusting normal **
+
+  // Flip if back facing
+  if (dot(hit.geonrm, -worldRayDirection) < 0)
+      hit.geonrm = -hit.geonrm;
+
+  // Make Normal and GeoNormal on the same side
+  if (dot(hit.geonrm, hit.nrm) < 0)
+  {
+      hit.nrm = -hit.nrm;
+  }
+
   // For low tessalated, avoid internal reflection
-  float3 r = reflect(normalize(worldRayDirection), hit.nrm);
-  if(dot(r, hit.geonrm) < 0)
-    hit.nrm = hit.geonrm;
+  vec3 r = reflect(normalize(worldRayDirection), hit.nrm);
+  if (dot(r, hit.geonrm) < 0)
+      hit.nrm = hit.geonrm;
   
   return hit;
 }
@@ -162,7 +174,11 @@ bool traceShadow(RayDesc ray)
 {
   RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
   q.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xFF, ray);
-  q.Proceed();
+  while (q.Proceed())
+  {
+      if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+          q.CommitNonOpaqueTriangleHit(); // forcing to be opaque
+  }
   return (q.CommittedStatus() != COMMITTED_NOTHING);
 }
 
@@ -184,6 +200,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
 {
   float3 radiance = float3(0.0F, 0.0F, 0.0F);
   float3 throughput = float3(1.0F, 1.0F, 1.0F);
+  bool isInside = false;
 
   HitPayload  payload;
   for(int depth = 0; depth < pushConst.maxDepth; depth++)
@@ -219,7 +236,17 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     pbrMat.normal = payload.nrm;
     pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
     pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pbrMat.metallic);
+    pbrMat.f90 = vec3(1, 1, 1);
+    pbrMat.specularWeight = 1.0;                  // product of specularFactor and specularTexture.a
+    pbrMat.transmissionFactor = mat.transmission; // KHR_materials_transmission
+    pbrMat.thicknessFactor = 0;
 
+    float matIor = 1.1;
+
+    if (isInside)
+        pbrMat.eta = matIor / 1.0;
+    else
+        pbrMat.eta = 1.0 / matIor;
     float3 contrib = float3(0, 0, 0);
 
     // Evaluation of direct light (sun)
@@ -250,8 +277,12 @@ float3 pathTrace(RayDesc ray, inout uint seed)
         break; // Need to add the contribution ?
       }
 
+      if (sampleData.event_type == BSDF_EVENT_TRANSMISSION)
+          isInside = !isInside;
+
       throughput *= sampleData.bsdf_over_pdf;
-      ray.Origin = offsetRay(payload.pos, payload.geonrm);
+      vec3 offsetDir = dot(sampleData.k2, payload.geonrm) < 0.0 ? -payload.geonrm : payload.geonrm;
+      ray.Origin = offsetRay(payload.pos, offsetDir);
       ray.Direction = sampleData.k2;
     }
 

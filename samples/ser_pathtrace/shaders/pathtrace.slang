@@ -195,6 +195,10 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
       pbrMat.normal = payload.nrm;
       pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
       pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pushConst.metallic);
+      pbrMat.f90 = vec3(1, 1, 1);
+      pbrMat.eta = 1.0;
+      pbrMat.specularWeight = 1.0;   // product of specularFactor and specularTexture.a
+      pbrMat.transmissionFactor = 0; // KHR_materials_transmission
 
       // Add dummy divergence
       // This sample shader is too simple to show the benefits of sorting

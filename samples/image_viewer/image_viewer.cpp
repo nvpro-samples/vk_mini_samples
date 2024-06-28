@@ -77,8 +77,9 @@ const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::
 // Texture wrapper class which load an image
 struct SampleTexture
 {
-  SampleTexture(nvvk::Context* c, nvvkhl::AllocVma* a)
-      : m_ctx(c)
+  SampleTexture(VkDevice device, uint32_t queueIndex, nvvkhl::AllocVma* a)
+      : m_device(device)
+      , m_queueIndex(queueIndex)
       , m_alloc(a)
   {
     m_size = {1, 1};
@@ -86,8 +87,9 @@ struct SampleTexture
     create(4, data.data());
   }
 
-  SampleTexture(nvvk::Context* c, nvvkhl::AllocVma* a, const std::string& filename)
-      : m_ctx(c)
+  SampleTexture(VkDevice device, uint32_t queueIndex, nvvkhl::AllocVma* a, const std::string& filename)
+      : m_device(device)
+      , m_queueIndex(queueIndex)
       , m_alloc(a)
   {
     int      w        = 0;
@@ -116,7 +118,7 @@ struct SampleTexture
     const VkFormat            format    = VK_FORMAT_R8G8B8A8_UNORM;
     const VkImageCreateInfo create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
 
-    nvvk::CommandPool cpool(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
+    nvvk::CommandPool cpool(m_device, m_queueIndex);
     VkCommandBuffer   cmd = cpool.createCommandBuffer();
     m_texture             = m_alloc->createTexture(cmd, bufsize, data, create_info, sampler_info);
     nvvk::cmdGenerateMipmaps(cmd, m_texture.image, format, m_size, create_info.mipLevels);
@@ -130,9 +132,10 @@ struct SampleTexture
   [[nodiscard]] float getAspect() const { return static_cast<float>(m_size.width) / static_cast<float>(m_size.height); }
 
 private:
+  VkDevice          m_device{};
+  uint32_t          m_queueIndex{0};
   VkExtent2D        m_size{0, 0};
   nvvk::Texture     m_texture;
-  nvvk::Context*    m_ctx{nullptr};
   nvvkhl::AllocVma* m_alloc{nullptr};
 };
 
@@ -148,15 +151,20 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
     const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
     const std::string              img_file = nvh::findFile(R"(media/fruit.jpg)", default_search_paths, true);
     assert(!img_file.empty());
-    m_texture = std::make_shared<SampleTexture>(m_app->getContext().get(), m_alloc.get(), img_file);
+    m_texture = std::make_shared<SampleTexture>(m_app->getDevice(), m_app->getQueue(0).familyIndex, m_alloc.get(), img_file);
     assert(m_texture->isValid());
 
     createSamplers();
@@ -523,11 +531,22 @@ private:
 /// <returns></returns>
 int main(int argc, char** argv)
 {
+  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+  
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
@@ -538,6 +557,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

@@ -9,7 +9,7 @@ include(cmake/CPM.cmake)
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.1.7")
+set(Slang_VERSION  "2024.1.20")
 find_package(Slang)
 
 # Adding NVTX
@@ -169,6 +169,9 @@ function(create_sample  PROJECT_NAME)
     target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_NAME="${PROJECT_NAME}")
     target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_RELDIRECTORY="${TO_CURRENT_SOURCE_DIR}/")
     target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_DOWNLOAD_RELDIRECTORY="${TO_DOWNLOAD_TARGET_DIR}/")
+
+    # TinyGLTF
+    target_compile_definitions(${PROJECT_NAME} PRIVATE TINYGLTF_NO_EXTERNAL_IMAGE)
 
     # other properties
     set_property(TARGET ${PROJECT_NAME} PROPERTY FOLDER "Samples")

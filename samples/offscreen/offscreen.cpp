@@ -42,6 +42,7 @@
 #include "nvvk/shaders_vk.hpp"
 
 #include "stb_image_write.h"
+#include "vk_context.hpp"  // Simple but complete Vulkan context creation
 
 // Shaders
 namespace DH {
@@ -68,11 +69,16 @@ namespace nvvkhl {
 class OfflineRender
 {
 public:
-  explicit OfflineRender(nvvk::Context* ctx)
-      : m_ctx(ctx)
+  explicit OfflineRender(VkInstance instance, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex)
+      : m_device(device)
   {
-    m_alloc   = std::make_unique<nvvkhl::AllocVma>(ctx);
-    m_cmdPool = std::make_unique<nvvk::CommandPool>(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
+    VmaAllocatorCreateInfo vmaInfo{
+        .physicalDevice = physicalDevice,
+        .device         = device,
+        .instance       = instance,
+    };
+    m_alloc   = std::make_unique<nvvkhl::AllocVma>(vmaInfo);
+    m_cmdPool = std::make_unique<nvvk::CommandPool>(device, queueFamilyIndex);
   }
 
   ~OfflineRender() { destroy(); };
@@ -186,7 +192,7 @@ public:
     VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges    = &push_constants;
-    NVVK_CHECK(vkCreatePipelineLayout(m_ctx->m_device, &layout_info, nullptr, &m_pipelineLayout));
+    NVVK_CHECK(vkCreatePipelineLayout(m_device, &layout_info, nullptr, &m_pipelineLayout));
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
     prend_info.colorAttachmentCount    = 1;
@@ -196,9 +202,9 @@ public:
     nvvk::GraphicsPipelineState pstate;
     pstate.rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
-    nvvk::GraphicsPipelineGenerator pgen(m_ctx->m_device, m_pipelineLayout, prend_info, pstate);
+    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_ctx->m_device, &rasterSlang[0], sizeof(rasterSlang));
+    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
     pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
     pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
 #else
@@ -207,7 +213,7 @@ public:
 #endif
     m_pipeline = pgen.createPipeline();
 #if USE_SLANG
-    vkDestroyShaderModule(m_ctx->m_device, shaderModule, nullptr);
+    vkDestroyShaderModule(m_device, shaderModule, nullptr);
 #endif
   }
 
@@ -218,20 +224,20 @@ public:
   void createFramebuffer(const VkExtent2D& size)
   {
     const nvh::ScopedTimer s_timer("Create Framebuffer");
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_ctx->m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
   }
 
   void destroy()
   {
-    vkDestroyPipelineLayout(m_ctx->m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline(m_ctx->m_device, m_pipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    vkDestroyPipeline(m_device, m_pipeline, nullptr);
     m_gBuffers.reset();
     m_cmdPool.reset();
     m_alloc.reset();
   }
 
 private:
-  nvvk::Context*                     m_ctx{nullptr};
+  VkDevice                           m_device{VK_NULL_HANDLE};
   std::unique_ptr<nvvkhl::AllocVma>  m_alloc;
   std::unique_ptr<nvvk::CommandPool> m_cmdPool;
   std::unique_ptr<nvvkhl::GBuffer>   m_gBuffers;
@@ -266,15 +272,11 @@ int main(int argc, char** argv)
   }
 
   // Creating the Vulkan instance and device, with only defaults, no extension
-  nvvk::Context           vkctx;
-  nvvk::ContextCreateInfo vkctx_info{};
-  vkctx_info.apiMajor = 1;
-  vkctx_info.apiMinor = 3;
-  vkctx.init(vkctx_info);
-
+  auto vkctx = std::make_unique<VkContext>();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::OfflineRender>(&vkctx);
+  auto app = std::make_unique<nvvkhl::OfflineRender>(vkctx->getInstance(), vkctx->getDevice(),
+                                                     vkctx->getPhysicalDevice(), vkctx->getQueueInfo(0).familyIndex);
 
   app->createFramebuffer(render_size);  // Framebuffer where it will render
   app->createPipeline();                // How the quad will be rendered: shaders and more
@@ -283,7 +285,7 @@ int main(int argc, char** argv)
   app->saveImage(output_file);  // Saving rendered image
 
   app.reset();
-  vkctx.deinit();
+  vkctx.reset();
 
   return 0;
 }

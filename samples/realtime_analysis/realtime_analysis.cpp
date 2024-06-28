@@ -143,15 +143,20 @@ public:
   {
     m_app         = app;
     m_device      = app->getDevice();
-    m_alloc       = std::make_unique<nvvkhl::AllocVma>(app->getContext().get());  // Vulkan memory allocator
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);                  // Debug utility
-    m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);     // Descriptor Set helper
-    m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);     // Descriptor Set helper
+    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+              .physicalDevice = app->getPhysicalDevice(),
+              .device         = app->getDevice(),
+              .instance       = app->getInstance(),
+    });                                                                  // Allocator
+    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);               // Debug utility
+    m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);  // Descriptor Set helper
+    m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);  // Descriptor Set helper
 
     // #INSPECTOR
     nvvkhl::ElementInspector::InitInfo inspectInfo{
         .device                   = m_device,
-        .graphicsQueueFamilyIndex = m_app->getQueueGCT().familyIndex,
+        .graphicsQueueFamilyIndex = m_app->getQueue(0).familyIndex,
         .allocator                = m_alloc.get(),
         .imageCount               = 1u,
         .bufferCount              = 2u,
@@ -183,7 +188,7 @@ public:
 
   void onUIRender() override
   {
-    using PE                = ImGuiH::PropertyEditor;
+    namespace PE            = ImGuiH::PropertyEditor;
     DH::ParticleSetting& pS = m_particleSetting;
     ImGui::Begin("Settings");
     ImGui::TextDisabled("%d FPS / %.3fms", static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
@@ -849,12 +854,28 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvk::ContextCreateInfo vkSetup;
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+
+  // Required extra extensions
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
+  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vkSetup.setVersion(1, 3);
-  spec.vSync  = true;
-  spec.width  = 1700;
-  spec.height = 900;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
+  spec.width          = 1700;
+  spec.height         = 900;
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
 
   // Setting up the layout of the application
   spec.dockSetup = [](ImGuiID viewportID) {
@@ -867,11 +888,6 @@ int main(int argc, char** argv)
     ImGuiID inspectorID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.3F, nullptr, &viewportID);
     ImGui::DockBuilderDockWindow("Inspector", inspectorID);
   };
-
-  // Required extra extensions
-  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  spec.vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -894,6 +910,8 @@ int main(int argc, char** argv)
   g_profiler->setLabelUsage(false);  // Not using the "auto debug scope naming", using our own instead
 
   app->run();
+  app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

@@ -188,4 +188,53 @@ float3 simpleShading(float3 viewDir, float3 lightDir, float3 normal, float3 colo
   return color;
 }
 
+float4 makeFastTangent(float3 nrm)
+{
+  const float sgn = nrm.z > 0.0F ? 1.0F : -1.0F;
+  const float a = -1.0F / (sgn + nrm.z);
+  const float b = nrm.x * nrm.y * a;
+  return float4(1.0f + sgn * nrm.x * nrm.x * a, sgn * b, -sgn * nrm.x, sgn);
+}
+
+#ifndef __SLANG__
+
+float4 unpackUnorm4x8(uint packedValue) 
+{
+    float4 unpackedValue;
+
+    // Unpack each component from the packed value
+    unpackedValue.r = (packedValue & 0xFF) / 255.0f;
+    unpackedValue.g = ((packedValue >> 8) & 0xFF) / 255.0f;
+    unpackedValue.b = ((packedValue >> 16) & 0xFF) / 255.0f;
+    unpackedValue.a = ((packedValue >> 24) & 0xFF) / 255.0f;
+
+    return unpackedValue;
+}
+#endif
+
+#if __HLSL_VERSION > 1
+
+// This helper is used to load data from a buffer
+// The startAddress is the address of the buffer
+// The offset is the starting position in the buffer
+//
+// The loadValue function will load the data from the buffer
+// NOTE: loadValue will increment the offset, therefore all the loadValue should be called in the same order as the data is stored in the buffer
+struct LoaderHelper
+{
+  void init(uint64_t startAddress, uint64_t offset=0) { m_address = startAddress; m_offset = offset;}
+
+  template<typename T>
+  void loadValue(inout T value)
+  {
+    value = vk::RawBufferLoad<T>(m_address + m_offset);
+    m_offset += sizeof(T);
+  }
+
+  uint64_t m_address;
+  uint64_t m_offset;
+};
+
+#endif
+
 #endif

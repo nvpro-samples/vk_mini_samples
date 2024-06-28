@@ -40,7 +40,6 @@
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
-#include "nvvk/raytraceKHR_vk.hpp"
 #include "nvvk/sbtwrapper_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
@@ -52,6 +51,7 @@
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
 #include "nvvkhl/shaders/dh_sky.h"
+#include "nvvk/acceleration_structures.hpp"
 
 #include "shaders/dh_bindings.h"
 
@@ -102,10 +102,15 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc      = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc      = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+             .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+             .physicalDevice = app->getPhysicalDevice(),
+             .device         = app->getDevice(),
+             .instance       = app->getInstance(),
+    });  // Allocator
     m_rtSet      = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
-    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_app->getContext().get(), m_alloc.get());
+    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_device, m_alloc.get());
 
     // Requesting ray tracing properties and reorder properties
     VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
@@ -114,8 +119,7 @@ public:
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
     // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
-    int32_t gctQueueIndex = m_app->getContext()->m_queueGCT.familyIndex;
-    m_rtBuilder.setup(m_device, m_alloc.get(), gctQueueIndex);
+    int32_t gctQueueIndex = m_app->getQueue(0).familyIndex;
     m_sbt.setup(m_device, gctQueueIndex, m_alloc.get(), m_rtProperties);
 
     // Create resources
@@ -450,7 +454,7 @@ private:
   //--------------------------------------------------------------------------------------------------
   // Converting a PrimitiveMesh as input for BLAS
   //
-  nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const nvh::PrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
+  nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const nvh::PrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
   {
     uint32_t maxPrimitiveCount = static_cast<uint32_t>(prim.triangles.size());
 
@@ -464,24 +468,17 @@ private:
     triangles.maxVertex                = static_cast<uint32_t>(prim.vertices.size()) - 1;
     //triangles.transformData; // Identity
 
-    // Identify the above data as containing opaque triangles.
-    VkAccelerationStructureGeometryKHR asGeom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-    asGeom.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    asGeom.flags              = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
-    asGeom.geometry.triangles = triangles;
+    nvvk::AccelerationStructureGeometryInfo result;
 
-    VkAccelerationStructureBuildRangeInfoKHR offset{};
-    offset.firstVertex     = 0;
-    offset.primitiveCount  = maxPrimitiveCount;
-    offset.primitiveOffset = 0;
-    offset.transformOffset = 0;
+    result.geometry = VkAccelerationStructureGeometryKHR{
+        .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+        .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
+        .geometry     = {triangles},
+        .flags        = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR,
+    };
 
-    // Our BLAS is made from only one geometry, but could be made of many geometries
-    nvvk::RaytracingBuilderKHR::BlasInput input;
-    input.asGeometry.emplace_back(asGeom);
-    input.asBuildOffsetInfo.emplace_back(offset);
-
-    return input;
+    result.rangeInfo = VkAccelerationStructureBuildRangeInfoKHR{.primitiveCount = maxPrimitiveCount};
+    return result;
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -490,18 +487,35 @@ private:
   void createBottomLevelAS()
   {
     // BLAS - Storing each primitive in a geometry
-    std::vector<nvvk::RaytracingBuilderKHR::BlasInput> allBlas;
-    allBlas.reserve(m_meshes.size());
+    std::vector<nvvk::AccelerationStructureBuildData> buildData(m_meshes.size());
+    m_blas.resize(m_meshes.size());
+    VkDeviceSize maxScratch{0};
 
     for(uint32_t p_idx = 0; p_idx < m_meshes.size(); p_idx++)
     {
-      auto vertexAddress = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].vertices.buffer);
-      auto indexAddress  = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].indices.buffer);
+      auto vertexAddress = m_bMeshes[p_idx].vertices.address;
+      auto indexAddress  = m_bMeshes[p_idx].indices.address;
 
-      auto geo = primitiveToGeometry(m_meshes[p_idx], vertexAddress, indexAddress);
-      allBlas.push_back({geo});
+      auto geo                = primitiveToGeometry(m_meshes[p_idx], vertexAddress, indexAddress);
+      buildData[p_idx].asType = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      buildData[p_idx].addGeometry(geo);
+      auto sizeInfo = buildData[p_idx].finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+      maxScratch = std::max(maxScratch, sizeInfo.buildScratchSize);
     }
-    m_rtBuilder.buildBlas(allBlas, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+    // Scratch buffer
+    nvvk::Buffer scratchBuffer =
+        m_alloc->createBuffer(maxScratch, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    for(uint32_t p_idx = 0; p_idx < m_meshes.size(); p_idx++)
+    {
+      auto createInfo = buildData[p_idx].makeCreateInfo();
+      m_blas[p_idx]   = m_alloc->createAcceleration(createInfo);
+      buildData[p_idx].cmdBuildAccelerationStructure(cmd, m_blas[p_idx].accel, scratchBuffer.address);
+    }
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
+    m_alloc->destroy(scratchBuffer);
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -509,8 +523,9 @@ private:
   //
   void createTopLevelAS()
   {
-    std::vector<VkAccelerationStructureInstanceKHR> tlas;
-    tlas.reserve(m_nodes.size());
+    nvvk::AccelerationStructureBuildData            tlasBuildData{VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR};
+    std::vector<VkAccelerationStructureInstanceKHR> tlasInstances;
+    tlasInstances.reserve(m_nodes.size());
     for(auto& node : m_nodes)
     {
       VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
@@ -518,13 +533,36 @@ private:
       VkAccelerationStructureInstanceKHR rayInst{};
       rayInst.transform           = nvvk::toTransformMatrixKHR(node.localMatrix());  // Position of the instance
       rayInst.instanceCustomIndex = node.mesh;                                       // gl_InstanceCustomIndexEXT
-      rayInst.accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(node.mesh);
+      rayInst.accelerationStructureReference         = m_blas[node.mesh].address;
       rayInst.instanceShaderBindingTableRecordOffset = 0;  // We will use the same hit group for all objects
       rayInst.flags                                  = flags;
       rayInst.mask                                   = 0xFF;
-      tlas.emplace_back(rayInst);
+      tlasInstances.emplace_back(rayInst);
     }
-    m_rtBuilder.buildTlas(tlas, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+
+    VkCommandBuffer cmd            = m_app->createTempCmdBuffer();
+    nvvk::Buffer    instanceBuffer = m_alloc->createBuffer(cmd, tlasInstances,
+                                                           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                                               | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+
+    auto geo = tlasBuildData.makeInstanceGeometry(tlasInstances.size(), instanceBuffer.address);
+    tlasBuildData.addGeometry(geo);
+    auto sizeInfo = tlasBuildData.finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+
+    // Allocate the scratch memory
+    VkDeviceSize scratchSize = sizeInfo.buildScratchSize;
+    nvvk::Buffer scratchBuffer =
+        m_alloc->createBuffer(scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    auto createInfo = tlasBuildData.makeCreateInfo();
+    m_tlas          = m_alloc->createAcceleration(createInfo);
+    tlasBuildData.cmdBuildAccelerationStructure(cmd, m_tlas.accel, scratchBuffer.address);
+
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
+    m_alloc->destroy(scratchBuffer);
+    m_alloc->destroy(instanceBuffer);
   }
 
 
@@ -665,7 +703,7 @@ private:
   void pushDescriptorSet(VkCommandBuffer cmd)
   {
     // Write to descriptors
-    VkAccelerationStructureKHR tlas = m_rtBuilder.getAccelerationStructure();
+    VkAccelerationStructureKHR tlas = m_tlas.accel;
     VkWriteDescriptorSetAccelerationStructureKHR descASInfo{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     descASInfo.accelerationStructureCount = 1;
     descASInfo.pAccelerationStructures    = &tlas;
@@ -752,13 +790,16 @@ private:
     m_alloc->destroy(m_bSkyParams);
     m_alloc->destroy(m_bHeatStats);
 
+    for(auto& b : m_blas)
+      m_alloc->destroy(b);
+    m_alloc->destroy(m_tlas);
+
     m_rtSet->deinit();
     m_gBuffers.reset();
 
     m_rtPipe.destroy(m_device);
 
     m_sbt.destroy();
-    m_rtBuilder.destroy();
     m_tonemapper.reset();
   }
 
@@ -810,9 +851,11 @@ private:
   VkPhysicalDeviceRayTracingInvocationReorderPropertiesNV m_reorderProperties{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_PROPERTIES_NV};
 
-  nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper
-  nvvk::RaytracingBuilderKHR m_rtBuilder;
-  nvvkhl::PipelineContainer  m_rtPipe;
+  nvvk::SBTWrapper          m_sbt;  // Shading binding table wrapper
+  nvvkhl::PipelineContainer m_rtPipe;
+
+  std::vector<nvvk::AccelKHR> m_blas;  // Bottom-level AS
+  nvvk::AccelKHR              m_tlas;  // Top-level AS
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -821,33 +864,44 @@ private:
 ///
 auto main(int argc, char** argv) -> int
 {
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = false;
-  spec.vkSetup.setVersion(1, 3);
+  nvvk::ContextCreateInfo vkSetup;
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
-  spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
   // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accelFeature);  // To build acceleration structures
+  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accelFeature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rtPipelineFeature);  // To use vkCmdTraceRaysKHR
-  spec.vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
+  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rtPipelineFeature);  // To use vkCmdTraceRaysKHR
+  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
   VkPhysicalDeviceShaderClockFeaturesKHR clockFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
+  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
   VkPhysicalDeviceShaderSMBuiltinsFeaturesNV smBuiltinFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_FEATURES_NV};
-  spec.vkSetup.addDeviceExtension(VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME, false, &smBuiltinFeature);
+  vkSetup.addDeviceExtension(VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME, false, &smBuiltinFeature);
 
   VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV reorderFeature{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV};
-  spec.vkSetup.addDeviceExtension(VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, false, &reorderFeature);
+  vkSetup.addDeviceExtension(VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, false, &reorderFeature);
 
-#if USE_HLSL || USE_SLANG // DXC is automatically adding the extension
+#if USE_HLSL || USE_SLANG  // DXC is automatically adding the extension
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
 #endif  // USE_HLSL
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
+  nvvkhl::ApplicationCreateInfo spec;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = false;
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -862,9 +916,9 @@ auto main(int argc, char** argv) -> int
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
   app->addElement(std::make_shared<SerPathtrace>());
 
-
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

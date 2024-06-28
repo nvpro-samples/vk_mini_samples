@@ -37,7 +37,7 @@
 [[vk::binding(B_tlas)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
 [[vk::binding(B_cameraInfo)]] ConstantBuffer<CameraInfo> cameraInfo;
-[[vk::binding(B_sceneDesc)]] ConstantBuffer<SceneDescription> sceneDesc;
+[[vk::binding(B_sceneDesc)]] ConstantBuffer<SceneInfo> sceneDesc;
 
 
 
@@ -67,18 +67,26 @@ struct HitState
 Vertex getVertex(uint64_t vertAddress, uint64_t offset)
 {
   Vertex v;
-  v.position = vk::RawBufferLoad <float3 > (vertAddress + offset);
-  v.normal = vk::RawBufferLoad <float3 > (vertAddress + offset + sizeof(float3));
-  v.t = vk::RawBufferLoad <float2 > (vertAddress + offset + (2 * sizeof(float3)));
+
+  LoaderHelper loader;
+  loader.init(vertAddress, offset);
+  loader.loadValue<float3>(v.position);
+  loader.loadValue<float3>(v.normal);
+  loader.loadValue<float2>(v.t);
+  
   return v;
 }
 
 Material getMaterial(uint64_t materialAddress, uint64_t offset)
 {
   Material m;
-  m.albedo = vk::RawBufferLoad <float3 > (materialAddress + offset);
-  m.roughness = vk::RawBufferLoad <float > (materialAddress + offset + sizeof(float3));
-  m.metallic = vk::RawBufferLoad <float > (materialAddress + offset + sizeof(float3)+sizeof(float));
+
+  LoaderHelper loader;
+  loader.init(materialAddress, offset);
+  loader.loadValue<float3>(m.albedo);
+  loader.loadValue<float>(m.roughness);
+  loader.loadValue<float>(m.metallic);
+  loader.loadValue<float>(m.transmission);
   return m;
 }
 
@@ -92,11 +100,11 @@ HitState getHitState(int meshID, int triID, float4x3 objectToWorld, float4x3 wor
   const vec3 barycentrics = vec3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
   
   uint64_t primOffset = sizeof(PrimMeshInfo) * meshID;
-  uint64_t vertAddress = vk::RawBufferLoad < uint64_t > (sceneDesc.primInfoAddress + primOffset);
-  uint64_t indexAddress = vk::RawBufferLoad < uint64_t > (sceneDesc.primInfoAddress + primOffset + sizeof(uint64_t));
+  uint64_t vertAddress = vk::RawBufferLoad<uint64_t>(sceneDesc.primInfoAddress + primOffset);
+  uint64_t indexAddress = vk::RawBufferLoad<uint64_t>(sceneDesc.primInfoAddress + primOffset + sizeof(uint64_t));
 
   uint64_t indexOffset = sizeof(uint3) * triID;
-  uint3 triangleIndex = vk::RawBufferLoad <uint3 > (indexAddress + indexOffset);
+  uint3 triangleIndex = vk::RawBufferLoad<uint3>(indexAddress + indexOffset);
   
   // Vertex and indices of the primitive
   Vertex v0 = getVertex(vertAddress, sizeof(Vertex) * triangleIndex.x);
@@ -120,6 +128,18 @@ HitState getHitState(int meshID, int triID, float4x3 objectToWorld, float4x3 wor
   float3 worldGeoNormal = normalize(mul(worldToObject , geoNormal).xyz);
   hit.geonrm = worldGeoNormal;
   hit.nrm = worldNormal;
+
+  // ** Adjusting normal **
+
+  // Flip if back facing
+  if (dot(hit.geonrm, -worldRayDirection) < 0)
+      hit.geonrm = -hit.geonrm;
+
+  // Make Normal and GeoNormal on the same side
+  if (dot(hit.geonrm, hit.nrm) < 0)
+  {
+      hit.nrm = -hit.nrm;
+  }
 
   // For low tesselated, avoid internal reflection
   vec3 r = reflect(normalize(worldRayDirection), hit.nrm);
@@ -175,7 +195,11 @@ bool traceShadow(RayDesc ray)
 {
   RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH > q;
   q.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xFF, ray);
-  q.Proceed();
+  while (q.Proceed())
+  {
+      if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+          q.CommitNonOpaqueTriangleHit(); // forcing to be opaque
+  }
   return (q.CommittedStatus() != COMMITTED_NOTHING);
 }
 
@@ -197,6 +221,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
 {
   float3 radiance = float3(0.0F, 0.0F, 0.0F);
   float3 throughput = float3(1.0F, 1.0F, 1.0F);
+  bool isInside = false;
 
   HitPayload  payload;
   for(int depth = 0; depth < pushConst.maxDepth; depth++)
@@ -233,8 +258,18 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     pbrMat.metallic = mat.metallic;
     pbrMat.normal = payload.nrm;
     pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
-    pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, mat.metallic);
+    pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pbrMat.metallic);
+    pbrMat.f90 = float3(1, 1, 1);
+    pbrMat.specularWeight = 1.0;                  // product of specularFactor and specularTexture.a
+    pbrMat.transmissionFactor = mat.transmission; // KHR_materials_transmission
+    pbrMat.thicknessFactor = 0;
 
+    float matIor = 1.1;
+
+    if (isInside)
+        pbrMat.eta = matIor / 1.0;
+    else
+        pbrMat.eta = 1.0 / matIor;
     float3 contrib = float3(0, 0, 0);
 
     // Evaluation of direct light (sun)
@@ -265,8 +300,12 @@ float3 pathTrace(RayDesc ray, inout uint seed)
         break; // Need to add the contribution ?
       }
 
+      if (sampleData.event_type == BSDF_EVENT_TRANSMISSION)
+          isInside = !isInside;
+
       throughput *= sampleData.bsdf_over_pdf;
-      ray.Origin = offsetRay(payload.pos, payload.geonrm);
+      vec3 offsetDir = dot(sampleData.k2, payload.geonrm) < 0.0 ? -payload.geonrm : payload.geonrm;
+      ray.Origin = offsetRay(payload.pos, offsetDir);
       ray.Direction = sampleData.k2;
     }
 

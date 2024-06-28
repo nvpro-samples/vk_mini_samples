@@ -36,14 +36,10 @@
 #pragma warning(disable : 4267)  // conversion from 'size_t' to 'uint32_t', possible loss of data (tinygltf)
 #endif
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-
 #define VMA_IMPLEMENTATION
 
-
 #include "imgui/imgui_helper.h"
+#include "nvh/gltfscene.hpp"
 #include "nvvk/sbtwrapper_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
@@ -59,6 +55,13 @@
 
 #include "shaders/dh_bindings.h"
 #include "utils.hpp"
+
+// The defines must be done here, to avoid having multiple definitions
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <tiny_gltf.h>
+
 
 namespace DH {
 using namespace glm;
@@ -97,20 +100,25 @@ public:
 
   void onAttach(nvvkhl::Application* app) override
   {
+    VkDevice         device         = app->getDevice();
+    VkPhysicalDevice physicalDevice = app->getPhysicalDevice();
+
     m_app                        = app;
-    m_device                     = m_app->getDevice();
-    nvvk::Context* ctx           = m_app->getContext().get();
-    const uint32_t c_queue_index = ctx->m_queueC.familyIndex;
+    m_device                     = device;
+    const uint32_t c_queue_index = app->getQueue(1).familyIndex;
 
     m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc      = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_alloc      = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+             .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+             .physicalDevice = app->getPhysicalDevice(),
+             .device         = app->getDevice(),
+             .instance       = app->getInstance(),
+    });  // Allocator
     m_rtSet      = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
-    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_app->getContext().get(), m_alloc.get());
-    m_scene      = std::make_unique<nvvkhl::Scene>();                                      // GLTF scene
-    m_sceneVk    = std::make_unique<nvvkhl::SceneVk>(ctx, m_alloc.get());                  // GLTF Scene buffers
-    m_sceneRtx   = std::make_unique<nvvkhl::SceneRtx>(ctx, m_alloc.get(), c_queue_index);  // GLTF Scene BLAS/TLAS
-    m_sbt        = std::make_unique<nvvk::SBTWrapper>();                                   // Shader Binding Table
-    m_rtBuilder  = std::make_unique<nvvk::RaytracingBuilderKHR>();  // Helper to create ray tracing structures
+    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(device, m_alloc.get());
+    m_scene      = std::make_unique<nvh::gltf::Scene>();                                      // GLTF scene
+    m_sceneVk    = std::make_unique<nvvkhl::SceneVk>(device, physicalDevice, m_alloc.get());  // GLTF Scene buffers
+    m_sceneRtx = std::make_unique<nvvkhl::SceneRtx>(device, physicalDevice, m_alloc.get(), c_queue_index);  // GLTF Scene BLAS/TLAS
 
     // Requesting ray tracing properties
     VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
@@ -118,9 +126,7 @@ public:
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
     // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
-    int32_t gctQueueIndex = m_app->getContext()->m_queueGCT.familyIndex;
-    m_rtBuilder->setup(m_device, m_alloc.get(), gctQueueIndex);
-    m_sbt->setup(m_device, gctQueueIndex, m_alloc.get(), m_rtProperties);
+    int32_t gctQueueIndex = m_app->getQueue(0).familyIndex;
 
     // Create resources
     createScene();
@@ -156,7 +162,7 @@ public:
       ImGuiH::CameraWidget();
 
       using namespace ImGuiH;
-      using PE = PropertyEditor;
+      namespace PE = PropertyEditor;
       bool changed{false};
       if(ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen))
       {
@@ -239,16 +245,20 @@ private:
   void createScene()
   {
     std::string filename = getFilePath(g_sceneFilename, getMediaDirs());
-    m_scene->load(filename);  // Loading the scene
+    if(!m_scene->load(filename))  // Loading the scene
+    {
+      LOGE("Error loading scene: %s\n", filename.c_str());
+      exit(1);
+    }
     {
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_sceneVk->create(cmd, *m_scene);        // Creating the scene in Vulkan buffers
+      m_sceneVk->create(cmd, *m_scene);  // Creating the scene in Vulkan buffers
+      m_sceneRtx->create(cmd, *m_scene, *m_sceneVk, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);  // Creating the acceleration structures
       m_app->submitAndWaitTempCmdBuffer(cmd);  // Submit and wait for the command buffer
       m_alloc->finalizeAndReleaseStaging();    // Make sure there are no pending staging buffers and clear them up
     }
-    m_sceneRtx->create(*m_scene, *m_sceneVk);  // Creating the acceleration structures
 
-    nvvkhl::setCameraFromScene(filename, m_scene->scene());  // Set camera from scene
+    nvvkhl::setCamera(filename, m_scene->getRenderCameras(), m_scene->getSceneBounds());  // Set camera from scene
 
     // Default parameters for overall material
     m_pushConst.maxDepth              = 5;
@@ -320,8 +330,8 @@ private:
   void pushDescriptorSet(VkCommandBuffer cmd)
   {
     // Write to descriptors
-    VkAccelerationStructureKHR tlas = m_rtBuilder->getAccelerationStructure();
-    tlas                            = m_sceneRtx->tlas();
+    VkAccelerationStructureKHR tlas = m_sceneRtx->tlas();
+
     VkWriteDescriptorSetAccelerationStructureKHR descASInfo{
         .sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
         .accelerationStructureCount = 1,
@@ -393,8 +403,6 @@ private:
     m_gBuffers.reset();
     m_rtSet->deinit();
     m_rtPipe.destroy(m_device);
-    m_sbt->destroy();
-    m_rtBuilder->destroy();
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -405,12 +413,10 @@ private:
   std::unique_ptr<nvvkhl::AllocVma>              m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet;  // Descriptor set
   std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
-  std::unique_ptr<nvvkhl::GBuffer>               m_gBuffers;   // G-Buffers: color + depth
-  std::unique_ptr<nvvk::SBTWrapper>              m_sbt;        // Shading binding table wrapper
-  std::unique_ptr<nvvk::RaytracingBuilderKHR>    m_rtBuilder;  // Helper to create ray tracing structures
-  std::unique_ptr<nvvkhl::Scene>                 m_scene;      // GLTF Scene
-  std::unique_ptr<nvvkhl::SceneVk>               m_sceneVk;    // GLTF Scene buffers
-  std::unique_ptr<nvvkhl::SceneRtx>              m_sceneRtx;   // GLTF Scene BLAS/TLAS
+  std::unique_ptr<nvvkhl::GBuffer>               m_gBuffers;  // G-Buffers: color + depth
+  std::unique_ptr<nvh::gltf::Scene>              m_scene;     // GLTF Scene
+  std::unique_ptr<nvvkhl::SceneVk>               m_sceneVk;   // GLTF Scene buffers
+  std::unique_ptr<nvvkhl::SceneRtx>              m_sceneRtx;  // GLTF Scene BLAS/TLAS
 
   VkDevice m_device = VK_NULL_HANDLE;  // Convenient
 
@@ -437,23 +443,39 @@ private:
 ///
 auto main(int argc, char** argv) -> int
 {
+  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+
+  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+  // #VKRay: Activate the ray tracing extension
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accelFeature);  // To build acceleration structures
+  VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rtPipelineFeature);  // To use vkCmdTraceRaysKHR
+  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
+  VkPhysicalDeviceShaderClockFeaturesKHR clockFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
+  vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
+  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+#if USE_SLANG
+  VkPhysicalDeviceComputeShaderDerivativesFeaturesNV computeDerivativesFeature{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_NV};
+  vkSetup.addDeviceExtension(VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, false, &computeDerivativesFeature);
+#endif
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync = false;
-  spec.vkSetup.setVersion(1, 3);
-
-  spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  // #VKRay: Activate the ray tracing extension
-  VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accelFeature);  // To build acceleration structures
-  VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rtPipelineFeature);  // To use vkCmdTraceRaysKHR
-  spec.vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
-  VkPhysicalDeviceShaderClockFeaturesKHR clockFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-  VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -472,6 +494,6 @@ auto main(int argc, char** argv) -> int
 
   app->run();
   app.reset();
-
+  vkContext.deinit();
   return test->errorCode();
 }

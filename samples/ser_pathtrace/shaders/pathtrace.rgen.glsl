@@ -173,13 +173,16 @@ vec3 pathTrace(Ray r, inout uint seed)
 
     // Setting up the material
     PbrMaterial pbrMat;
-    pbrMat.albedo    = materials.m[iInfo.materialID];
-    pbrMat.roughness = pc.roughness;
-    pbrMat.metallic  = pc.metallic;
-    pbrMat.normal    = payload.nrm;
-    pbrMat.emissive  = vec3(0.0F);
-    pbrMat.f0        = mix(vec3(0.04F), pbrMat.albedo.xyz, pc.metallic);
-
+    pbrMat.albedo             = materials.m[iInfo.materialID];
+    pbrMat.roughness          = pc.roughness;
+    pbrMat.metallic           = pc.metallic;
+    pbrMat.normal             = payload.nrm;
+    pbrMat.emissive           = vec3(0.0F);
+    pbrMat.f0                 = mix(vec3(0.04F), pbrMat.albedo.xyz, pc.metallic);
+    pbrMat.f90                = vec3(1, 1, 1);
+    pbrMat.eta                = 1.0;
+    pbrMat.specularWeight     = 1.0;  // product of specularFactor and specularTexture.a
+    pbrMat.transmissionFactor = 0;    // KHR_materials_transmission
 
     // Add dummy divergence
     // This sample shader is too simple to show the benefits of sorting
@@ -316,8 +319,8 @@ void main()
     // lower ceiling to see some more red ;)
     float high = float(maxDuration) * 0.50;
 
-    float val   = clamp(float(duration) / high, 0.0F, 1.0F);
-    vec3 heat_color = temperature(val);
+    float val        = clamp(float(duration) / high, 0.0F, 1.0F);
+    vec3  heat_color = temperature(val);
 
     // Wrap & SM visualization
     // heatcolor = temperature(float(gl_SMIDNV) / float(gl_SMCountNV - 1)) * float(gl_WarpIDNV) / float(gl_WarpsPerSMNV - 1);

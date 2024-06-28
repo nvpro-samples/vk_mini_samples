@@ -89,9 +89,14 @@ public:
   {
     m_app         = app;
     m_device      = m_app->getDevice();
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc       = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
-    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());              // Not all depth are supported
+    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+              .physicalDevice = app->getPhysicalDevice(),
+              .device         = app->getDevice(),
+              .instance       = app->getInstance(),
+    });                                                           // Allocator
+    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());  // Not all depth are supported
 
     createPipeline();
     createGeometryBuffers();
@@ -303,18 +308,10 @@ int main(int argc, char** argv)
   nvprintSetCallback([](int level, const char* fmt) { g_logger.addLog(level, "%s", fmt); });
   g_logger.setLogLevel(LOGBITS_ALL);
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
-  // Setting up the layout of the application
-  spec.dockSetup = [](ImGuiID viewportID) {
-    ImGuiID settingID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.5F, nullptr, &viewportID);
-    ImGui::DockBuilderDockWindow("Settings", settingID);
-    ImGuiID logID = ImGui::DockBuilderSplitNode(settingID, ImGuiDir_Down, 0.85F, nullptr, &settingID);
-    ImGui::DockBuilderDockWindow("Log", logID);
-  };
+  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
 
   // #debug_printf
@@ -339,11 +336,29 @@ int main(int argc, char** argv)
       .settingCount = static_cast<uint32_t>(std::size(settings)),
       .pSettings    = settings,
   };
-  spec.vkSetup.instanceCreateInfoExt = &layer_settings_create_info;
+  vkSetup.instanceCreateInfoExt = &layer_settings_create_info;
 
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
+  nvvkhl::ApplicationCreateInfo appInfo;
+  appInfo.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync = true;
+  appInfo.instance       = vkContext.m_instance;
+  appInfo.device         = vkContext.m_device;
+  appInfo.physicalDevice = vkContext.m_physicalDevice;
+  appInfo.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+
+  // Setting up the layout of the application
+  appInfo.dockSetup = [](ImGuiID viewportID) {
+    ImGuiID settingID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.5F, nullptr, &viewportID);
+    ImGui::DockBuilderDockWindow("Settings", settingID);
+    ImGuiID logID = ImGui::DockBuilderSplitNode(settingID, ImGuiDir_Down, 0.85F, nullptr, &settingID);
+    ImGui::DockBuilderDockWindow("Log", logID);
+  };
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   //------
   // #debug_printf
@@ -365,7 +380,7 @@ int main(int argc, char** argv)
   dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
   dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
   dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
-  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getContext()->m_instance, &dbg_messenger_create_info, nullptr, &dbg_messenger));
+  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getInstance(), &dbg_messenger_create_info, nullptr, &dbg_messenger));
 
   // #debug_printf : By uncommenting the next line, we would allow all messages to go through the
   // nvvk::Context::debugCallback. But the message wouldn't be clean as the one we made.
@@ -381,9 +396,10 @@ int main(int argc, char** argv)
   app->run();
 
   // #debug_printf : Removing the callback
-  vkDestroyDebugUtilsMessengerEXT(app->getContext()->m_instance, dbg_messenger, nullptr);
+  vkDestroyDebugUtilsMessengerEXT(app->getInstance(), dbg_messenger, nullptr);
 
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

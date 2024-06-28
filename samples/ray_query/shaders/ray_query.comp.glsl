@@ -52,7 +52,7 @@ layout(buffer_reference, scalar) readonly buffer Indices { uvec3 i[]; };
 layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
 layout(set = 0, binding = B_cameraInfo, scalar) uniform cameraInfo_ { CameraInfo cameraInfo; };
-layout(set = 0, binding = B_sceneDesc, scalar) uniform SceneDesc_ { SceneDescription sceneDesc; };
+layout(set = 0, binding = B_sceneDesc, scalar) uniform SceneDesc_ { SceneInfo sceneDesc; };
 
 // clang-format on
 
@@ -124,6 +124,18 @@ HitState getHitState(PrimMeshInfo pinfo, vec2 barycentricCoords, mat4x3 worldToO
   hit.geonrm                = worldGeoNormal;
   hit.nrm                   = worldNormal;
 
+  // ** Adjusting normal **
+
+  // Flip if back facing
+  if(dot(hit.geonrm, -worldRayDirection) < 0)  
+    hit.geonrm = -hit.geonrm;
+
+  // Make Normal and GeoNormal on the same side
+  if(dot(hit.geonrm, hit.nrm) < 0)  
+  {
+    hit.nrm = -hit.nrm;   
+  }
+
   // For low tessalated, avoid internal reflection
   vec3 r = reflect(normalize(worldRayDirection), hit.nrm);
   if(dot(r, hit.geonrm) < 0)
@@ -140,7 +152,7 @@ HitState getHitState(PrimMeshInfo pinfo, vec2 barycentricCoords, mat4x3 worldToO
 void traceRay(in rayQueryEXT rayQuery, Ray ray, inout HitPayload payload)
 {
   payload.hitT  = 0.0F;
-  uint rayFlags = gl_RayFlagsNoneEXT;
+  uint rayFlags = gl_RayFlagsNoneEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
   rayQueryInitializeEXT(rayQuery, topLevelAS, rayFlags, 0xFF, ray.origin, 0.0, ray.direction, INFINITE);
 
   while(rayQueryProceedEXT(rayQuery))
@@ -185,11 +197,12 @@ void traceRay(in rayQueryEXT rayQuery, Ray ray, inout HitPayload payload)
 //
 bool traceShadow(in rayQueryEXT rayQuery, Ray ray, float maxDist)
 {
-  uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+  uint rayFlags = gl_RayFlagsNoneEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
   rayQueryInitializeEXT(rayQuery, topLevelAS, rayFlags, 0xFF, ray.origin, 0.0, ray.direction, maxDist);
 
   while(rayQueryProceedEXT(rayQuery))
   {  // Force opaque, therefore, no intersection confirmation needed
+    rayQueryConfirmIntersectionEXT(rayQuery);
   }
 
   return (rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT);  // Is Hit ?
@@ -213,6 +226,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
 {
   vec3 radiance   = vec3(0.0F);
   vec3 throughput = vec3(1.0F);
+  bool isInside   = false;
 
   Materials   materials = Materials(sceneDesc.materialAddress);
   rayQueryEXT rayQuery;
@@ -243,13 +257,24 @@ vec3 pathTrace(Ray ray, inout uint seed)
 
     // Setting up the material
     PbrMaterial pbrMat;
-    Material    mat  = materials.m[iInfo.materialID];
-    pbrMat.albedo    = vec4(mat.albedo, 1);
-    pbrMat.roughness = mat.roughness;
-    pbrMat.metallic  = mat.metallic;
-    pbrMat.normal    = payload.nrm;
-    pbrMat.emissive  = vec3(0.0F);
-    pbrMat.f0        = mix(vec3(0.04F), pbrMat.albedo.xyz, mat.metallic);
+    Material    mat           = materials.m[iInfo.materialID];
+    pbrMat.albedo             = vec4(mat.albedo, 1);
+    pbrMat.roughness          = mat.roughness;
+    pbrMat.metallic           = mat.metallic;
+    pbrMat.normal             = payload.nrm;
+    pbrMat.emissive           = vec3(0.0F);
+    pbrMat.f0                 = mix(vec3(0.04F), pbrMat.albedo.xyz, mat.metallic);
+    pbrMat.f90                = vec3(1, 1, 1);
+    pbrMat.specularWeight     = 1.0;               // product of specularFactor and specularTexture.a
+    pbrMat.transmissionFactor = mat.transmission;  // KHR_materials_transmission
+    pbrMat.thicknessFactor    = 0;
+
+    float matIor = 1.1;
+
+    if(isInside) 
+      pbrMat.eta = matIor / 1.0;
+    else 
+      pbrMat.eta = 1.0 / matIor;
 
     vec3 contrib = vec3(0);
 
@@ -280,9 +305,13 @@ vec3 pathTrace(Ray ray, inout uint seed)
         break;  // Need to add the contribution ?
       }
 
+      if(sampleData.event_type == BSDF_EVENT_TRANSMISSION)
+        isInside = !isInside;
+
       throughput *= sampleData.bsdf_over_pdf;
-      ray.origin    = offsetRay(payload.pos, payload.geonrm);
-      ray.direction = sampleData.k2;
+      vec3 offsetDir = dot(sampleData.k2, payload.geonrm) < 0.0 ? -payload.geonrm : payload.geonrm;
+      ray.origin     = offsetRay(payload.pos, offsetDir);
+      ray.direction  = sampleData.k2;
     }
 
     // Russian-Roulette (minimizing live state)
@@ -314,8 +343,8 @@ vec3 samplePixel(inout uint seed, uvec2 launchID, ivec2 launchSize)
 {
   // Subpixel jitter: send the ray through a different position inside the pixel each time, to provide antialiasing.
   vec2 subpixel_jitter = pushConst.frame == 0 ? vec2(0.5f, 0.5f) : vec2(rand(seed), rand(seed));
-  vec2 clipCoords = (vec2(launchID) + subpixel_jitter) / vec2(launchSize) * 2.0 - 1.0;
-  vec4 viewCoords = cameraInfo.projInv * vec4(clipCoords, -1.0, 1.0);
+  vec2 clipCoords      = (vec2(launchID) + subpixel_jitter) / vec2(launchSize) * 2.0 - 1.0;
+  vec4 viewCoords      = cameraInfo.projInv * vec4(clipCoords, -1.0, 1.0);
   viewCoords /= viewCoords.w;
 
   const vec3 origin    = vec3(cameraInfo.viewInv[3].xyz);

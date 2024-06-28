@@ -32,13 +32,24 @@
 
 int main(int argc, char** argv)
 {
+  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync                 = true;
   spec.hasUndockableViewport = false;
   spec.width                 = 750;
   spec.height                = 400;
-  spec.vkSetup.setVersion(1, 3);
+  spec.instance              = vkContext.m_instance;
+  spec.device                = vkContext.m_device;
+  spec.physicalDevice        = vkContext.m_physicalDevice;
+  spec.queues                = {vkContext.m_queueGCT};
 
   // Setting up the layout of the application. Docking the NVML monitor in the center
   spec.dockSetup = [](ImGuiID viewportID) { ImGui::DockBuilderDockWindow("NVML Monitor", viewportID); };
@@ -49,6 +60,7 @@ int main(int argc, char** argv)
   // The NVML (GPU) monitor
   app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));
   app->run();
+  vkContext.deinit();
 
   return 0;
 }

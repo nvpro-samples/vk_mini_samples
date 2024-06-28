@@ -51,7 +51,7 @@ struct Material
   vec3  albedo;
   float roughness;
   float metallic;
-  float _pad0;
+  float transmission;
   float _pad1;
   float _pad2;
 };
@@ -79,7 +79,7 @@ struct InstanceInfo
   int  _pad2;
 };
 
-struct SceneDescription
+struct SceneInfo
 {
   uint64_t materialAddress;
   uint64_t instInfoAddress;

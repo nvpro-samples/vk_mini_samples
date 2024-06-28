@@ -85,9 +85,14 @@ public:
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);            // Debug utility
-    m_alloc  = std::make_unique<AllocDma>(m_app->getContext().get());  // Allocator
-    //m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);                                 // Debug utility
+    m_alloc  = std::make_unique<AllocDma>(m_app->getDevice(), m_app->getPhysicalDevice());  // Allocator
+    //m_alloc  = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+    //     .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+    //     .physicalDevice = app->getPhysicalDevice(),
+    //     .device         = app->getDevice(),
+    //     .instance       = app->getInstance(),
+    //});  // Allocator
     m_dset = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     createScene();
@@ -111,7 +116,7 @@ public:
       return;
 
     {  // Setting menu
-      using PE = ImGuiH::PropertyEditor;
+      namespace PE = ImGuiH::PropertyEditor;
 
       ImGui::Begin("Settings");
       ImGuiH::CameraWidget();
@@ -546,14 +551,25 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
+  nvvk::ContextCreateInfo vkSetup;
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
   // #SHADER_OBJECT
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  spec.vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
+  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
+  nvvkhl::ApplicationCreateInfo spec;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -576,6 +592,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

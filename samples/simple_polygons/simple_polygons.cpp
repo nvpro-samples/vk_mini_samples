@@ -49,6 +49,9 @@
 #include "nvvk/shaders_vk.hpp"
 #include "nvvk/images_vk.hpp"
 
+#include "vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
+
 namespace DH {
 using namespace glm;
 #include "shaders/device_host.h"  // Shared between host and device
@@ -65,6 +68,7 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 #include "_autogen/raster.frag.glsl.h"
 #include "_autogen/raster.vert.glsl.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
+
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 #endif  // USE_HLSL
 
@@ -82,8 +86,13 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     createScene();
@@ -445,10 +454,21 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  auto vkctx = std::make_unique<VkContext>(vkSetup);
+  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
+
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
+  spec.instance       = vkctx->getInstance();
+  spec.device         = vkctx->getDevice();
+  spec.physicalDevice = vkctx->getPhysicalDevice();
+  for(auto& q : vkctx->getQueueInfos())
+    spec.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
+
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

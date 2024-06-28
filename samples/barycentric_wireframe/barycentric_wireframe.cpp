@@ -106,8 +106,13 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     m_settings = presets[0];
@@ -138,7 +143,7 @@ public:
       const char* items[] = {"Sphere", "Cube", "Tetrahedron", "Octahedron", "Icosahedron", "Cone"};
       int         flag    = ImGuiSliderFlags_Logarithmic;
       float       maxT    = m_settings.screenSpace ? 10.0F : 0.3f;
-      using PE            = ImGuiH::PropertyEditor;
+      namespace PE        = ImGuiH::PropertyEditor;
       PE::begin();
       PE::entry("Geometry", [&] { return ImGui::Combo("##1", &m_currentObject, items, IM_ARRAYSIZE(items)); });
       PE::entry("Screen Space", [&] { return ImGui::Checkbox("##2", (bool*)&m_settings.screenSpace); });
@@ -413,17 +418,27 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
+  nvvk::ContextCreateInfo vkSetup{false};  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
   static VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeat{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, false, &baryFeat);
+  vkSetup.addDeviceExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, false, &baryFeat);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
+  nvvkhl::ApplicationCreateInfo appInfo;
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext.m_instance;
+  appInfo.device         = vkContext.m_device;
+  appInfo.physicalDevice = vkContext.m_physicalDevice;
+  appInfo.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
@@ -437,6 +452,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

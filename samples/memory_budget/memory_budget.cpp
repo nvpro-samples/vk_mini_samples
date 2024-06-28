@@ -163,14 +163,13 @@ public:
     // #MEMORY_BUDGET
     VmaAllocatorCreateInfo allocator_info = {
         .flags                       = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT,
-        .physicalDevice              = m_app->getContext()->m_physicalDevice,
-        .device                      = m_app->getContext()->m_device,
+        .physicalDevice              = m_app->getPhysicalDevice(),
+        .device                      = m_app->getDevice(),
         .preferredLargeHeapBlockSize = (128ull * 1024 * 1024),
-        .instance                    = m_app->getContext()->m_instance,
+        .instance                    = m_app->getInstance(),
         .vulkanApiVersion            = VK_API_VERSION_1_3,
     };
     m_alloc = std::make_unique<nvvkhl::AllocVma>(allocator_info);  // Allocator
-    //m_alloc = std::make_unique<AllocDma>(m_app->getContext().get());  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     createScene();
@@ -224,7 +223,7 @@ public:
     }
 
     {  // Setting menu
-      using PE = ImGuiH::PropertyEditor;
+      namespace PE = ImGuiH::PropertyEditor;
 
       ImGui::Begin("Settings");
       ImGuiH::CameraWidget();
@@ -429,8 +428,8 @@ private:
   void createMeshes(const std::vector<int>& toCreate)
   {
     LOGI("Creating %d meshes\n", static_cast<int>(toCreate.size()));
-    nvvk::CommandPool cmd_pool(m_device, m_app->getQueueT().familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                               m_app->getQueueT().queue);
+    nvvk::CommandPool cmd_pool(m_device, m_app->getQueue(2).familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                               m_app->getQueue(2).queue);
 
     float progressInc   = 1.0F / static_cast<float>(toCreate.size());
     m_settings.progress = 0.0F;
@@ -714,16 +713,28 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  // #MEMORY_BUDGET
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
+  vkSetup.addDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, false);
+  vkSetup.addInstanceExtension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, false);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
 
-  // #MEMORY_BUDGET
-  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  spec.vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
-  spec.vkSetup.addDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, false);
-  spec.vkSetup.addInstanceExtension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, false);
+
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -747,6 +758,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return g_benchmark->errorCode();
 }

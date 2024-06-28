@@ -28,7 +28,7 @@ class MicromapProcess
 {
 
 public:
-  MicromapProcess(nvvk::Context* ctx, nvvk::ResourceAllocator* allocator);
+  MicromapProcess(VkDevice device, VkPhysicalDevice physicalDevice, nvvk::ResourceAllocator* allocator);
   ~MicromapProcess();
 
   bool createMicromapData(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius, uint16_t micromapFormat);

@@ -35,14 +35,14 @@
 #include <array>
 #include "nvh/timesampler.hpp"
 
-MicromapProcess::MicromapProcess(nvvk::Context* ctx, nvvk::ResourceAllocator* allocator)
-    : m_device(ctx->m_device)
+MicromapProcess::MicromapProcess(VkDevice device, VkPhysicalDevice physicalDevice, nvvk::ResourceAllocator* allocator)
+    : m_device(device)
     , m_alloc(allocator)
 {
   // Requesting ray tracing properties
   VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
   prop2.pNext = &m_oppacityProps;
-  vkGetPhysicalDeviceProperties2(ctx->m_physicalDevice, &prop2);
+  vkGetPhysicalDeviceProperties2(physicalDevice, &prop2);
 }
 
 MicromapProcess::~MicromapProcess()
@@ -221,9 +221,9 @@ bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micro
   {
     // Fill in the pointers we didn't have at size query
     build_info.dstMicromap                 = m_micromap;
-    build_info.scratchData.deviceAddress   = nvvk::getBufferDeviceAddress(m_device, m_scratchBuffer.buffer);
-    build_info.data.deviceAddress          = nvvk::getBufferDeviceAddress(m_device, m_inputData.buffer);
-    build_info.triangleArray.deviceAddress = nvvk::getBufferDeviceAddress(m_device, m_trianglesBuffer.buffer);
+    build_info.scratchData.deviceAddress   = m_scratchBuffer.address;
+    build_info.data.deviceAddress          = m_inputData.address;
+    build_info.triangleArray.deviceAddress = m_trianglesBuffer.address;
     build_info.triangleArrayStride         = sizeof(VkMicromapTriangleEXT);
     vkCmdBuildMicromapsEXT(cmd, 1, &build_info);
   }

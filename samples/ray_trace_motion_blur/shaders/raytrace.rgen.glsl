@@ -89,7 +89,7 @@ void main()
   }
 
   // Tonemap
-  result = tonemapUncharted(result / pc.numSamples, 2.2);
+  result = tonemapUncharted2(result / pc.numSamples);
 
   imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(result, 1.F));
 }

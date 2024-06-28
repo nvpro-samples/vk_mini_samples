@@ -53,6 +53,8 @@
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_benchmark_parameters.hpp"
+#include "vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
 
 
 class SolidColor : public nvvkhl::IAppElement
@@ -67,7 +69,12 @@ public:
     m_app = app;
 
     // Create the Vulkan allocator (VMA)
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(app->getContext().get());
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
     m_dutil = std::make_unique<nvvk::DebugUtil>(m_app->getDevice());
     createTexture();
   };
@@ -189,10 +196,20 @@ private:
 
 int main(int argc, char** argv)
 {
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  auto vkctx = std::make_unique<VkContext>(vkSetup);
+  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
+  spec.instance       = vkctx->getInstance();
+  spec.device         = vkctx->getDevice();
+  spec.physicalDevice = vkctx->getPhysicalDevice();
+  for(auto& q : vkctx->getQueueInfos())
+    spec.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

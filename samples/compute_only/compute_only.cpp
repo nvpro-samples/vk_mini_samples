@@ -64,7 +64,12 @@ public:
   void onAttach(nvvkhl::Application* app) override
   {
     m_app   = app;
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(app->getContext().get());
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_app->getDevice());
     createShaderObjectAndLayout();
   }
@@ -177,20 +182,39 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vkSetup.setVersion(1, 3);
-  spec.useMenu = SHOW_MENU ? true : false;
+  nvvk::ContextCreateInfo vkSetup{false};  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  static VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeat{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
+  vkSetup.addDeviceExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, false, &baryFeat);
 
   // Required extra extensions
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  spec.vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
+  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
-  auto app  = std::make_unique<nvvkhl::Application>(spec);                       // Create the application
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
+  nvvkhl::ApplicationCreateInfo appInfo;
+  appInfo.name = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.useMenu = SHOW_MENU ? true : false;
+  appInfo.instance       = vkContext.m_instance;
+  appInfo.device         = vkContext.m_device;
+  appInfo.physicalDevice = vkContext.m_physicalDevice;
+  appInfo.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+
+
+  auto app  = std::make_unique<nvvkhl::Application>(appInfo);                       // Create the application
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);  // Create the test framework
   app->addElement(test);                                                         // Add the test element (--test ...)
   app->addElement(std::make_shared<ComputeOnlyElement>());                       // Add our sample to the application
   app->run();  // Loop infinitely, and call IAppElement virtual functions at each frame
+
+  app.reset();  // Clean up
+  vkContext.deinit();
+
   return test->errorCode();
 }

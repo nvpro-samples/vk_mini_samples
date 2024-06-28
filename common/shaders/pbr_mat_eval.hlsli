@@ -42,6 +42,9 @@
 static const float g_min_reflectance = 0.04F;
 //-----------------------------------------------------------------------
 
+#ifndef NO_TEXTURES
+#define USE_TEXTURES
+#endif
 
 // sRGB to linear approximation, see http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
 float4 srgbToLinear(in float4 sRgb)
@@ -56,11 +59,13 @@ float4 srgbToLinear(in float4 sRgb)
 // From the incoming material return the material for evaluating PBR
 //-----------------------------------------------------------------------
 PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
   in Sampler2D texturesMap[], 
 #else
   in Texture2D texturesMap[],
   in SamplerState samplers,
+#endif
 #endif
   in float3 normal,
   in float3 tangent,
@@ -76,18 +81,22 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
   float4 baseColor = float4(0.0F, 0.0F, 0.0F, 1.0F);
 
   // Normal Map
+  #ifdef USE_TEXTURES
   if(material.normalTexture > -1)
   {
     float3x3 tbn = float3x3(tangent, bitangent, normal);
+    #ifdef USE_TEXTURES
 #ifdef __SLANG__
     float3 normal_vector = texturesMap[material.normalTexture].Sample(texCoord).xyz;
 #else
     float3 normal_vector = texturesMap[material.normalTexture].SampleLevel(samplers, texCoord.xy, 0).xyz;
 #endif
+#endif
     normal_vector = normal_vector * 2.0F - 1.0F;
     normal_vector *= float3(material.normalTextureScale, material.normalTextureScale, 1.0F);
     normal = normalize(mul(normal_vector, tbn));
   }
+  #endif
 
 
   // Metallic-Roughness
@@ -97,6 +106,7 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
     if(material.pbrMetallicRoughnessTexture > -1)
     {
       // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
       float4 mr_sample = texturesMap[material.pbrMetallicRoughnessTexture].Sample(texCoord);
 #else
@@ -104,16 +114,19 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
 #endif
       perceptual_roughness *= mr_sample.g;
       metallic *= mr_sample.b;
+#endif
     }
 
     // The albedo may be defined from a base texture or a flat color
     baseColor = material.pbrBaseColorFactor;
     if(material.pbrBaseColorTexture > -1)
     {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
       baseColor *= texturesMap[material.pbrBaseColorTexture].Sample(texCoord);
 #else
       baseColor *= texturesMap[material.pbrBaseColorTexture].SampleLevel(samplers, texCoord.xy, 0);
+#endif
 #endif
     }
     float3 specular_color = lerp(float3(g_min_reflectance, g_min_reflectance, g_min_reflectance), baseColor.xyz, metallic);
@@ -128,10 +141,12 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
   float3 emissive = material.emissiveFactor;
   if(material.emissiveTexture > -1)
   {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
     emissive *= float3(texturesMap[material.emissiveTexture].Sample(texCoord).xyz);
 #else
     emissive *= float3(texturesMap[material.emissiveTexture].SampleLevel(samplers, texCoord.xy, 0).xyz);
+#endif
 #endif
   }
   
@@ -140,19 +155,23 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
   float4 specularColorTexture = float4(1.0F, 1.0F, 1.0F, 1.0F);
   if(material.specularColorTexture > -1)
   {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
     specularColorTexture = texturesMap[material.specularColorTexture].SampleLevel(texCoord, 0);
 #else
     specularColorTexture = texturesMap[material.specularColorTexture].SampleLevel(samplers, texCoord.xy, 0);
 #endif
+#endif
   }
   float specularTexture = 1.0F;
   if(material.specularTexture > -1)
   {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
     specularTexture = texturesMap[material.specularTexture].SampleLevel(texCoord, 0).a;
 #else
     specularTexture = texturesMap[material.specularTexture].SampleLevel(samplers, texCoord.xy, 0).a;
+#endif
 #endif
   }
   
@@ -192,10 +211,12 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
   pbrMat.transmissionFactor = material.transmissionFactor;
   if(material.transmissionTexture > -1)
   {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
     pbrMat.transmissionFactor *= texturesMap[material.transmissionTexture].SampleLevel(texCoord, 0).r;
 #else
     pbrMat.transmissionFactor *= texturesMap[material.transmissionTexture].SampleLevel(samplers, texCoord.xy, 0).r;
+#endif
 #endif
   }
 
@@ -212,18 +233,22 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
   pbrMat.clearcoatRoughness = material.clearcoatRoughness;
   if(material.clearcoatTexture > -1)
   {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
     pbrMat.clearcoatFactor *= texturesMap[material.clearcoatTexture].SampleLevel(texCoord, 0).r;
 #else
     pbrMat.clearcoatFactor *= texturesMap[material.clearcoatTexture].SampleLevel(samplers, texCoord.xy, 0).r;
 #endif
+#endif
   }
   if(material.clearcoatRoughnessTexture > -1)
   {
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
     pbrMat.clearcoatRoughness *= texturesMap[material.clearcoatRoughnessTexture].SampleLevel(texCoord, 0).g;
 #else
     pbrMat.clearcoatRoughness *= texturesMap[material.clearcoatRoughnessTexture].SampleLevel(samplers, texCoord.xy, 0).g;
+#endif
 #endif
   }
   pbrMat.clearcoatRoughness = max(pbrMat.clearcoatRoughness, 0.001);
@@ -232,11 +257,13 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
 }
 
 PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
   in Sampler2D texturesMap[], 
 #else
   in Texture2D texturesMap[],
   in SamplerState samplers,
+#endif
 #endif
   in float3 normal,
   in float3 tangent,
@@ -244,12 +271,14 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
   in float2 texCoord)
 {
   return evaluateMaterial(material,
+#ifdef USE_TEXTURES
 #ifdef __SLANG__
   texturesMap, 
 #else
   texturesMap,
   samplers,
 #endif 
+#endif
   normal, tangent, bitangent, texCoord, false);
 }
 

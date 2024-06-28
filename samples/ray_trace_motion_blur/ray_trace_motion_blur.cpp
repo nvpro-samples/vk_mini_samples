@@ -38,7 +38,6 @@
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
-#include "nvvk/raytraceKHR_vk.hpp"
 #include "nvvk/sbtwrapper_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
@@ -49,6 +48,7 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/shaders/dh_sky.h"
+#include "nvvk/acceleration_structures.hpp"
 
 #include "shaders/dh_bindings.h"
 
@@ -101,8 +101,13 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
     m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Requesting ray tracing properties
@@ -111,8 +116,7 @@ public:
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
     // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
-    const uint32_t gct_queue_index = m_app->getContext()->m_queueGCT.familyIndex;
-    m_rtBuilder.setup(m_device, m_alloc.get(), gct_queue_index);
+    const uint32_t gct_queue_index = m_app->getQueue(0).familyIndex;
     m_sbt.setup(m_device, gct_queue_index, m_alloc.get(), m_rtProperties);
 
     // Create resources
@@ -285,7 +289,7 @@ private:
   //--------------------------------------------------------------------------------------------------
   // Converting a PrimitiveMesh as input for BLAS
   //
-  nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const MatPrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
+  nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const MatPrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
   {
     const auto max_primitive_count = static_cast<uint32_t>(prim.triangles.size());
 
@@ -312,11 +316,11 @@ private:
     offset.transformOffset = 0;
 
     // Our BLAS is made from only one geometry, but could be made of many geometries
-    nvvk::RaytracingBuilderKHR::BlasInput input;
-    input.asGeometry.emplace_back(as_geom);
-    input.asBuildOffsetInfo.emplace_back(offset);
+    nvvk::AccelerationStructureGeometryInfo result;
+    result.geometry  = as_geom;
+    result.rangeInfo = offset;
 
-    return input;
+    return result;
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -326,35 +330,69 @@ private:
   {
     nvh::ScopedTimer st(__FUNCTION__);
 
-    // BLAS - Storing each primitive in a geometry
-    std::vector<nvvk::RaytracingBuilderKHR::BlasInput> all_blas;
-    all_blas.reserve(m_meshes.size());
+    std::vector<nvvk::AccelerationStructureBuildData> blasBuildData;
 
+    // BLAS - Storing each primitive in a geometry
+    //std::vector<nvvk::RaytracingBuilderKHR::BlasInput> all_blas;
+    //all_blas.reserve(m_meshes.size());
+    blasBuildData.resize(m_meshes.size());
+    m_blas.resize(m_meshes.size());
+    uint32_t meshIndex = 0;
+
+    VkDeviceSize maxScratchSize{0};
     // Adding Cube and Plane
     for(uint32_t p_idx = 0; p_idx < 2; p_idx++)
     {
-      const VkDeviceAddress vertex_address = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].vertices.buffer);
-      const VkDeviceAddress index_address  = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].indices.buffer);
-      const nvvk::RaytracingBuilderKHR::BlasInput geo = primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address);
-      all_blas.push_back({geo});
+      const VkDeviceAddress vertex_address = m_bMeshes[p_idx].vertices.address;
+      const VkDeviceAddress index_address  = m_bMeshes[p_idx].indices.address;
+      const nvvk::AccelerationStructureGeometryInfo geo = primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address);
+      blasBuildData[meshIndex].asType = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      blasBuildData[meshIndex].addGeometry(geo);
+      auto sizeInfo = blasBuildData[meshIndex].finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+      maxScratchSize = std::max(maxScratchSize, sizeInfo.buildScratchSize);
+      //all_blas.push_back({geo});
+      meshIndex++;
     }
 
-    {                                            // #NV_Motion_blur
-      uint32_t              p_idx          = 0;  // Using the original Cube
-      const VkDeviceAddress vertex_address = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].vertices.buffer);
-      const VkDeviceAddress index_address  = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].indices.buffer);
-      nvvk::RaytracingBuilderKHR::BlasInput geo = primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address);
+    VkAccelerationStructureGeometryMotionTrianglesDataNV motionTriangles{
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV};
+    motionTriangles.vertexData.deviceAddress = m_bMeshes[2].vertices.address;  // cube_modif
 
+    {                                                              // #NV_Motion_blur
+      uint32_t                                p_idx          = 0;  // Using the original Cube
+      const VkDeviceAddress                   vertex_address = m_bMeshes[p_idx].vertices.address;
+      const VkDeviceAddress                   index_address  = m_bMeshes[p_idx].indices.address;
+      nvvk::AccelerationStructureGeometryInfo geo = primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address);
+      geo.geometry.geometry.triangles.pNext       = &motionTriangles;
+
+      blasBuildData[meshIndex].asType = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      blasBuildData[meshIndex].addGeometry(geo);
+      auto sizeInfo = blasBuildData[meshIndex].finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_MOTION_BIT_NV);
+      maxScratchSize = std::max(maxScratchSize, sizeInfo.buildScratchSize);
+      meshIndex++;
       // Add the modified geometry
-      VkAccelerationStructureGeometryMotionTrianglesDataNV motionTriangles{
-          VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV};
-      motionTriangles.vertexData.deviceAddress = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[2].vertices.buffer);  // cube_modif
-      geo.asGeometry[0].geometry.triangles.pNext = &motionTriangles;
-      geo.flags                                  = VK_BUILD_ACCELERATION_STRUCTURE_MOTION_BIT_NV;
-      all_blas.push_back({geo});
+      //
+      //geo.asGeometry[0].geometry.triangles.pNext = &motionTriangles;
+      //geo.flags                                  = VK_BUILD_ACCELERATION_STRUCTURE_MOTION_BIT_NV;
+      //all_blas.push_back({geo});
     }
 
-    m_rtBuilder.buildBlas(all_blas, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+    nvvk::Buffer scratchBuffer =
+        m_alloc->createBuffer(maxScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    // Create the acceleration structures
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    {
+      for(size_t p_idx = 0; p_idx < blasBuildData.size(); p_idx++)
+      {
+        m_blas[p_idx] = m_alloc->createAcceleration(blasBuildData[p_idx].makeCreateInfo());
+        blasBuildData[p_idx].cmdBuildAccelerationStructure(cmd, m_blas[p_idx].accel, scratchBuffer.address);
+      }
+    }
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
+
+    m_alloc->destroy(scratchBuffer);
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -375,6 +413,8 @@ private:
     std::vector<VkAccelerationStructureMotionInstanceNVPad> tlas;
     tlas.reserve(m_instances.size());
 
+    nvvk::AccelerationStructureBuildData tlasBuildData{VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR};
+
     // #NV_Motion_blur
     // CUBE-0 : Matrix transformation animation
     {
@@ -386,7 +426,7 @@ private:
       data.transformT0                            = nvvk::toTransformMatrixKHR(matT0);
       data.transformT1                            = nvvk::toTransformMatrixKHR(matT1);
       data.instanceCustomIndex                    = 0;  // gl_InstanceCustomIndexEXT
-      data.accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(m_instances[0].mesh);
+      data.accelerationStructureReference         = m_blas[m_instances[0].mesh].address;
       data.instanceShaderBindingTableRecordOffset = 0;  // We will use the same hit group for all objects
       data.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
       data.mask                                   = 0xFF;
@@ -423,7 +463,7 @@ private:
       data.transformT0                            = matT0;
       data.transformT1                            = matT1;
       data.instanceCustomIndex                    = 0;  // gl_InstanceCustomIndexEXT
-      data.accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(m_instances[1].mesh);
+      data.accelerationStructureReference         = m_blas[m_instances[1].mesh].address;
       data.instanceShaderBindingTableRecordOffset = 0;  // We will use the same hit group for all objects
       data.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
       data.mask                                   = 0xFF;
@@ -433,7 +473,7 @@ private:
       tlas.emplace_back(rayInst);
     }
 
-
+    // Static instances: cube (morph) and plane
     const VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
     for(int i = 2; i < (int)m_instances.size(); i++)
     {
@@ -441,7 +481,7 @@ private:
       VkAccelerationStructureInstanceKHR ray_inst{};
       ray_inst.transform           = nvvk::toTransformMatrixKHR(node.localMatrix());  // Position of the instance
       ray_inst.instanceCustomIndex = node.mesh;                                       // gl_InstanceCustomIndexEXT
-      ray_inst.accelerationStructureReference         = m_rtBuilder.getBlasDeviceAddress(node.mesh);
+      ray_inst.accelerationStructureReference         = m_blas[node.mesh].address;
       ray_inst.instanceShaderBindingTableRecordOffset = 0;  // We will use the same hit group for all objects
       ray_inst.flags                                  = flags;
       ray_inst.mask                                   = 0xFF;
@@ -451,7 +491,40 @@ private:
       tlas.emplace_back(rayInst);
     }
 
-    m_rtBuilder.buildTlas(tlas, VK_BUILD_ACCELERATION_STRUCTURE_MOTION_BIT_NV, false /*update*/, true /*motion*/);
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    // Create the instances buffer, add a barrier to ensure the data is copied before the TLAS build
+    nvvk::Buffer instancesBuffer = m_alloc->createBuffer(cmd, tlas,
+                                                         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                                             | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+
+
+    nvvk::AccelerationStructureGeometryInfo geometryInfo =
+        tlasBuildData.makeInstanceGeometry(tlas.size(), instancesBuffer.address);
+    tlasBuildData.addGeometry(geometryInfo);
+    // Get the size of the TLAS
+    auto sizeInfo = tlasBuildData.finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_MOTION_BIT_NV);
+
+    // Create the scratch buffer
+    nvvk::Buffer scratchBuffer = m_alloc->createBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                                                                      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+    // Create the TLAS with motionblur support
+    VkAccelerationStructureCreateInfoKHR createInfo = tlasBuildData.makeCreateInfo();
+#ifdef VK_NV_ray_tracing_motion_blur
+    VkAccelerationStructureMotionInfoNV motionInfo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MOTION_INFO_NV};
+    motionInfo.maxInstances = uint32_t(tlas.size());
+    createInfo.createFlags  = VK_ACCELERATION_STRUCTURE_CREATE_MOTION_BIT_NV;
+    createInfo.pNext        = &motionInfo;
+#endif
+
+    m_tlas = m_alloc->createAcceleration(createInfo);
+    tlasBuildData.cmdBuildAccelerationStructure(cmd, m_tlas.accel, scratchBuffer.address);
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
+    m_alloc->destroy(scratchBuffer);
+    m_alloc->destroy(instancesBuffer);
+    m_alloc->finalizeAndReleaseStaging();
   }
 
 
@@ -585,7 +658,7 @@ private:
   void writeRtDesc()
   {
     // Write to descriptors
-    VkAccelerationStructureKHR tlas = m_rtBuilder.getAccelerationStructure();
+    VkAccelerationStructureKHR tlas = m_tlas.accel;
     VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     desc_as_info.accelerationStructureCount = 1;
     desc_as_info.pAccelerationStructures    = &tlas;
@@ -641,7 +714,10 @@ private:
     m_rtPipe.destroy(m_device);
 
     m_sbt.destroy();
-    m_rtBuilder.destroy();
+
+    for(auto& b : m_blas)
+      m_alloc->destroy(b);
+    m_alloc->destroy(m_tlas);
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -688,9 +764,11 @@ private:
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  nvvk::SBTWrapper           m_sbt;  // Shading binding table wrapper
-  nvvk::RaytracingBuilderKHR m_rtBuilder;
-  nvvkhl::PipelineContainer  m_rtPipe;
+  nvvk::SBTWrapper          m_sbt;  // Shading binding table wrapper
+  nvvkhl::PipelineContainer m_rtPipe;
+
+  std::vector<nvvk::AccelKHR> m_blas;
+  nvvk::AccelKHR              m_tlas;
 };
 
 
@@ -699,32 +777,42 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
-
-  spec.vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+  nvvk::ContextCreateInfo vkSetup;
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
   // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accel_feature);  // To build acceleration structures
+  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accel_feature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
-  spec.vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
+  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
+  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
 
   // #NV_Motion_blur
   VkPhysicalDeviceRayTracingMotionBlurFeaturesNV rtMotionBlurFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MOTION_BLUR_FEATURES_NV};
-  spec.vkSetup.addDeviceExtension(VK_NV_RAY_TRACING_MOTION_BLUR_EXTENSION_NAME, true, &rtMotionBlurFeatures);  // Required for motion blur
+  vkSetup.addDeviceExtension(VK_NV_RAY_TRACING_MOTION_BLUR_EXTENSION_NAME, true, &rtMotionBlurFeatures);  // Required for motion blur
 
 #if USE_HLSL  // DXC is automatically adding the extension
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
 #endif  // USE_HLSL
 
-  // #NV_Motion_blur
-  spec.ignoreDbgMessages.push_back(0xf69d66f5);  // unexpected VkStructureType VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
 
+  nvvkhl::ApplicationCreateInfo spec;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+
+
+  // #NV_Motion_blur
+  vkContext.ignoreDebugMessage(0xf69d66f5);  // unexpected VkStructureType VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV
+  
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
 
@@ -749,6 +837,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

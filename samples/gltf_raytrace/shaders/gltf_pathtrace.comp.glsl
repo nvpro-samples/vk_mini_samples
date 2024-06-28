@@ -46,12 +46,11 @@ layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
 #include "nvvkhl/shaders/random.glsl"
 #include "nvvkhl/shaders/ray_util.glsl"
 
+#include "nvvkhl/shaders/vertex_accessor.h"
+
 
 // clang-format off
-layout(buffer_reference, scalar) readonly buffer PrimMeshInfoBuf { PrimMeshInfo i[]; };
 layout(buffer_reference, scalar) readonly buffer GltfMaterialBuf { GltfShadeMaterial m[]; };
-layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };
-layout(buffer_reference, scalar) readonly buffer Indices { uvec3 i[]; };
 
 layout(set = 0, binding = B_tlas)               uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_outImage, rgba32f)  uniform image2D           image;
@@ -85,69 +84,79 @@ struct HitState
   vec2 uv;
   vec3 tangent;
   vec3 bitangent;
+  vec4 color;
 };
 
 // Payload for the path tracer
 struct HitPayload
 {
   float    hitT;
-  int      meshID;
+  int      rnodeID;
+  int      rprimID;
   HitState hitState;
 };
 
+
 //-----------------------------------------------------------------------
 // Return hit information: position, normal, geonormal, uv, tangent, bitangent
-HitState getHitState(PrimMeshInfo pinfo, vec2 barycentricCoords, mat4x3 worldToObject, mat4x3 objectToWorld, int primitiveID, vec3 worldRayDirection)
+HitState getHitState(RenderPrimitive renderPrim, vec2 barycentricCoords, mat4x3 worldToObject, mat4x3 objectToWorld, int triangleID, vec3 worldRayDirection)
 {
   HitState hit;
-
-  // Vextex and indices of the primitive
-  Vertices vertices = Vertices(pinfo.vertexAddress);
-  Indices  indices  = Indices(pinfo.indexAddress);
 
   // Barycentric coordinate on the triangle
   const vec3 barycentrics = vec3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
 
   // Getting the 3 indices of the triangle (local)
-  uvec3 triangleIndex = indices.i[primitiveID];
-
-  // All vertex attributes of the triangle.
-  Vertex v0 = vertices.v[triangleIndex.x];
-  Vertex v1 = vertices.v[triangleIndex.y];
-  Vertex v2 = vertices.v[triangleIndex.z];
+  uvec3 triangleIndex = getTriangleIndices(renderPrim, triangleID);
 
   // Position
-  const vec3 pos0     = v0.position.xyz;
-  const vec3 pos1     = v1.position.xyz;
-  const vec3 pos2     = v2.position.xyz;
-  const vec3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
+  vec3 pos[3];
+  pos[0]              = getVertexPosition(renderPrim, triangleIndex.x);
+  pos[1]              = getVertexPosition(renderPrim, triangleIndex.y);
+  pos[2]              = getVertexPosition(renderPrim, triangleIndex.z);
+  const vec3 position = mixBary(pos[0], pos[1], pos[2], barycentrics);
   hit.pos             = vec3(objectToWorld * vec4(position, 1.0));
 
   // Normal
-  const vec3 nrm0           = v0.normal.xyz;
-  const vec3 nrm1           = v1.normal.xyz;
-  const vec3 nrm2           = v2.normal.xyz;
-  const vec3 normal         = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
-  vec3       worldNormal    = normalize(vec3(normal * worldToObject));
-  const vec3 geoNormal      = normalize(cross(pos1 - pos0, pos2 - pos0));
+  const vec3 geoNormal      = normalize(cross(pos[1] - pos[0], pos[2] - pos[0]));
   vec3       worldGeoNormal = normalize(vec3(geoNormal * worldToObject));
-  hit.geonrm                = worldGeoNormal;
-  hit.nrm                   = worldNormal;
+  vec3       normal         = geoNormal;
+  if(hasVertexNormal(renderPrim))
+    normal = getInterpolatedVertexNormal(renderPrim, triangleIndex, barycentrics);
+  vec3 worldNormal = normalize(vec3(normal * worldToObject));
+  hit.geonrm       = worldGeoNormal;
+  hit.nrm          = worldNormal;
+
+  // Color
+  hit.color = vec4(1, 1, 1, 1);
+  if(hasVertexColor(renderPrim))
+    hit.color = getInterpolatedVertexColor(renderPrim, triangleIndex, barycentrics);
 
   // TexCoord
-  const vec2 uv0 = vec2(v0.position.w, v0.normal.w);
-  const vec2 uv1 = vec2(v1.position.w, v1.normal.w);
-  const vec2 uv2 = vec2(v2.position.w, v2.normal.w);
-  hit.uv         = mixBary(uv0, uv1, uv2, barycentrics);
+  hit.uv = vec2(0, 0);
+  if(hasVertexTexCoord0(renderPrim))
+    hit.uv = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
 
   // Tangent - Bitangent
-  const vec4 tng0 = vec4(v0.tangent);
-  const vec4 tng1 = vec4(v1.tangent);
-  const vec4 tng2 = vec4(v2.tangent);
-  hit.tangent     = normalize(mixBary(tng0.xyz, tng1.xyz, tng2.xyz, barycentrics));
-  hit.tangent     = vec3(objectToWorld * vec4(hit.tangent, 0.0));
-  hit.tangent     = normalize(hit.tangent - hit.nrm * dot(hit.nrm, hit.tangent));
-  hit.bitangent   = cross(hit.nrm, hit.tangent) * tng0.w;
+  vec4 tng[3];
+  if(hasVertexTangent(renderPrim))
+  {
+    tng[0] = getVertexTangent(renderPrim, triangleIndex.x);
+    tng[1] = getVertexTangent(renderPrim, triangleIndex.y);
+    tng[2] = getVertexTangent(renderPrim, triangleIndex.z);
+  }
+  else
+  {
+    vec4 t = makeFastTangent(normal);
+    tng[0] = t;
+    tng[1] = t;
+    tng[2] = t;
+  }
+
+  hit.tangent   = normalize(mixBary(tng[0].xyz, tng[1].xyz, tng[2].xyz, barycentrics));
+  hit.tangent   = vec3(objectToWorld * vec4(hit.tangent, 0.0));
+  hit.tangent   = normalize(hit.tangent - hit.nrm * dot(hit.nrm, hit.tangent));
+  hit.bitangent = cross(hit.nrm, hit.tangent) * tng[0].w;
 
   // Adjusting normal
   const vec3 V = (-worldRayDirection);
@@ -213,14 +222,16 @@ void sampleLights(in vec3 pos, vec3 normal, in vec3 worldRayDirection, inout uin
 // Return true if it is opaque
 bool hitTest(in rayQueryEXT rayQuery, inout uint seed)
 {
-  int meshID      = rayQueryGetIntersectionInstanceCustomIndexEXT(rayQuery, false);
-  int primitiveID = rayQueryGetIntersectionPrimitiveIndexEXT(rayQuery, false);
+  int rnodeID    = rayQueryGetIntersectionInstanceIdEXT(rayQuery, false);
+  int rprimID    = rayQueryGetIntersectionInstanceCustomIndexEXT(rayQuery, false);
+  int triangleID = rayQueryGetIntersectionPrimitiveIndexEXT(rayQuery, false);
 
   // Retrieve the Primitive mesh buffer information
-  PrimMeshInfo pInfo = PrimMeshInfoBuf(sceneDesc.primInfoAddress).i[meshID];
+  RenderNode      renderNode = RenderNodeBuf(sceneDesc.renderNodeAddress)._[rnodeID];
+  RenderPrimitive renderPrim = RenderPrimitiveBuf(sceneDesc.renderPrimitiveAddress)._[rprimID];
 
   // Find the material of the primitive
-  const uint        matIndex  = max(0, pInfo.materialIndex);                 // material of primitive mesh
+  const uint        matIndex  = max(0, renderNode.materialID);               // material of primitive mesh
   GltfMaterialBuf   materials = GltfMaterialBuf(sceneDesc.materialAddress);  // Buffer of materials
   GltfShadeMaterial material  = materials.m[matIndex];
   if(material.alphaMode == ALPHA_OPAQUE)
@@ -229,28 +240,16 @@ bool hitTest(in rayQueryEXT rayQuery, inout uint seed)
   float baseColorAlpha = material.pbrBaseColorFactor.a;
   if(material.pbrBaseColorTexture > -1)
   {
-    // Primitive buffer addresses
-    Vertices vertices = Vertices(pInfo.vertexAddress);
-    Indices  indices  = Indices(pInfo.indexAddress);
-
     // Getting the 3 indices of the triangle (local)
-    uvec3 triangleIndex = indices.i[primitiveID];
-
-    // All vertex attributes of the triangle.
-    Vertex v0 = vertices.v[triangleIndex.x];
-    Vertex v1 = vertices.v[triangleIndex.y];
-    Vertex v2 = vertices.v[triangleIndex.z];
+    uvec3 triangleIndex = getTriangleIndices(renderPrim, triangleID);  //
 
     // Get the texture coordinate
     vec2       bary         = rayQueryGetIntersectionBarycentricsEXT(rayQuery, false);
     const vec3 barycentrics = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    const vec2 uv0          = vec2(v0.position.w, v0.normal.w);
-    const vec2 uv1          = vec2(v1.position.w, v1.normal.w);
-    const vec2 uv2          = vec2(v2.position.w, v2.normal.w);
-    vec2       texcoord0    = mixBary(uv0, uv1, uv2, barycentrics);
+    vec2       texcoord0    = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
 
     // Uv Transform
-    //texcoord0 = (vec4(texcoord0.xy, 1, 1) * material.uvTransform).xy;
+    texcoord0 = (vec3(texcoord0.xy, 1) * material.uvTransform).xy;
 
     baseColorAlpha *= texture(texturesMap[nonuniformEXT(material.pbrBaseColorTexture)], texcoord0).a;
   }
@@ -280,7 +279,7 @@ void traceRay(in rayQueryEXT rayQuery, Ray ray, inout HitPayload payload, inout 
 {
   payload.hitT = INFINITE;  // Default when not hitting anything
 
-  uint rayFlags = gl_RayFlagsNoneEXT;
+  uint rayFlags = gl_RayFlagsNoneEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
   rayQueryInitializeEXT(rayQuery, topLevelAS, rayFlags, 0xFF, ray.origin, 0.0, ray.direction, INFINITE);
   while(rayQueryProceedEXT(rayQuery))
   {
@@ -293,21 +292,22 @@ void traceRay(in rayQueryEXT rayQuery, Ray ray, inout HitPayload payload, inout 
   if(rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT)
   {
     vec2   barycentricCoords = rayQueryGetIntersectionBarycentricsEXT(rayQuery, true);
-    int    meshID            = rayQueryGetIntersectionInstanceCustomIndexEXT(rayQuery, true);
-    int    primitiveID       = rayQueryGetIntersectionPrimitiveIndexEXT(rayQuery, true);
+    int    rnodeID           = rayQueryGetIntersectionInstanceIdEXT(rayQuery, true);
+    int    rprimID           = rayQueryGetIntersectionInstanceCustomIndexEXT(rayQuery, true);
+    int    triangleID        = rayQueryGetIntersectionPrimitiveIndexEXT(rayQuery, true);
     mat4x3 worldToObject     = rayQueryGetIntersectionWorldToObjectEXT(rayQuery, true);
     mat4x3 objectToWorld     = rayQueryGetIntersectionObjectToWorldEXT(rayQuery, true);
     float  hitT              = rayQueryGetIntersectionTEXT(rayQuery, true);
     vec3   worldRayDirection = rayQueryGetWorldRayDirectionEXT(rayQuery);
 
     // Retrieve the Primitive mesh buffer information
-    PrimMeshInfoBuf meshes = PrimMeshInfoBuf(sceneDesc.primInfoAddress);
-    PrimMeshInfo    pinfo  = meshes.i[meshID];
+    RenderPrimitive renderPrim = RenderPrimitiveBuf(sceneDesc.renderPrimitiveAddress)._[rprimID];
 
-    HitState hit = getHitState(pinfo, barycentricCoords, worldToObject, objectToWorld, primitiveID, worldRayDirection);
+    HitState hit = getHitState(renderPrim, barycentricCoords, worldToObject, objectToWorld, triangleID, worldRayDirection);
 
     payload.hitT     = hitT;
-    payload.meshID   = meshID;
+    payload.rnodeID  = rnodeID;
+    payload.rprimID  = rprimID;
     payload.hitState = hit;
   }
 }
@@ -317,7 +317,7 @@ void traceRay(in rayQueryEXT rayQuery, Ray ray, inout HitPayload payload, inout 
 //
 bool traceShadow(in rayQueryEXT rayQuery, Ray ray, float maxDist, inout uint seed)
 {
-  uint rayFlags = gl_RayFlagsNoneEXT;  //  gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+  uint rayFlags = gl_RayFlagsNoneEXT | gl_RayFlagsCullBackFacingTrianglesEXT;  //  gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
   rayQueryInitializeEXT(rayQuery, topLevelAS, rayFlags, 0xFF, ray.origin, 0.0, ray.direction, maxDist);
 
   while(rayQueryProceedEXT(rayQuery))
@@ -340,10 +340,12 @@ vec3 pathTrace(Ray ray, inout uint seed)
   bool isInside   = false;
 
   // Setting up the material
-  GltfMaterialBuf materials = GltfMaterialBuf(sceneDesc.materialAddress);  // Buffer of materials
-  PrimMeshInfoBuf meshes    = PrimMeshInfoBuf(sceneDesc.primInfoAddress);  // Buffer of meshes
-  rayQueryEXT     rayQuery;
-  HitPayload      payload;
+  GltfMaterialBuf    materials   = GltfMaterialBuf(sceneDesc.materialAddress);            // Buffer of materials
+  RenderNodeBuf      renderNodes = RenderNodeBuf(sceneDesc.renderNodeAddress);            // Buffer of instances
+  RenderPrimitiveBuf renderPrims = RenderPrimitiveBuf(sceneDesc.renderPrimitiveAddress);  // Buffer of meshes
+
+  rayQueryEXT rayQuery;
+  HitPayload  payload;
 
   for(int depth = 0; depth < pushConst.maxDepth; depth++)
   {
@@ -360,10 +362,15 @@ vec3 pathTrace(Ray ray, inout uint seed)
     HitState hit = payload.hitState;
 
     // Setting up the material
-    PrimMeshInfo      pInfo         = meshes.i[payload.meshID];     // Primitive information
-    int               materialIndex = max(0, pInfo.materialIndex);  // Material ID of hit mesh
-    GltfShadeMaterial material      = materials.m[materialIndex];   // Material of the hit object
-    PbrMaterial       pbrMat        = evaluateMaterial(material, hit.nrm, hit.tangent, hit.bitangent, hit.uv, isInside);
+    RenderPrimitive   renderPrim    = renderPrims._[payload.rprimID];  // Primitive information
+    RenderNode        renderNode    = renderNodes._[payload.rnodeID];  // Node information
+    int               materialIndex = max(0, renderNode.materialID);   // Material ID of hit mesh
+    GltfShadeMaterial material      = materials.m[materialIndex];      // Material of the hit object
+
+    material.pbrBaseColorFactor *= hit.color;  // Modulate the base color with the vertex color
+
+    PbrMaterial pbrMat = evaluateMaterial(material, hit.nrm, hit.tangent, hit.bitangent, hit.uv, isInside);
+
 
     // Adding emissive
     radiance += pbrMat.emissive * throughput;

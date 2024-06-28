@@ -92,8 +92,10 @@ constexpr bool g_use_tm_compute = true;
 struct TextureKtx
 {
 
-  TextureKtx(nvvk::Context* c, nvvkhl::AllocVma* a, const std::string& filename)
-      : m_ctx(c)
+  TextureKtx(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t queueIndex, nvvkhl::AllocVma* a, const std::string& filename)
+      : m_device(device)
+      , m_physicalDevice(physicalDevice)
+      , m_queueIndex(queueIndex)
       , m_alloc(a)
   {
     nv_ktx::KTXImage           ktx_image;
@@ -103,11 +105,11 @@ struct TextureKtx
     {
       LOGE("KTX Error: %s\n", maybe_error->c_str());
     }
-    m_dutil = std::make_unique<nvvk::DebugUtil>(c->m_device);  // Debug utility
+    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
 
     // Check if format is supported
     VkImageFormatProperties prop{};
-    vkGetPhysicalDeviceImageFormatProperties(c->m_physicalDevice, ktx_image.format, VK_IMAGE_TYPE_2D,
+    vkGetPhysicalDeviceImageFormatProperties(m_physicalDevice, ktx_image.format, VK_IMAGE_TYPE_2D,
                                              VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, 0, &prop);
     assert(prop.maxResourceSize != 0);
 
@@ -128,7 +130,7 @@ struct TextureKtx
     const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     const VkFormat            format = ktximage.format;
 
-    nvvk::CommandPool cpool(m_ctx->m_device, m_ctx->m_queueGCT.familyIndex);
+    nvvk::CommandPool cpool(m_device, m_queueIndex);
     auto*             cmd = cpool.createCommandBuffer();
 
 
@@ -178,7 +180,9 @@ struct TextureKtx
   [[nodiscard]] const VkDescriptorImageInfo& descriptorImage() const { return m_texture.descriptor; }
 
 private:
-  nvvk::Context*                   m_ctx{nullptr};
+  VkDevice                         m_device{};
+  VkPhysicalDevice                 m_physicalDevice{};
+  uint32_t                         m_queueIndex{0};
   nvvkhl::AllocVma*                m_alloc{nullptr};
   std::unique_ptr<nvvk::DebugUtil> m_dutil;
 
@@ -199,16 +203,23 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
-    m_alloc      = std::make_unique<nvvkhl::AllocVma>(m_app->getContext().get());  // Allocator
-    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_app->getContext().get(), m_alloc.get());
+    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc      = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+             .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+             .physicalDevice = app->getPhysicalDevice(),
+             .device         = app->getDevice(),
+             .instance       = app->getInstance(),
+    });  // Allocator
+    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_device, m_alloc.get());
     m_dset       = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Find image file
     const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
     const std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
     assert(!img_file.empty());
-    m_texture = std::make_shared<TextureKtx>(m_app->getContext().get(), m_alloc.get(), img_file);
+
+    uint32_t queueIndex = app->getQueue(0).familyIndex;
+    m_texture = std::make_shared<TextureKtx>(m_app->getDevice(), m_app->getPhysicalDevice(), queueIndex, m_alloc.get(), img_file);
     assert(m_texture->valid());
 
     createScene();
@@ -557,12 +568,22 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
+  vkSetup.setVersion(1, 3);
+  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+
+  nvvk::Context vkContext;
+  vkContext.init(vkSetup);
+
   nvvkhl::ApplicationCreateInfo spec;
   spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync = true;
-  spec.vkSetup.setVersion(1, 3);
-
-  spec.vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  spec.instance       = vkContext.m_instance;
+  spec.device         = vkContext.m_device;
+  spec.physicalDevice = vkContext.m_physicalDevice;
+  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -577,6 +598,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
+  vkContext.deinit();
 
   return test->errorCode();
 }

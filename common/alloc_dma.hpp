@@ -28,16 +28,16 @@
 class AllocDma : public nvvk::ResourceAllocator
 {
 public:
-  explicit AllocDma(const nvvk::Context* context) { init(context); }
+  explicit AllocDma(VkDevice device, VkPhysicalDevice physicalDevice) { init(device, physicalDevice); }
   ~AllocDma() override { deinit(); }
 
 private:
-  void init(const nvvk::Context* context)
+  void init(VkDevice device, VkPhysicalDevice physicalDevice)
   {
     m_deviceMemoryAllocator = std::make_unique<nvvk::DeviceMemoryAllocator>();
-    m_deviceMemoryAllocator->init(context->m_device, context->m_physicalDevice, NVVK_DEFAULT_MEMORY_BLOCKSIZE, 0);
+    m_deviceMemoryAllocator->init(device, physicalDevice, NVVK_DEFAULT_MEMORY_BLOCKSIZE, 0);
     m_dma = std::make_unique<nvvk::DMAMemoryAllocator>(m_deviceMemoryAllocator.get());
-    nvvk::ResourceAllocator::init(context->m_device, context->m_physicalDevice, m_dma.get());
+    nvvk::ResourceAllocator::init(device, physicalDevice, m_dma.get());
   }
 
   void deinit()
