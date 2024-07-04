@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -36,15 +36,15 @@ layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
 #include "dh_bindings.h"
 #include "nvvkhl/shaders/bsdf_functions.h"
 #include "nvvkhl/shaders/bsdf_structs.h"
-#include "nvvkhl/shaders/constants.glsl"
+#include "nvvkhl/shaders/constants.h"
 #include "nvvkhl/shaders/dh_lighting.h"
 #include "nvvkhl/shaders/dh_scn_desc.h"
 #include "nvvkhl/shaders/dh_sky.h"
-#include "nvvkhl/shaders/ggx.glsl"
-#include "nvvkhl/shaders/light_contrib.glsl"
+#include "nvvkhl/shaders/ggx.h"
+#include "nvvkhl/shaders/light_contrib.h"
 #include "nvvkhl/shaders/pbr_mat_struct.h"
-#include "nvvkhl/shaders/random.glsl"
-#include "nvvkhl/shaders/ray_util.glsl"
+#include "nvvkhl/shaders/random.h"
+#include "nvvkhl/shaders/ray_util.h"
 
 #include "nvvkhl/shaders/vertex_accessor.h"
 
@@ -60,7 +60,7 @@ layout(set = 0, binding = B_textures)           uniform sampler2D         textur
 layout(set = 0, binding = B_skyParam,  scalar)  uniform SkyInfo_          { ProceduralSkyShaderParameters skyInfo; };
 // clang-format on
 
-#include "nvvkhl/shaders/pbr_mat_eval.glsl"  // Need texturesMap[]
+#include "nvvkhl/shaders/pbr_mat_eval.h"  // Need texturesMap[]
 
 layout(push_constant, scalar) uniform RtxPushConstant_
 {
@@ -369,14 +369,15 @@ vec3 pathTrace(Ray ray, inout uint seed)
 
     material.pbrBaseColorFactor *= hit.color;  // Modulate the base color with the vertex color
 
-    PbrMaterial pbrMat = evaluateMaterial(material, hit.nrm, hit.tangent, hit.bitangent, hit.uv, isInside);
+    MeshState   mesh   = MeshState(hit.nrm, hit.tangent, hit.bitangent, hit.geonrm, hit.uv, isInside);
+    PbrMaterial pbrMat = evaluateMaterial(material, mesh);
 
 
     // Adding emissive
     radiance += pbrMat.emissive * throughput;
 
     // Apply volume attenuation
-    bool thin_walled = pbrMat.thicknessFactor == 0;
+    bool thin_walled = pbrMat.thickness == 0;
     if(isInside && !thin_walled)
     {
       const vec3 abs_coeff = absorptionCoefficient(pbrMat);
@@ -389,7 +390,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
 
     // Light contribution; can be environment or punctual lights
     DirectLight directLight;
-    sampleLights(hit.pos, pbrMat.normal, ray.direction, seed, directLight);
+    sampleLights(hit.pos, pbrMat.N, ray.direction, seed, directLight);
 
     // Evaluation of direct light (sun)
     const bool nextEventValid = ((dot(directLight.direction, hit.geonrm) > 0.0F) != isInside) && directLight.pdf != 0.0F;
@@ -398,6 +399,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
       BsdfEvaluateData evalData;
       evalData.k1 = -ray.direction;
       evalData.k2 = directLight.direction;
+      evalData.xi = vec3(rand(seed), rand(seed), rand(seed));
       bsdfEvaluate(evalData, pbrMat);
 
       if(evalData.pdf > 0.0)
@@ -415,7 +417,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
     {
       BsdfSampleData sampleData;
       sampleData.k1 = -ray.direction;  // outgoing direction
-      sampleData.xi = vec4(rand(seed), rand(seed), rand(seed), rand(seed));
+      sampleData.xi = vec3(rand(seed), rand(seed), rand(seed));
       bsdfSample(sampleData, pbrMat);
 
       throughput *= sampleData.bsdf_over_pdf;

@@ -18,10 +18,10 @@ create_sample(realtime_analysis
     ${SHD_DIR}/raster.frag.glsl
   SHADER_HEADERS
     ${SHD_DIR}/device_host.h
-    ${SHD_DIR}/fluid_sim_2D.glsl
-    ${SHD_DIR}/fluid_maths_2D.glsl
-    ${SHD_DIR}/spatial_hash.glsl
-    ${SHD_DIR}/layouts.glsl
+    ${SHD_DIR}/fluid_sim_2D.h
+    ${SHD_DIR}/fluid_maths_2D.h
+    ${SHD_DIR}/spatial_hash.h
+    ${SHD_DIR}/layouts.h
   SHADER_SLANG
     ${SHD_DIR}/fluid_sim_2D.slang
     ${SHD_DIR}/raster.slang

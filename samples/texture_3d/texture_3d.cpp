@@ -137,7 +137,7 @@ public:
 
   void onUIRender() override
   {
-    namespace PE          = ImGuiH::PropertyEditor;
+    namespace PE      = ImGuiH::PropertyEditor;
     auto& s           = m_settings;
     bool  redoTexture = false;
 
@@ -617,16 +617,18 @@ private:
 
 int main(int argc, char** argv)
 {
-  VkContextSettings vkSetup;
+  VkContextSettings vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+      .queues             = {VK_QUEUE_GRAPHICS_BIT},
+  };
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-  vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   auto vkctx = std::make_unique<VkContext>(vkSetup);
   load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
 
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
   spec.instance       = vkctx->getInstance();
   spec.device         = vkctx->getDevice();
   spec.physicalDevice = vkctx->getPhysicalDevice();

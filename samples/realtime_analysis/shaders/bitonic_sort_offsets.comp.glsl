@@ -7,7 +7,7 @@
 
 #include "device_host.h"
 
-#include "layouts.glsl"
+#include "layouts.h"
 
 // Calculate offsets into the sorted Entries buffer (used for spatial hashing).
 // For example, given an Entries buffer sorted by key like so: {2, 2, 2, 3, 6, 6, 9, 9, 9, 9}

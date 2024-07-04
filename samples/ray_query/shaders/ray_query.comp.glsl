@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -34,10 +34,10 @@ layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
 
 #include "device_host.h"
 #include "dh_bindings.h"
-#include "nvvkhl/shaders/random.glsl"
-#include "nvvkhl/shaders/constants.glsl"
-#include "nvvkhl/shaders/ggx.glsl"
-#include "nvvkhl/shaders/ray_util.glsl"
+#include "nvvkhl/shaders/random.h"
+#include "nvvkhl/shaders/constants.h"
+#include "nvvkhl/shaders/ggx.h"
+#include "nvvkhl/shaders/ray_util.h"
 #include "nvvkhl/shaders/pbr_mat_struct.h"
 #include "nvvkhl/shaders/bsdf_structs.h"
 #include "nvvkhl/shaders/bsdf_functions.h"
@@ -127,13 +127,13 @@ HitState getHitState(PrimMeshInfo pinfo, vec2 barycentricCoords, mat4x3 worldToO
   // ** Adjusting normal **
 
   // Flip if back facing
-  if(dot(hit.geonrm, -worldRayDirection) < 0)  
+  if(dot(hit.geonrm, -worldRayDirection) < 0)
     hit.geonrm = -hit.geonrm;
 
   // Make Normal and GeoNormal on the same side
-  if(dot(hit.geonrm, hit.nrm) < 0)  
+  if(dot(hit.geonrm, hit.nrm) < 0)
   {
-    hit.nrm = -hit.nrm;   
+    hit.nrm = -hit.nrm;
   }
 
   // For low tessalated, avoid internal reflection
@@ -256,25 +256,23 @@ vec3 pathTrace(Ray ray, inout uint seed)
     vec3  L   = normalize(lightPos - payload.pos);
 
     // Setting up the material
-    PbrMaterial pbrMat;
-    Material    mat           = materials.m[iInfo.materialID];
-    pbrMat.albedo             = vec4(mat.albedo, 1);
-    pbrMat.roughness          = mat.roughness;
-    pbrMat.metallic           = mat.metallic;
-    pbrMat.normal             = payload.nrm;
-    pbrMat.emissive           = vec3(0.0F);
-    pbrMat.f0                 = mix(vec3(0.04F), pbrMat.albedo.xyz, mat.metallic);
-    pbrMat.f90                = vec3(1, 1, 1);
-    pbrMat.specularWeight     = 1.0;               // product of specularFactor and specularTexture.a
-    pbrMat.transmissionFactor = mat.transmission;  // KHR_materials_transmission
-    pbrMat.thicknessFactor    = 0;
+    Material    mat     = materials.m[iInfo.materialID];
+    PbrMaterial pbrMat  = defaultPbrMaterial(mat.albedo, mat.metallic, mat.roughness, payload.nrm, payload.geonrm);
+    pbrMat.transmission = mat.transmission;
+    pbrMat.thickness    = 1.0;
 
     float matIor = 1.1;
 
-    if(isInside) 
-      pbrMat.eta = matIor / 1.0;
-    else 
-      pbrMat.eta = 1.0 / matIor;
+    if(isInside)
+    {
+      pbrMat.ior1 = matIor;
+      pbrMat.ior2 = 1.0;
+    }
+    else
+    {
+      pbrMat.ior1 = 1.0;
+      pbrMat.ior2 = matIor;
+    }
 
     vec3 contrib = vec3(0);
 
@@ -285,19 +283,23 @@ vec3 pathTrace(Ray ray, inout uint seed)
       BsdfEvaluateData evalData;
       evalData.k1 = -ray.direction;
       evalData.k2 = L;
+      evalData.xi = vec3(rand(seed), rand(seed), rand(seed));
       bsdfEvaluate(evalData, pbrMat);
 
-      const vec3 w = pushConst.light.intensity.xxx * 1.0 / (distanceToLight * distanceToLight);
-      contrib += w * evalData.bsdf_diffuse;
-      contrib += w * evalData.bsdf_glossy;
-      contrib *= throughput;
+      if(evalData.pdf > 0.0)
+      {
+        const vec3 w = pushConst.light.intensity.xxx * 1.0 / (distanceToLight * distanceToLight);
+        contrib += w * evalData.bsdf_diffuse;
+        contrib += w * evalData.bsdf_glossy;
+        contrib *= throughput;
+      }
     }
 
     // Sample BSDF
     {
       BsdfSampleData sampleData;
       sampleData.k1 = -ray.direction;  // outgoing direction
-      sampleData.xi = vec4(rand(seed), rand(seed), rand(seed), rand(seed));
+      sampleData.xi = vec3(rand(seed), rand(seed), rand(seed));
 
       bsdfSample(sampleData, pbrMat);
       if(sampleData.event_type == BSDF_EVENT_ABSORB)

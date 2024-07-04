@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,9 +31,13 @@
 #include "device_host.h"
 #include "dh_bindings.h"
 #include "payload.h"
-#include "nvvkhl/shaders/constants.glsl"
-#include "nvvkhl/shaders/ggx.glsl"
+#include "nvvkhl/shaders/constants.h"
+#include "nvvkhl/shaders/ggx.h"
 #include "nvvkhl/shaders/dh_sky.h"
+#include "nvvkhl/shaders/bsdf_structs.h"
+#include "nvvkhl/shaders/bsdf_functions.h"
+#include "nvvkhl/shaders/pbr_mat_struct.h"
+#include "nvvkhl/shaders/func.h"
 
 hitAttributeEXT vec2 attribs;
 
@@ -122,28 +126,15 @@ bool shadowRay(vec3 P, vec3 L)
   return visible;
 }
 
-float clampedDot(vec3 x, vec3 y)
+vec3 ggxEvaluate(vec3 V, vec3 L, PbrMaterial mat)
 {
-  return clamp(dot(x, y), 0.0, 1.0);
-}
+  BsdfEvaluateData data;
+  data.k1 = V;
+  data.k2 = L;
 
-vec3 ggxEvaluate(vec3 V, vec3 N, vec3 L, vec3 albedo, float metallic, float roughness)
-{
-  vec3  H     = normalize(L + V);
-  float NdotL = clampedDot(N, L);
-  float NdotV = clampedDot(N, V);
-  float NdotH = clampedDot(N, H);
-  float VdotH = clampedDot(V, H);
+  bsdfEvaluateSimple(data, mat);
 
-  vec3 c_min_reflectance = vec3(0.04);
-  vec3 f0                = mix(c_min_reflectance, albedo, metallic);
-  vec3 f90               = vec3(1.0);
-
-  vec3 f_diffuse  = brdfLambertian(albedo, metallic);
-  vec3 f_specular = brdfSpecularGGX(f0, f90, roughness, VdotH, NdotL, NdotV, NdotH);
-
-  vec3 color = (f_diffuse + f_specular) * NdotL;
-  return color;
+  return data.bsdf_glossy + data.bsdf_diffuse;
 }
 
 //-----------------------------------------------------------------------
@@ -242,9 +233,10 @@ void main()
   vec3 L       = normalize(skyInfo.directionToLight);
   bool visible = shadowRay(P, L);
 
-  // Color at hit point
-  vec3 color = ggxEvaluate(V, hit.nrm, L, albedo, pc.metallic, pc.roughness);
+  PbrMaterial mat = defaultPbrMaterial(albedo, pc.metallic, pc.roughness, hit.nrm, hit.geonrm);
 
+  // Color at hit point
+  vec3 color = ggxEvaluate(V, L, mat);
 
   // Under shader, dimm the contribution
   if(!visible)

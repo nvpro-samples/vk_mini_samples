@@ -5,8 +5,8 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 #include "device_host.h"
-#include "layouts.glsl"
-#include "fluid_sim_2D.glsl"
+#include "layouts.h"
+#include "fluid_sim_2D.h"
 
 void main()
 {

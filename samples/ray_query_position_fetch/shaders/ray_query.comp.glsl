@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,8 +25,7 @@
 
 #include "dh_bindings.h"
 
-#include "nvvkhl/shaders/constants.glsl"
-#include "nvvkhl/shaders/ggx.glsl"
+#include "nvvkhl/shaders/bsdf_functions.h"
 
 // GROUP_SIZE 16  // <-- defined in dh_bindings.h
 
@@ -35,29 +34,17 @@ layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
 layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
 
-float clampedDot(vec3 x, vec3 y)
+vec3 ggxEvaluate(vec3 V, vec3 L, PbrMaterial mat)
 {
-  return clamp(dot(x, y), 0.0, 1.0);
+  BsdfEvaluateData data;
+  data.k1 = V;
+  data.k2 = L;
+
+  bsdfEvaluateSimple(data, mat);
+
+  return data.bsdf_glossy + data.bsdf_diffuse;
 }
 
-vec3 ggxEvaluate(vec3 V, vec3 N, vec3 L, vec3 albedo, float metallic, float roughness)
-{
-  vec3  H     = normalize(L + V);
-  float NdotL = clampedDot(N, L);
-  float NdotV = clampedDot(N, V);
-  float NdotH = clampedDot(N, H);
-  float VdotH = clampedDot(V, H);
-
-  vec3 c_min_reflectance = vec3(0.04);
-  vec3 f0                = mix(c_min_reflectance, albedo, metallic);
-  vec3 f90               = vec3(1.0);
-
-  vec3 f_diffuse  = brdfLambertian(albedo, metallic);
-  vec3 f_specular = brdfSpecularGGX(f0, f90, roughness, VdotH, NdotL, NdotV, NdotH);
-
-  vec3 color = (f_diffuse + f_specular) * NdotL;
-  return color;
-}
 
 void main()
 {
@@ -101,7 +88,7 @@ void main()
 
     // Gold Material
     vec3  gold_basecolor = vec3(1.0, 0.84, 0.0);
-    float gold_metallic  = 1.0;
+    float gold_metallic  = 0.90;
     float gold_roughness = 0.2;
 
     // Lights
@@ -111,8 +98,11 @@ void main()
     // Contribution
     for(int l = 0; l < 2; l++)
     {
-      pixel_color += ggxEvaluate(-direction, worldGeoNormal, light_dir[l], gold_basecolor, gold_metallic, gold_roughness)
-                     * light_intensty[l];
+      vec3 V = normalize(-direction);
+      vec3 L = normalize(light_dir[l]);
+
+      PbrMaterial mat = defaultPbrMaterial(gold_basecolor, gold_metallic, gold_roughness, worldGeoNormal, worldGeoNormal);
+      pixel_color += ggxEvaluate(V, L, mat) * light_intensty[l];
     }
   }
 

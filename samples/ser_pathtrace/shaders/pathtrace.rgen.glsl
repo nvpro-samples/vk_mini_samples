@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 460
@@ -35,11 +35,11 @@
 #include "dh_bindings.h"
 #include "payload.h"
 #include "temperature.glsl"
-#include "nvvkhl/shaders/random.glsl"
-#include "nvvkhl/shaders/constants.glsl"
+#include "nvvkhl/shaders/random.h"
+#include "nvvkhl/shaders/constants.h"
 #include "nvvkhl/shaders/dh_sky.h"
-#include "nvvkhl/shaders/ggx.glsl"
-#include "nvvkhl/shaders/ray_util.glsl"
+#include "nvvkhl/shaders/ggx.h"
+#include "nvvkhl/shaders/ray_util.h"
 #include "nvvkhl/shaders/pbr_mat_struct.h"
 #include "nvvkhl/shaders/bsdf_structs.h"
 #include "nvvkhl/shaders/bsdf_functions.h"
@@ -172,17 +172,8 @@ vec3 pathTrace(Ray r, inout uint seed)
     vec3  L   = normalize(skyInfo.directionToLight);
 
     // Setting up the material
-    PbrMaterial pbrMat;
-    pbrMat.albedo             = materials.m[iInfo.materialID];
-    pbrMat.roughness          = pc.roughness;
-    pbrMat.metallic           = pc.metallic;
-    pbrMat.normal             = payload.nrm;
-    pbrMat.emissive           = vec3(0.0F);
-    pbrMat.f0                 = mix(vec3(0.04F), pbrMat.albedo.xyz, pc.metallic);
-    pbrMat.f90                = vec3(1, 1, 1);
-    pbrMat.eta                = 1.0;
-    pbrMat.specularWeight     = 1.0;  // product of specularFactor and specularTexture.a
-    pbrMat.transmissionFactor = 0;    // KHR_materials_transmission
+    vec3 baseColor = materials.m[iInfo.materialID].xyz;
+    PbrMaterial pbrMat    = defaultPbrMaterial(baseColor, pc.metallic, pc.roughness, payload.nrm, payload.nrm);
 
     // Add dummy divergence
     // This sample shader is too simple to show the benefits of sorting
@@ -196,7 +187,7 @@ vec3 pathTrace(Ray r, inout uint seed)
       dummy = sin(dummy);
     }
 
-    pbrMat.albedo.xyz += dummy * 0.01;
+    pbrMat.baseColor.xyz += dummy * 0.01;
 
     vec3 contrib = vec3(0);
 
@@ -207,6 +198,7 @@ vec3 pathTrace(Ray r, inout uint seed)
       BsdfEvaluateData evalData;
       evalData.k1 = -r.direction;
       evalData.k2 = normalize(skyInfo.directionToLight);
+      evalData.xi = vec3(rand(seed), rand(seed), rand(seed));
       bsdfEvaluate(evalData, pbrMat);
 
       const vec3 w = pc.intensity.xxx;
@@ -220,7 +212,7 @@ vec3 pathTrace(Ray r, inout uint seed)
     {
       BsdfSampleData sampleData;
       sampleData.k1 = -r.direction;  // outgoing direction
-      sampleData.xi = vec4(rand(seed), rand(seed), rand(seed), rand(seed));
+      sampleData.xi = vec3(rand(seed), rand(seed), rand(seed));
 
       bsdfSample(sampleData, pbrMat);
       if(sampleData.event_type == BSDF_EVENT_ABSORB)

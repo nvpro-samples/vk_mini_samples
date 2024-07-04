@@ -30,7 +30,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
   return VK_FALSE;
 }
 
-
 // Vulkan Queue information
 struct QueueInfo
 {
@@ -45,6 +44,19 @@ struct ExtensionFeaturePair
   const char* extensionName = nullptr;
   void*       feature       = nullptr;  // [optional] Pointer to the feature structure for the extension
 };
+
+
+// Forward declarations
+std::vector<VkExtensionProperties> getDeviceExtensions(VkPhysicalDevice physicalDevice);
+std::string                        getVersionString(uint32_t version);
+std::string                        getVendorName(uint32_t vendorID);
+std::string                        getDeviceType(uint32_t deviceType);
+void                               printVulkanVersion();
+void                               printInstanceLayers();
+void                               printInstanceExtensions(const std::vector<const char*> ext = {});
+void printDeviceExtensions(VkPhysicalDevice physicalDevice, const std::vector<ExtensionFeaturePair> ext = {});
+void printPhysicalDeviceProperties(const VkPhysicalDeviceProperties& properties);
+void printGpus(VkInstance instance, VkPhysicalDevice usedGpu);
 
 // Specific to the creation of Vulkan context
 struct VkContextSettings
@@ -61,21 +73,12 @@ struct VkContextSettings
   bool enableAllFeatures            = true;  // If true, pull all capability of `features` from the physical device
 #if NDEBUG
   bool enableValidationLayers = false;  // Disable validation layers in release
+  bool verbose                = false;
 #else
-  bool enableValidationLayers = true;  // Enable validation layers
+  bool enableValidationLayers = false;  // Enable validation layers
+  bool verbose                = true;
 #endif
 };
-
-inline std::vector<VkExtensionProperties> getDeviceExtensions(VkPhysicalDevice physicalDevice)
-{
-  uint32_t                           count;
-  std::vector<VkExtensionProperties> extensionProperties;
-  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
-  extensionProperties.resize(count);
-  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, extensionProperties.data()));
-  extensionProperties.resize(std::min(extensionProperties.size(), size_t(count)));
-  return extensionProperties;
-}
 
 
 //--------------------------------------------------------------------------------------------------
@@ -86,9 +89,21 @@ public:
   VkContext(const VkContextSettings& settings = VkContextSettings())
       : m_settings(settings)
   {
-    createInstance();
-    selectPhysicalDevice();
-    createDevice();
+    {
+      nvh::ScopedTimer st("Creating Vulkan Context");
+      createInstance();
+      selectPhysicalDevice();
+      createDevice();
+    }
+    if(m_settings.verbose)
+    {
+      printVulkanVersion();
+      printInstanceLayers();
+      printInstanceExtensions(m_settings.instanceExtensions);
+      printDeviceExtensions(m_physicalDevice, m_settings.deviceExtensions);
+      printGpus(m_instance, m_physicalDevice);
+      LOGI("_________________________________________________\n");
+    }
   }
   ~VkContext() { cleanup(); }
 
@@ -122,6 +137,8 @@ private:
 
   void createInstance()
   {
+    nvh::ScopedTimer st(__FUNCTION__);
+
     VkApplicationInfo appInfo{
         .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName   = m_settings.applicationName,
@@ -171,6 +188,7 @@ private:
 
   void selectPhysicalDevice()
   {
+    // nvh::ScopedTimer st(std::string(__FUNCTION__) + "\n");
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
     if(deviceCount == 0)
@@ -180,12 +198,15 @@ private:
 
     // Find the discrete GPU if present, or use first one available.
     m_physicalDevice = gpus[0];
+    int gpuIndex     = 0;
     for(VkPhysicalDevice& device : gpus)
     {
       VkPhysicalDeviceProperties properties;
       vkGetPhysicalDeviceProperties(device, &properties);
       if(properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+      {
         m_physicalDevice = device;
+      }
     }
 
     // Query the physical device features
@@ -195,17 +216,18 @@ private:
     if(m_settings.apiVersion >= VK_API_VERSION_1_3)
       features12.pNext = &features13;
     vkGetPhysicalDeviceFeatures2(m_physicalDevice, &m_deviceFeatures);
-  }
 
-  void createDevice()
-  {
     // Find the queues that we need
     m_desiredQueues = m_settings.queues;
     findQueueFamilies();
 
     // Filter the available extensions otherwise the device creation will fail
     m_settings.deviceExtensions = filterAvailableExtensions(getDeviceExtensions(m_physicalDevice), m_settings.deviceExtensions);
+  }
 
+  void createDevice()
+  {
+    // nvh::ScopedTimer st(__FUNCTION__);
     // Chain all custom features to the pNext chain of m_deviceFeatures
     for(auto extension : m_settings.deviceExtensions)
     {
@@ -383,3 +405,134 @@ private:
     vkDestroyInstance(m_instance, m_settings.alloc);
   }
 };
+
+inline void printVulkanVersion()
+{
+  uint32_t version;
+  vkEnumerateInstanceVersion(&version);
+  LOGI("\n_________________________________________________\n");
+  LOGI("Vulkan Version:  %d.%d.%d\n", VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version), VK_VERSION_PATCH(version));
+}
+
+inline std::vector<VkExtensionProperties> getDeviceExtensions(VkPhysicalDevice physicalDevice)
+{
+  uint32_t                           count;
+  std::vector<VkExtensionProperties> extensionProperties;
+  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
+  extensionProperties.resize(count);
+  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, extensionProperties.data()));
+  extensionProperties.resize(std::min(extensionProperties.size(), size_t(count)));
+  return extensionProperties;
+}
+
+inline std::string getVersionString(uint32_t version)
+{
+  return fmt::format("{}.{}.{}", VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version), VK_VERSION_PATCH(version));
+}
+
+inline void printInstanceLayers()
+{
+  uint32_t                       count;
+  std::vector<VkLayerProperties> layerProperties;
+  NVVK_CHECK(vkEnumerateInstanceLayerProperties(&count, nullptr));
+  layerProperties.resize(count);
+  NVVK_CHECK(vkEnumerateInstanceLayerProperties(&count, layerProperties.data()));
+  LOGI("_________________________________________________\n");
+  LOGI("Available Instance Layers :\n");
+  for(auto& it : layerProperties)
+  {
+    LOGI("%s (v. %d.%d.%d %x) : %s\n", it.layerName, VK_VERSION_MAJOR(it.specVersion), VK_VERSION_MINOR(it.specVersion),
+         VK_VERSION_PATCH(it.specVersion), it.implementationVersion, it.description);
+  }
+}
+
+inline void printInstanceExtensions(const std::vector<const char*> ext)
+{
+  std::unordered_set<std::string> exist;
+  for(auto& e : ext)
+    exist.insert(e);
+
+  uint32_t                           count;
+  std::vector<VkExtensionProperties> extensionProperties;
+  NVVK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr));
+  extensionProperties.resize(count);
+  NVVK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensionProperties.data()));
+  LOGI("_________________________________________________\n");
+  LOGI("Available Instance Extensions :\n");
+  for(const VkExtensionProperties& it : extensionProperties)
+  {
+    LOGI("[%s] ", (exist.find(it.extensionName) != exist.end()) ? "x" : " ");
+    LOGI("%s (v. %d)\n", it.extensionName, it.specVersion);
+  }
+}
+
+inline void printDeviceExtensions(VkPhysicalDevice physicalDevice, const std::vector<ExtensionFeaturePair> ext)
+{
+  std::unordered_set<std::string> exist;
+  for(auto& e : ext)
+    exist.insert(e.extensionName);
+
+  uint32_t                           count;
+  std::vector<VkExtensionProperties> extensionProperties;
+  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
+  extensionProperties.resize(count);
+  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, extensionProperties.data()));
+  LOGI("_________________________________________________\n");
+  LOGI("Available Device Extensions :\n");
+  for(const VkExtensionProperties& it : extensionProperties)
+  {
+    LOGI("[%s] ", (exist.find(it.extensionName) != exist.end()) ? "x" : " ");
+    LOGI("%s (v. %d)\n", it.extensionName, it.specVersion);
+  }
+}
+
+inline std::string getVendorName(uint32_t vendorID)
+{
+  static const std::unordered_map<uint32_t, std::string> vendorMap = {{0x1002, "AMD"},      {0x1010, "ImgTec"},
+                                                                      {0x10DE, "NVIDIA"},   {0x13B5, "ARM"},
+                                                                      {0x5143, "Qualcomm"}, {0x8086, "INTEL"}};
+
+  auto it = vendorMap.find(vendorID);
+  return it != vendorMap.end() ? it->second : "Unknown Vendor";
+}
+
+inline std::string getDeviceType(uint32_t deviceType)
+{
+  static const std::unordered_map<uint32_t, std::string> deviceTypeMap = {{VK_PHYSICAL_DEVICE_TYPE_OTHER, "Other"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Integrated GPU"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, "Discrete GPU"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, "Virtual GPU"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_CPU, "CPU"}};
+
+  auto it = deviceTypeMap.find(deviceType);
+  return it != deviceTypeMap.end() ? it->second : "Unknown";
+}
+
+inline void printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
+{
+  uint32_t deviceCount = 0;
+  vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+  std::vector<VkPhysicalDevice> gpus(deviceCount);
+  vkEnumeratePhysicalDevices(instance, &deviceCount, gpus.data());
+  LOGI("_________________________________________________\n");
+  LOGI("Available GPUS: %d\n", deviceCount);
+
+  VkPhysicalDeviceProperties properties;
+  for(VkPhysicalDevice& device : gpus)
+  {
+    vkGetPhysicalDeviceProperties(device, &properties);
+    LOGI(" - %s\n", properties.deviceName);
+  }
+  LOGI("Using this GPU:\n", properties.deviceName);
+  vkGetPhysicalDeviceProperties(usedGpu, &properties);
+  printPhysicalDeviceProperties(properties);
+}
+
+inline void printPhysicalDeviceProperties(const VkPhysicalDeviceProperties& properties)
+{
+  LOGI(" - Device Name    : %s\n", properties.deviceName);
+  LOGI(" - Vendor         : %s\n", getVendorName(properties.vendorID).c_str());
+  LOGI(" - Driver Version : %s\n", getVersionString(properties.driverVersion).c_str());
+  LOGI(" - API Version    : %s\n", getVersionString(properties.apiVersion).c_str());
+  LOGI(" - Device Type    : %s\n", getDeviceType(properties.deviceType).c_str());
+}

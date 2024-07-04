@@ -214,7 +214,7 @@ public:
       m_settings.stopCreating = true;
       vkDeviceWaitIdle(m_device);
       int numObj = static_cast<int>(std::max(overbudgetUsage / double(SIZE_OF_MESH), 1.));
-      LOGI(fmt::format("Over budget: {}\n", overbudgetUsage).c_str());
+      LOGI("Over budget: %f\n", overbudgetUsage);
       std::vector<int> toDelete = fillArray(m_settings.firstOut, numObj, m_nodes, true, false);
       deleteMeshes(toDelete);
       numMeshes           = m_settings.numMeshes;

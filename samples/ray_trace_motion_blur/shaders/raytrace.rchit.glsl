@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,8 +29,8 @@
 #include "device_host.h"
 #include "dh_bindings.h"
 #include "payload.h"
-#include "nvvkhl/shaders/constants.glsl"
-#include "nvvkhl/shaders/ggx.glsl"
+#include "nvvkhl/shaders/constants.h"
+#include "nvvkhl/shaders/ggx.h"
 #include "nvvkhl/shaders/dh_sky.h"
 
 hitAttributeEXT vec2 attribs;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -272,9 +272,9 @@ private:
 
     // Default parameters for overall material
     m_pushConst.intensity = 5.0F;
-    m_pushConst.maxDepth  = 5;
+    m_pushConst.maxDepth  = 1;
+    m_pushConst.metallic  = 0.2F;
     m_pushConst.roughness = 1.0F;
-    m_pushConst.metallic  = 0.5F;
 
     // Default Sky values
     m_skyParams = nvvkhl_shaders::initSkyShaderParameters();

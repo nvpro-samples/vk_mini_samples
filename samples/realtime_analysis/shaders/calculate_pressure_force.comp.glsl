@@ -6,7 +6,7 @@
 #extension GL_KHR_shader_subgroup_basic : enable
 
 #include "device_host.h"
-#include "layouts.glsl"
+#include "layouts.h"
 
  #define INSPECTOR_MODE_COMPUTE 
  #define INSPECTOR_DESCRIPTOR_SET 0 
@@ -14,7 +14,7 @@
  #define INSPECTOR_METADATA_BINDING eThreadMetadata
  #include "nvvkhl/shaders/dh_inspector.h"
 
-#include "fluid_sim_2D.glsl"
+#include "fluid_sim_2D.h"
 
 void main()
 {

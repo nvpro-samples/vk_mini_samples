@@ -5,7 +5,7 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 #include "device_host.h"
-#include "layouts.glsl"
+#include "layouts.h"
 
 // Sort the given entries by their keys (smallest to largest)
 // This is done using bitonic merge sort, and takes multiple iterations

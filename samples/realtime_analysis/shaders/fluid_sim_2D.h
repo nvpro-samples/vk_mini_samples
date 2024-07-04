@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 // Code converted from: https://github.com/SebLague/Fluid-Sim
 
 // Includes
-#include "./fluid_maths_2D.glsl"
-#include "./spatial_hash.glsl"
+#include "./fluid_maths_2D.h"
+#include "./spatial_hash.h"
 
 #ifndef INSPECTOR_MODE_COMPUTE
 void inspect32BitValue(uint a, uint b) {}
