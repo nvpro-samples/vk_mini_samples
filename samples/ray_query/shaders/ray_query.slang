@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -226,27 +226,23 @@ float3 pathTrace(RayDesc ray, inout uint seed)
    
     // Retrieve the material color
     Material mat = sceneDesc.materialAddress[instInfo.materialID];
-    
 
     // Setting up the material
-    PbrMaterial pbrMat;
-    pbrMat.albedo = float4(mat.albedo, 1);
-    pbrMat.roughness = mat.roughness;
-    pbrMat.metallic =  mat.metallic;
-    pbrMat.normal = payload.nrm;
-    pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
-    pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pbrMat.metallic);
-    pbrMat.f90 = vec3(1, 1, 1);
-    pbrMat.specularWeight = 1.0;                  // product of specularFactor and specularTexture.a
-    pbrMat.transmissionFactor = mat.transmission; // KHR_materials_transmission
-    pbrMat.thicknessFactor = 0;
-
+    PbrMaterial pbrMat = defaultPbrMaterial(mat.albedo, mat.metallic, mat.roughness, payload.nrm, payload.geonrm);
+    pbrMat.transmission = mat.transmission;
+    pbrMat.thickness = 1.0;
     float matIor = 1.1;
 
     if (isInside)
-        pbrMat.eta = matIor / 1.0;
+    { 
+        pbrMat.ior1 = matIor;
+        pbrMat.ior2 = 1.0;
+    }
     else
-        pbrMat.eta = 1.0 / matIor;
+    { 
+        pbrMat.ior1 = 1.0;
+        pbrMat.ior2 = matIor;
+    }
     float3 contrib = float3(0, 0, 0);
 
     // Evaluation of direct light (sun)
@@ -256,12 +252,16 @@ float3 pathTrace(RayDesc ray, inout uint seed)
       BsdfEvaluateData evalData;
       evalData.k1 = -ray.Direction;
       evalData.k2 = L;
+      evalData.xi = float3(rand(seed), rand(seed), rand(seed));
       bsdfEvaluate(evalData, pbrMat);
 
-      const float3 w = sceneDesc.light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
-      contrib += w * evalData.bsdf_diffuse;
-      contrib += w * evalData.bsdf_glossy;
-      contrib *= throughput;
+      if (evalData.pdf > 0.0)
+      {
+        const float3 w = sceneDesc.light.intensity.xxx * 1.0/(distanceToLight*distanceToLight);
+        contrib += w * evalData.bsdf_diffuse;
+        contrib += w * evalData.bsdf_glossy;
+        contrib *= throughput;
+      }
     }
 
 
@@ -269,7 +269,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     {
       BsdfSampleData sampleData;
       sampleData.k1 = -ray.Direction; // outgoing direction
-      sampleData.xi = float4(rand(seed), rand(seed), rand(seed), rand(seed));
+      sampleData.xi = float3(rand(seed), rand(seed), rand(seed));
 
       bsdfSample(sampleData, pbrMat);
       if(sampleData.event_type == BSDF_EVENT_ABSORB)

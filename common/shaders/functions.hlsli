@@ -1,7 +1,7 @@
 
 
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,12 +40,16 @@ float clampedDot(float3 x, float3 y)
 //-----------------------------------------------------------------------
 void orthonormalBasis(in float3 normal, out float3 tangent, out float3 bitangent)
 {
-  float sgn = normal.z > 0.0F ? 1.0F : -1.0F;
-  float a = -1.0F / (sgn + normal.z);
-  float b = normal.x * normal.y * a;
-
-  tangent = float3(1.0F + sgn * normal.x * normal.x * a, sgn * b, -sgn * normal.x);
-  bitangent = float3(b, sgn + normal.y * normal.y * a, -normal.y);
+  if(normal.z < -0.99998796F)  // Handle the singularity
+  {
+    tangent   = float3(0.0F, -1.0F, 0.0F);
+    bitangent = float3(-1.0F, 0.0F, 0.0F);
+    return;
+  }
+  float a   = 1.0F / (1.0F + normal.z);
+  float b   = -normal.x * normal.y * a;
+  tangent   = float3(1.0F - normal.x * normal.x * a, b, -normal.x);
+  bitangent = float3(b, 1.0f - normal.y * normal.y * a, -normal.y);
 }
 
 
@@ -210,7 +214,6 @@ float4 unpackUnorm4x8(uint packedValue)
 
     return unpackedValue;
 }
-#endif
 
 #if __HLSL_VERSION > 1
 
@@ -235,6 +238,8 @@ struct LoaderHelper
   uint64_t m_offset;
 };
 
-#endif
+#endif // __HLSL_VERSION > 1
 
-#endif
+#endif // __SLANG__
+
+#endif // FUNCTIONS_HLSLI

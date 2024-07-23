@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,13 +32,13 @@ layout(location = 0) rayPayloadInEXT HitPayload payload;
 
 layout(set = 0, binding = B_skyParam) uniform SkyInfo_
 {
-  ProceduralSkyShaderParameters skyInfo;
+  SimpleSkyParameters skyInfo;
 };
 
 
 void main()
 {
-  vec3 sky_color = proceduralSky(skyInfo, gl_WorldRayDirectionEXT, 0);
+  vec3 sky_color = evalSimpleSky(skyInfo, gl_WorldRayDirectionEXT);
   payload.color += sky_color * payload.weight;
   payload.depth = MISS_DEPTH;  // Stop
 }

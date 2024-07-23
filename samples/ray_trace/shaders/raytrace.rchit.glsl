@@ -39,7 +39,7 @@ layout(location = 0) rayPayloadInEXT HitPayload payload;
 
 layout(set = 0, binding = B_tlas ) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_frameInfo, scalar) uniform FrameInfo_ { FrameInfo frameInfo; };
-layout(set = 0, binding = B_skyParam,  scalar) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_skyParam,  scalar) uniform SkyInfo_ { SimpleSkyParameters skyInfo; };
 layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
 layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
 layout(set = 0, binding = B_vertex, scalar) buffer Vertex_ { Vertex v[]; } vertices[];
@@ -137,32 +137,39 @@ void main()
 
   HitState hit = getHitState(gl_InstanceCustomIndexEXT, barycentrics);
 
-  //Materials materials = Materials(sceneDesc.materialAddress);
-  vec3 albedo = materials.m[iInfo.materialID].xyz;
+  vec3        albedo = materials.m[iInfo.materialID].xyz;
+  PbrMaterial mat    = defaultPbrMaterial(albedo, pc.metallic, pc.roughness, hit.nrm, hit.geonrm);
 
-  PbrMaterial mat = defaultPbrMaterial(albedo, pc.metallic, pc.roughness, hit.nrm, hit.geonrm);
+  // Since this sample only shows off ray tracing (not path tracing), it
+  // doesn't aim for photorealism. We'll trace a ray for a glossy reflection,
+  // but that's all.
+  // Check out gltf_raytrace for a path tracer that uses a more sophisticated
+  // material model!
 
-  // Color at hit point
+  // Direct lighting
   vec3 color = ggxEvaluate(V, L, mat);
-
-  // Under shadow, dimm the contribution
+  // If we're shadowed, artistically dim the light.
   if(!visible)
-    color *= 0.3F;
-
+  {
+    color *= vec3(0.3f);
+  }
   payload.color += color * payload.weight * pc.intensity;
 
+  // Ad-hoc reflection weight to incorporate how
+  // * baseColor affects f0 when the material is metal
+  vec3 f0 = mix(vec3(0.04F), mat.baseColor, mat.metallic);
+  // * surfaces are more reflective at glancing angles, but rough surfaces
+  // don't have reflections you can see at all
+  payload.weight *= schlickFresnel(f0, vec3(1.0F), dot(V, mat.N)) * vec3(1.f - mat.roughness.x);
+
+  // Recursively trace reflection rays until we hit our max depth
   payload.depth += 1;
+  if(payload.depth < pc.maxDepth && payload.weight != vec3(0.0f))
+  {
+    // Reflection vector
+    vec3 refl_dir = reflect(-V, mat.N);
 
-  // Reflection
-  BsdfSampleData sData;
-  sData.k1 = V;
-  sData.xi = vec3(0.0, 0.0, 0.0);
-  bsdfSampleSimple(sData, mat);
-  vec3 refl_dir = sData.k2;
-  payload.weight *= sData.bsdf_over_pdf;
-
-
-  // Recursion until we hit our max depth
-  if(payload.depth < pc.maxDepth)
+    // Trace the reflection ray
     traceRayEXT(topLevelAS, gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.0001, refl_dir, 100.0, 0);
+  }
 }

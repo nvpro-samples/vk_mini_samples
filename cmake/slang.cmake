@@ -55,7 +55,8 @@ function(compile_slang_file)
     # !! Compiling all entry points in a single compilation
     set(_OUT_ARG "${_OUT_DIR}/${_FILE_STEM}_slang.h")
     set(_SLANG_FLAGS
-        -profile glsl_460+spirv_1_5
+        -profile sm_6_6+spirv_1_6
+        -capability spvInt64Atomics+spvShaderInvocationReorderNV+spvShaderClockKHR+spvRayTracingMotionBlurNV
         -target spirv
         -emit-spirv-directly
         -force-glsl-scalar-layout

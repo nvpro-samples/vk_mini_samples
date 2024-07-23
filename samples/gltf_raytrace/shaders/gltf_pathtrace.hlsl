@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -47,7 +47,7 @@ struct Ray
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
 [[vk::binding(B_cameraInfo)]] ConstantBuffer<CameraInfo> cameraInfo;
 [[vk::binding(B_sceneDesc)]] StructuredBuffer<SceneDescription> sceneDesc;
-[[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
+[[vk::binding(B_skyParam)]] ConstantBuffer<PhysicalSkyParameters> skyInfo;
 [[vk::binding(B_textures)]]  Texture2D texturesMap[]:register(t4);
 [[vk::binding(B_textures)]] SamplerState samplers;
 
@@ -105,10 +105,14 @@ RenderNode getRenderNode(uint64_t nodeAddress,uint64_t offset)
     LoaderHelper loader;
     loader.init(nodeAddress,offset);
     
-    loader.loadValue <float4x4 > (rnode.objectToWorld);
-    loader.loadValue <float4x4 > (rnode.worldToObject);
-    loader.loadValue <int > (rnode.materialID);
-    loader.loadValue <int > (rnode.renderPrimID);
+    loader.loadValue <
+    float4x4 > (rnode.objectToWorld);
+    loader.loadValue <
+    float4x4 > (rnode.worldToObject);
+    loader.loadValue <
+    int > (rnode.materialID);
+    loader.loadValue <
+    int > (rnode.renderPrimID);
   }
   return rnode;
 }
@@ -120,81 +124,74 @@ GltfShadeMaterial getMaterial(uint64_t materialAddress,uint64_t offset)
   loader.init(materialAddress,offset);
   
   GltfShadeMaterial m;
-  loader.loadValue <
-  float4 > (m.pbrBaseColorFactor);
-  loader.loadValue <
-  float3 > (m.emissiveFactor);
-  loader.loadValue <
-  int > (m.pbrBaseColorTexture);
-
-  loader.loadValue <
-  int > (m.normalTexture);
-  loader.loadValue <
-  float > (m.normalTextureScale);
-  loader.loadValue <
-  int > (m._pad0);
-  loader.loadValue <
-  float > (m.pbrRoughnessFactor);
-
-  loader.loadValue <
-  float > (m.pbrMetallicFactor);
-  loader.loadValue <
-  int > (m.pbrMetallicRoughnessTexture);
-
-  loader.loadValue <
-  int > (m.emissiveTexture);
-  loader.loadValue <
-  int > (m.alphaMode);
-  loader.loadValue <
-  float > (m.alphaCutoff);
+  
+    // Core
+  loader.loadValue<float4>( m.pbrBaseColorFactor);
+  loader.loadValue<float3>( m.emissiveFactor);
+  loader.loadValue<int> (m.pbrBaseColorTexture);
+  loader.loadValue<int> (m.normalTexture);
+  loader.loadValue<float> (m.normalTextureScale);
+  loader.loadValue<int> (m._pad0);
+  loader.loadValue<float> (m.pbrRoughnessFactor);
+  loader.loadValue<float> (m.pbrMetallicFactor);
+  loader.loadValue<int> (m.pbrMetallicRoughnessTexture);
+  loader.loadValue<int> (m.emissiveTexture);
+  loader.loadValue<int> (m.alphaMode);
+  loader.loadValue<float> (m.alphaCutoff);
 
   // KHR_materials_transmission
-  loader.loadValue <
-  float > (m.transmissionFactor);
-  loader.loadValue <
-  int > (m.transmissionTexture);
-  
+  loader.loadValue < float > (m.transmissionFactor);
+  loader.loadValue < int > (m.transmissionTexture);
+
   // KHR_materials_ior
-  loader.loadValue <
-  float > (m.ior);
+  loader.loadValue <float> (m.ior);
   
   // KHR_materials_volume
-  loader.loadValue <
-  float3 > (m.attenuationColor);
-  loader.loadValue <
-  float > (m.thicknessFactor);
-  loader.loadValue <
-  int > (m.thicknessTexture);
-  loader.loadValue <
-  bool > (m.thinWalled);
-  loader.loadValue <
-  float > (m.attenuationDistance);
-
+  loader.loadValue <float3> (m.attenuationColor);
+  loader.loadValue <float> (m.thicknessFactor);
+  loader.loadValue <int> (m.thicknessTexture);
+  loader.loadValue <float> (m.attenuationDistance);
+  
   // KHR_materials_clearcoat
-  loader.loadValue <
-  float > (m.clearcoatFactor);
-  loader.loadValue <
-  float > (m.clearcoatRoughness);
-  loader.loadValue <
-  int > (m.clearcoatTexture);
-  loader.loadValue <
-  int > (m.clearcoatRoughnessTexture);
-  loader.loadValue <
-  int > (m.clearcoatNormalTexture);
+  loader.loadValue <float> (m.clearcoatFactor);
+  loader.loadValue <float> (m.clearcoatRoughness);
+  loader.loadValue <int> (m.clearcoatTexture);
+  loader.loadValue <int> (m.clearcoatRoughnessTexture);
+  loader.loadValue <int> (m.clearcoatNormalTexture);
+
+  // KHR_materials_specular
+  loader.loadValue <float3> (m.specularColorFactor);
+  loader.loadValue <float> (m.specularFactor);
+  loader.loadValue <int> (m.specularTexture);
+  loader.loadValue <int> (m.specularColorTexture);
+
+  // KHR_materials_unlit
+  loader.loadValue <int> (m.unlit);
   
-   // KHR_materials_specular
-  loader.loadValue <
-  float > (m.specularFactor);
-  loader.loadValue <
-  int > (m.specularTexture);
-  loader.loadValue <
-  float3 > (m.specularColorFactor);
-  loader.loadValue <
-  int > (m.specularColorTexture);
-  
+  // KHR_materials_iridescence
+  loader.loadValue <float> (m.iridescenceFactor);
+  loader.loadValue <int> (m.iridescenceTexture);
+  loader.loadValue <float> (m.iridescenceThicknessMaximum);
+  loader.loadValue <float> (m.iridescenceThicknessMinimum);
+  loader.loadValue <int> (m.iridescenceThicknessTexture);
+  loader.loadValue <float> (m.iridescenceIor);
+
+  // KHR_materials_anisotropy
+  loader.loadValue <float> (m.anisotropyStrength);
+  loader.loadValue <int> (m.anisotropyTexture);
+  loader.loadValue <float> (m.anisotropyRotation);
+
   // KHR_texture_transform
-  loader.loadValue <
-  float3x3 > (m.uvTransform);
+  loader.loadValue <float3x3 > (m.uvTransform);
+  loader.loadValue <float4> (m._pad3);
+
+  // KHR_materials_sheen
+  loader.loadValue <int> (m.sheenColorTexture);
+  loader.loadValue <float> (m.sheenRoughnessFactor);
+  loader.loadValue <int> (m.sheenRoughnessTexture);
+  loader.loadValue <float3> (m.sheenColorFactor);
+  loader.loadValue <int> (m._pad2);
+  
   return m;
 }
 
@@ -284,24 +281,13 @@ struct DirectLight
 // This should sample any lights in the scene, but we only have the sun
 void sampleLights(in float3 pos,float3 normal,in float3 worldRayDirection,inout uint seed,out DirectLight directLight)
 {
-  float3 radiance = float3(0,0,0);
-  float lightPdf = 1.0;
-
-  // Light contribution
-  Light sun;
-  sun.type = eLightTypeDirectional;
-  sun.angularSizeOrInvRange = skyInfo.angularSizeOfLight;
-  sun.direction = -skyInfo.directionToLight;
-  sun.color = skyInfo.lightColor;
-  sun.intensity = 1;
-  float2 rand_val = float2(rand(seed),rand(seed));
-  LightContrib lightContrib = singleLightContribution(sun,pos,normal,-worldRayDirection,rand_val);
-
-  // Return the light contribution
-  directLight.direction = normalize(-lightContrib.incidentVector);
-  directLight.radianceOverPdf = lightContrib.intensity / lightPdf;
+  float2 randVal = float2(rand(seed),rand(seed));
+  SkySamplingResult skySample = samplePhysicalSky(skyInfo,randVal);
+  
+  directLight.direction = skySample.direction;
+  directLight.pdf = skySample.pdf;
   directLight.distance = INFINITE;
-  directLight.pdf = DIRAC;
+  directLight.radianceOverPdf = skySample.radiance / skySample.pdf;
 }
 
 //----------------------------------------------------------
@@ -327,7 +313,7 @@ bool hitTest(in RayQuery< RAY_FLAG_NONE> rayQuery,inout uint seed)
   float baseColorAlpha = material.pbrBaseColorFactor.a;
   if(material.pbrBaseColorTexture > -1)
   {
-    uint3 triangleIndex = getTriangleIndices(renderPrim, primitiveID);
+    uint3 triangleIndex = getTriangleIndices(renderPrim,primitiveID);
 
     // Get the texture coordinate
     float2 bary = rayQuery.CandidateTriangleBarycentrics(); // rayQueryGetIntersectionBarycentricsEXT(rayQuery, false);
@@ -441,7 +427,7 @@ float3 pathTrace(Ray ray,inout uint seed)
     // Hitting the environment, then exit
     if(payload.hitT == INFINITE)
     {
-      float3 sky_color = proceduralSky(skyInfo,ray.direction,0);
+      float3 sky_color = evalPhysicalSky(skyInfo,ray.direction);
       return radiance + (sky_color * throughput);
     }
 
@@ -456,14 +442,22 @@ float3 pathTrace(Ray ray,inout uint seed)
     uint64_t matOffset = sizeof(GltfShadeMaterial) * materialIndex;
     GltfShadeMaterial material = getMaterial(sceneDesc[0].materialAddress,matOffset);
     
-
-    PbrMaterial pbrMat = evaluateMaterial(material,texturesMap,samplers,hit.nrm,hit.tangent,hit.bitangent,hit.uv,isInside);
-
+    MeshState meshState;
+    meshState.N = hit.nrm;
+    meshState.T = hit.tangent;
+    meshState.B = hit.bitangent;
+    meshState.tc = hit.uv;
+    meshState.Ng = hit.geonrm;
+    meshState.isInside = isInside;
+    
+    PbrMaterial pbrMat = evaluateMaterial(material, meshState, texturesMap,samplers);
+  
+  
     // Adding emissive
     radiance += pbrMat.emissive * throughput;
 
     // Apply volume attenuation
-    bool thin_walled = pbrMat.thicknessFactor == 0;
+    bool thin_walled = (pbrMat.thickness == 0);
     if(isInside && !thin_walled)
     {
       const float3 abs_coeff = absorptionCoefficient(pbrMat);
@@ -475,7 +469,7 @@ float3 pathTrace(Ray ray,inout uint seed)
 
     // Light contribution; can be environment or punctual lights
     DirectLight directLight;
-    sampleLights(hit.pos,pbrMat.normal,ray.direction,seed,directLight);
+    sampleLights(hit.pos,pbrMat.N,ray.direction,seed,directLight);
 
     // Evaluation of direct light (sun)
     const bool nextEventValid = ((dot(directLight.direction,hit.geonrm) > 0.0F) != isInside) && directLight.pdf != 0.0F;
@@ -484,6 +478,7 @@ float3 pathTrace(Ray ray,inout uint seed)
       BsdfEvaluateData evalData;
       evalData.k1 = -ray.direction;
       evalData.k2 = directLight.direction;
+      evalData.xi = float3(rand(seed),rand(seed),rand(seed));
       bsdfEvaluate(evalData,pbrMat);
 
       if(evalData.pdf > 0.0)
@@ -501,7 +496,7 @@ float3 pathTrace(Ray ray,inout uint seed)
     {
       BsdfSampleData sampleData;
       sampleData.k1 = -ray.direction; // outgoing direction
-      sampleData.xi = float4(rand(seed),rand(seed),rand(seed),rand(seed));
+      sampleData.xi = float3(rand(seed),rand(seed),rand(seed));
       bsdfSample(sampleData,pbrMat);
 
       throughput *= sampleData.bsdf_over_pdf;

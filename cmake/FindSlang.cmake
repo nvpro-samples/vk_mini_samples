@@ -12,7 +12,7 @@ set(Slang_VERSION ${Slang_DEFAULT_VERSION} CACHE INTERNAL "")
 
 # Download Slang SDK
 if(WIN32)
-    set(Slang_URL "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-win64.zip")
+    set(Slang_URL "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-windows-x86_64.zip")
 else()
     set(Slang_URL "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-linux-x86_64.zip")
 endif()
@@ -21,6 +21,7 @@ CPMAddPackage(
   NAME Slang
   URL ${Slang_URL}
   VERSION ${Slang_VERSION}
+  DOWNLOAD_ONLY YES
 )
 
 if(Slang_ADDED)
@@ -30,26 +31,26 @@ if(Slang_ADDED)
   # Use the one downloaded
   find_program(Slang_slangc_EXE
       NAMES slangc 
-      HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+      HINTS ${Slang_SOURCE_DIR}/bin NO_DEFAULT_PATH
   )
   # Provide the Slang compiler and SDK paths to the user
   set(Slang_slangc_EXE ${Slang_slangc_EXE} CACHE FILEPATH "Path to Slang compiler")
 
   find_library(Slang_LIBRARY
       NAMES slang
-      HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+      HINTS ${Slang_SOURCE_DIR}/lib NO_DEFAULT_PATH
   )
   mark_as_advanced(Slang_LIBRARY)
 
   find_file(Slang_DLL
         NAMES slang.dll
-        HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+        HINTS ${Slang_SOURCE_DIR}/bin NO_DEFAULT_PATH
   )
   mark_as_advanced(Slang_DLL)
 
   find_file(Slang_glslang_DLL
         NAMES slang-glslang.dll
-        HINTS ${Slang_SOURCE_DIR}/bin/windows-x64/release ${Slang_SOURCE_DIR}/bin/linux-x64/release NO_DEFAULT_PATH
+        HINTS ${Slang_SOURCE_DIR}/bin NO_DEFAULT_PATH
   )
   mark_as_advanced(Slang_glslang_DLL)
 

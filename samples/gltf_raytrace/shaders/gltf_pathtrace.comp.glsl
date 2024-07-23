@@ -57,7 +57,7 @@ layout(set = 0, binding = B_outImage, rgba32f)  uniform image2D           image;
 layout(set = 0, binding = B_cameraInfo, scalar) uniform cameraInfo_       { CameraInfo cameraInfo; };
 layout(set = 0, binding = B_sceneDesc, scalar) readonly buffer SceneDesc_ { SceneDescription sceneDesc; };
 layout(set = 0, binding = B_textures)           uniform sampler2D         texturesMap[]; // all textures
-layout(set = 0, binding = B_skyParam,  scalar)  uniform SkyInfo_          { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_skyParam,  scalar)  uniform SkyInfo_          { PhysicalSkyParameters skyInfo; };
 // clang-format on
 
 #include "nvvkhl/shaders/pbr_mat_eval.h"  // Need texturesMap[]
@@ -197,24 +197,13 @@ struct DirectLight
 // This should sample any lights in the scene, but we only have the sun
 void sampleLights(in vec3 pos, vec3 normal, in vec3 worldRayDirection, inout uint seed, out DirectLight directLight)
 {
-  vec3  radiance = vec3(0);
-  float lightPdf = 1.0;
+  vec2 randVal = vec2(rand(seed), rand(seed));
+  SkySamplingResult skySample = samplePhysicalSky(skyInfo, randVal);
 
-  // Light contribution
-  Light sun;
-  sun.type                  = eLightTypeDirectional;
-  sun.angularSizeOrInvRange = skyInfo.angularSizeOfLight;
-  sun.direction             = -skyInfo.directionToLight;
-  sun.color                 = skyInfo.lightColor;
-  sun.intensity             = 1;
-  vec2         rand_val     = vec2(rand(seed), rand(seed));
-  LightContrib lightContrib = singleLightContribution(sun, pos, normal, -worldRayDirection, rand_val);
-
-  // Return the light contribution
-  directLight.direction       = normalize(-lightContrib.incidentVector);
-  directLight.radianceOverPdf = lightContrib.intensity / lightPdf;
-  directLight.distance        = INFINITE;
-  directLight.pdf             = DIRAC;
+  directLight.direction = skySample.direction;
+  directLight.pdf       = skySample.pdf;
+  directLight.distance  = INFINITE;
+  directLight.radianceOverPdf = skySample.radiance / skySample.pdf;
 }
 
 //----------------------------------------------------------
@@ -354,7 +343,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
     // Hitting the environment, then exit
     if(payload.hitT == INFINITE)
     {
-      vec3 sky_color = proceduralSky(skyInfo, ray.direction, 0);
+      vec3 sky_color = evalPhysicalSky(skyInfo, ray.direction);
       return radiance + (sky_color * throughput);
     }
 

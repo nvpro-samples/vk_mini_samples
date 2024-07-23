@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,23 +60,11 @@ namespace fs = std::filesystem;
 #include "nvvkhl/glsl_compiler.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
+
 #if USE_SLANG
-#include <slang.h>
-#include <slang-com-ptr.h>
-
-static inline void slangCheck(SlangResult res, const char* call, const char* file, unsigned int line)
-{
-  if(res < 0)
-  {
-    std::stringstream ss;
-    ss << "Slang call '" << call << "' failed: " << file << ':' << line << ")\n";
-    std::cerr << ss.str() << std::endl;
-    assert(!"Error");
-  }
-}
-#define SLANG_CHECK(call) slangCheck(call, #call, __FILE__, __LINE__)
-
+#include "slang_compiler.hpp"
 #endif
+
 #include "nvvk/shaders_vk.hpp"
 
 // ShaderToy inputs
@@ -170,7 +158,7 @@ public:
     for(const auto& path : getShaderDirs())
       m_glslC->addInclude(path);
 #elif USE_SLANG
-    SLANG_CHECK(slang::createGlobalSession(m_slangGlobalSession.writeRef()));
+    m_slangC = std::make_unique<SlangCompiler>();
 #endif
 
     const std::string err_msg = compileShaders();
@@ -214,9 +202,8 @@ public:
       {
         openFile("buffer_a.glsl");
       }
-      bool reloadShaders = false;
-      if(ImGui::Button("Reload Shaders"))
-        reloadShaders = true;
+
+      bool reloadShaders = ImGui::Button("Reload Shaders");
       reloadShaders |= m_fileBufferA->hasChanged();
       reloadShaders |= m_fileImage->hasChanged();
       if(reloadShaders)
@@ -240,7 +227,7 @@ public:
       {
         m_pause = !m_pause;
       }
-
+      ImGui::SameLine();
       if(ImGui::Button("Reset"))
       {
         m_frame        = 0;
@@ -486,6 +473,53 @@ private:
     std::string      error_msg;
 
 #if USE_SLANG
+    // Spirv code for the shaders
+    std::vector<uint32_t> vertexSpirvCode;
+    std::vector<uint32_t> fragmentSpirvCode;
+    std::vector<uint32_t> fragmentASpirvCode;
+
+    // The shader file
+    std::vector<std::string> searchPaths    = getShaderDirs();
+    std::string              rasterFilename = nvh::findFile("raster.slang", searchPaths, true);
+
+    // Always create a new session before compiling all files
+    m_slangC->newSession();
+    {
+      nvh::ScopedTimer st("Vertex");
+
+      auto compiler = m_slangC->createCompileRequest(rasterFilename, "vertexMain", SLANG_STAGE_VERTEX);
+      {
+        nvh::ScopedTimer st("SlangCompile");
+        if(SLANG_FAILED(compiler->compile()))
+          return compiler->getDiagnosticOutput();
+      }
+      m_slangC->getSpirvCode(compiler, vertexSpirvCode);
+    }
+    {
+      nvh::ScopedTimer st("Frag Main");
+
+      auto compiler = m_slangC->createCompileRequest(rasterFilename, "fragmentMain", SLANG_STAGE_FRAGMENT);
+      compiler->addPreprocessorDefine("INCLUDE_IMAGE", "1");
+      {
+        nvh::ScopedTimer st("SlangCompile");
+        if(SLANG_FAILED(compiler->compile()))
+          return compiler->getDiagnosticOutput();
+      }
+      m_slangC->getSpirvCode(compiler, fragmentSpirvCode);
+    }
+    {
+      nvh::ScopedTimer st("Frag Buffer-A");
+
+      auto compiler = m_slangC->createCompileRequest(rasterFilename, "fragmentMain", SLANG_STAGE_FRAGMENT);
+      compiler->addPreprocessorDefine("INCLUDE_BUFFER_A", "1");
+      {
+        nvh::ScopedTimer st("SlangCompile");
+        if(SLANG_FAILED(compiler->compile()))
+          return compiler->getDiagnosticOutput();
+      }
+      m_slangC->getSpirvCode(compiler, fragmentASpirvCode);
+    }
+
     // Deleting resources, but not immediately as they are still in used
     nvvkhl::Application::submitResourceFree([vmod = m_vmodule, fmod_i = m_fmodule, fmod_a = m_fmoduleA,
                                              device = m_device, gp = m_pipelineImg, gp_a = m_pipelineBufA]() {
@@ -496,116 +530,23 @@ private:
       vkDestroyPipeline(device, gp_a, nullptr);
     });
 
-    Slang::ComPtr<slang::IBlob> vertexSpirvCode;
-    Slang::ComPtr<slang::IBlob> fragmentSpirvCode;
-    Slang::ComPtr<slang::IBlob> fragmentASpirvCode;
-    error_msg += slangCompileShader("raster", "vertexMain", false, vertexSpirvCode.writeRef());
-    error_msg += slangCompileShader("raster", "fragmentMain", true, fragmentSpirvCode.writeRef());
-    error_msg += slangCompileShader("raster", "fragmentMain", false, fragmentASpirvCode.writeRef());
-    if(!error_msg.empty())
-      return error_msg;
-
-    m_vmodule = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(vertexSpirvCode->getBufferPointer()),
-                                         vertexSpirvCode->getBufferSize());
-    m_fmodule = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentSpirvCode->getBufferPointer()),
-                                         fragmentSpirvCode->getBufferSize());
-    m_fmoduleA = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentASpirvCode->getBufferPointer()),
-                                          fragmentASpirvCode->getBufferSize());
-    m_dutil->setObjectName(m_vmodule, "Vertex");
-    m_dutil->setObjectName(m_fmodule, "Image");
-    m_dutil->setObjectName(m_fmoduleA, "BufferA");
+    {
+      nvh::ScopedTimer st("Create Vulkan Shader Modules");
+      m_vmodule  = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(vertexSpirvCode.data()),
+                                            vertexSpirvCode.size() * sizeof(uint32_t));
+      m_fmodule  = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentSpirvCode.data()),
+                                            fragmentSpirvCode.size() * sizeof(uint32_t));
+      m_fmoduleA = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentASpirvCode.data()),
+                                            fragmentASpirvCode.size() * sizeof(uint32_t));
+      m_dutil->setObjectName(m_vmodule, "Vertex");
+      m_dutil->setObjectName(m_fmodule, "Image");
+      m_dutil->setObjectName(m_fmoduleA, "BufferA");
+    }
 
 #endif
     return error_msg;
   }
 
-#if USE_SLANG
-  std::string slangCompileShader(const std::string& moduleName, const std::string& entryPointName, bool macroImage, slang::IBlob** outCode)
-  {
-    nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
-    std::string      error_msg;
-
-    // Create a compilation session to generate SPIRV code from Slang source.
-    slang::TargetDesc targetDesc           = {};
-    targetDesc.format                      = SLANG_SPIRV;
-    targetDesc.profile                     = m_slangGlobalSession->findProfile("glsl_460");
-    targetDesc.flags                       = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
-    targetDesc.forceGLSLScalarBufferLayout = true;
-
-    slang::SessionDesc sessionDesc = {};
-    sessionDesc.targets            = &targetDesc;
-    sessionDesc.targetCount        = 1;
-    sessionDesc.allowGLSLSyntax    = true;
-
-    // Search paths
-    std::vector<std::string> searchStringPaths = getShaderDirs();
-    std::vector<const char*> searchPaths;
-    searchPaths.reserve(searchStringPaths.size());
-    for(const auto& str : searchStringPaths)
-    {
-      searchPaths.push_back(str.c_str());
-    }
-    searchPaths.push_back(PROJECT_RELDIRECTORY);
-    sessionDesc.searchPathCount = (SlangInt)(searchPaths.size());
-    sessionDesc.searchPaths     = searchPaths.data();
-
-    // Preprocessor
-    slang::PreprocessorMacroDesc marcoDesc{};
-    if(macroImage)
-    {
-      marcoDesc.name                     = "INCLUDE_IMAGE";
-      marcoDesc.value                    = "1";
-      sessionDesc.preprocessorMacroCount = 1;
-      sessionDesc.preprocessorMacros     = &marcoDesc;
-    }
-
-    Slang::ComPtr<slang::ISession> slangSession;
-    SLANG_CHECK(m_slangGlobalSession->createSession(sessionDesc, slangSession.writeRef()));
-
-    slang::IModule* rasterSlangModule = nullptr;
-    {  // Loading the Slang shader file
-      nvh::ScopedTimer            st1("Slang Load Module");
-      Slang::ComPtr<slang::IBlob> diagnosticBlob;
-      rasterSlangModule = slangSession->loadModule(moduleName.c_str(), diagnosticBlob.writeRef());
-      if(diagnosticBlob != nullptr)
-        error_msg = (const char*)diagnosticBlob->getBufferPointer();
-      if(!rasterSlangModule)
-        return error_msg;
-    }
-
-    Slang::ComPtr<slang::IEntryPoint> entryPoint;
-    SLANG_CHECK(rasterSlangModule->findEntryPointByName(entryPointName.c_str(), entryPoint.writeRef()));
-
-    std::vector<slang::IComponentType*> componentTypes;
-    componentTypes.push_back(rasterSlangModule);
-    componentTypes.push_back(entryPoint);  // index 0
-
-
-    Slang::ComPtr<slang::IComponentType> composedProgram;
-    {
-      nvh::ScopedTimer            st2("Slang Compose");
-      Slang::ComPtr<slang::IBlob> diagnosticsBlob;
-      SlangResult result = slangSession->createCompositeComponentType(componentTypes.data(), componentTypes.size(),
-                                                                      composedProgram.writeRef(), diagnosticsBlob.writeRef());
-      if(diagnosticsBlob != nullptr)
-        error_msg = (const char*)diagnosticsBlob->getBufferPointer();
-      if(SLANG_FAILED(result) || !error_msg.empty())
-        return error_msg;
-    }
-
-    {
-      nvh::ScopedTimer            st3("Slang Get Entry Point");
-      Slang::ComPtr<slang::IBlob> diagnosticsBlob;
-      SlangResult result = composedProgram->getEntryPointCode(0, 0, outCode, diagnosticsBlob.writeRef());
-      if(diagnosticsBlob != nullptr)
-        error_msg = (const char*)diagnosticsBlob->getBufferPointer();
-      if(SLANG_FAILED(result) || !error_msg.empty())
-        return error_msg;
-    }
-
-    return error_msg;
-  }
-#endif
 
   void updateUniforms()
   {
@@ -699,7 +640,7 @@ private:
   std::unique_ptr<FileCheck>                    m_fileImage;
 
 #if USE_SLANG
-  Slang::ComPtr<slang::IGlobalSession> m_slangGlobalSession;
+  std::unique_ptr<SlangCompiler> m_slangC;
 #endif
 
 

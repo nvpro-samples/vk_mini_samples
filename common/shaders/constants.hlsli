@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,5 +28,6 @@ static const float M_PI_2 = 1.5707963267948F; // PI/2
 static const float M_PI_4 = 0.7853981633974F; // PI/4
 static const float M_1_OVER_PI = 0.3183098861837F; // 1/PI
 static const float M_2_OVER_PI = 0.6366197723675F; // 2/PI
+static const float M_1_PI      = 0.3183098861837F;  // 1/PI
 
 #endif 

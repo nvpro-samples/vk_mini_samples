@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 //////////////////////////////////////////////////////////////////////////
 /*
 
-  This sample raytrace a scene made of multiple primitives. 
+  This sample raytraces a scene made of multiple primitives. 
   - The scene is created in createScene()
   - Then Vulkan buffers holding the scene are created in createVkBuffers()
   - Bottom and Top level acceleration structures are using the Vulkan buffers 
     and scene description in createBottomLevelAS() and createTopLevelAS()
   - The raytracing pipeline, composed of RayGen, Miss, ClosestHit shaders
-    and the creation of the shading binding table, is done increateRtxPipeline()
+    and the creation of the shading binding table, is done in createRtxPipeline()
   - Rendering is done in onRender()
 
 
@@ -55,6 +55,7 @@
 #include "nvvk/acceleration_structures.hpp"
 
 #include "shaders/dh_bindings.h"
+#include "nvvkhl/sky.hpp"
 
 namespace DH {
 using namespace glm;
@@ -82,7 +83,7 @@ const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmiss_glsl), s
 #endif
 
 
-#define MAXRAYRECURSIONDEPTH 5
+#define MAXRAYRECURSIONDEPTH 10
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Ray trace multiple primitives
@@ -154,9 +155,10 @@ public:
       ImGui::Separator();
       ImGui::Text("Sun Orientation");
       PropertyEditor::begin();
-      glm::vec3 dir = m_skyParams.directionToLight;
-      ImGuiH::azimuthElevationSliders(dir, false);
-      m_skyParams.directionToLight = dir;
+      //glm::vec3 dir = m_skyParams.directionToLight;
+      ImGuiH::azimuthElevationSliders(m_skyParams.directionToLight, false);
+      //m_skyParams.directionToLight = dir;
+      //nvvkhl::skyParametersUI(m_skyParams);
       PropertyEditor::end();
       ImGui::End();
     }
@@ -204,7 +206,7 @@ public:
     // Update uniform buffers
     DH::FrameInfo finfo{.projInv = glm::inverse(proj), .viewInv = glm::inverse(CameraManip.getMatrix())};
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);  // Update FrameInfo
-    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);  // Update the sky
+    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::SimpleSkyParameters), &m_skyParams);  // Update the sky
     memoryBarrier(cmd);  // Make sure the data has moved to device before rendering
 
     // Ray trace
@@ -270,13 +272,13 @@ private:
     CameraManip.setLookat({-0.5F, 0.0F, 5.0F}, {-0.5F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
 
     // Default parameters for overall material
-    m_pushConst.intensity = 5.0F;
+    m_pushConst.intensity = 2.5F;
     m_pushConst.maxDepth  = 5;
-    m_pushConst.roughness = 1.0F;
-    m_pushConst.metallic  = 0.2F;
+    m_pushConst.roughness = 0.0F;
+    m_pushConst.metallic  = 0.6F;
 
     // Default Sky values
-    m_skyParams = nvvkhl_shaders::initSkyShaderParameters();
+    m_skyParams = nvvkhl_shaders::initSimpleSkyParameters();
   }
 
 
@@ -307,7 +309,7 @@ private:
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
     // Create the buffer of sky parameters, updated at each frame
-    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::SimpleSkyParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bSkyParams.buffer);
 
@@ -689,7 +691,7 @@ private:
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
-  nvvkhl_shaders::ProceduralSkyShaderParameters m_skyParams{};
+  nvvkhl_shaders::SimpleSkyParameters m_skyParams{};
 
   // Resources
   struct PrimitiveMeshVk
@@ -771,7 +773,7 @@ int main(int argc, char** argv)
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
 #if(VK_HEADER_VERSION >= 283)
-  // Check if ray tracing is supported
+  // Check if ray tracing validation is supported
   if(validationFeatures.rayTracingValidation == VK_TRUE)
   {
     LOGI("Ray tracing validation supported");

@@ -53,7 +53,7 @@ layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
 layout(set = 0, binding = B_outHeatmap, rgba32f) uniform image2D heatmap;
 layout(set = 0, binding = B_frameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
-layout(set = 0, binding = B_skyParam) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_skyParam) uniform SkyInfo_ { SimpleSkyParameters skyInfo; };
 layout(set = 0, binding = B_heatStats) buffer HeatStats_ { HeatStats heatStats; };
 layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
 layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
@@ -160,7 +160,7 @@ vec3 pathTrace(Ray r, inout uint seed)
     // Hitting the environment, then exit
     if(payload.hitT == INFINITE)
     {
-      vec3 sky_color = proceduralSky(skyInfo, r.direction, 0.0F);
+      vec3 sky_color = evalSimpleSky(skyInfo, r.direction);
       return radiance + (sky_color * throughput);
     }
 

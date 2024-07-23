@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2022 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,256 +30,272 @@
 #include "pbr_mat_struct.hlsli"
 #include "dh_scn_desc.hlsli"
 
-//  https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#acknowledgments AppendixB
-
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-// MATERIAL FOR EVALUATION
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-
-//-----------------------------------------------------------------------
-static const float g_min_reflectance = 0.04F;
-//-----------------------------------------------------------------------
-
 #ifndef NO_TEXTURES
 #define USE_TEXTURES
 #endif
 
-// sRGB to linear approximation, see http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
-float4 srgbToLinear(in float4 sRgb)
+
+struct MeshState
 {
-  //return float4(pow(sRgb.xyz, float3(2.2f)), sRgb.w);
-  float3 rgb = sRgb.xyz * (sRgb.xyz * (sRgb.xyz * 0.305306011F + 0.682171111F) + 0.012522878F);
-  return float4(rgb, sRgb.a);
-}
+  float3 N; // Normal
+  float3 T; // Tangent
+  float3 B; // Bitangent
+  float3 Ng; // Geometric normal
+  float2 tc; // Texture coordinates
+  bool isInside;
+};
+
+static const float g_min_reflectance = 0.04F;
+
+// If both anisotropic roughness values fall below this threshold, the BSDF switches to specular.
+#define MICROFACET_MIN_ROUGHNESS 0.0014142f
+
+
+#ifdef USE_TEXTURES
+#ifdef __SLANG__
+#define GET_TEXTURE(t, s, i, c) t[i].Sample(c)
+#else
+#define GET_TEXTURE(t, s, i, c) t[i].SampleLevel(s, c, 0)
+#endif
+#else
+#define GET_TEXTURE(t, s, i, c) float4(1.0F)
+#endif
 
 
 //-----------------------------------------------------------------------
 // From the incoming material return the material for evaluating PBR
 //-----------------------------------------------------------------------
-PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
+PbrMaterial evaluateMaterial(GltfShadeMaterial material,MeshState mesh
 #ifdef USE_TEXTURES
 #ifdef __SLANG__
-  in Sampler2D texturesMap[], 
+  ,Sampler2D texturesMap[]
 #else
-  in Texture2D texturesMap[],
-  in SamplerState samplers,
+  ,Texture2D texturesMap[]
 #endif
+  ,SamplerState samplers
 #endif
-  in float3 normal,
-  in float3 tangent,
-  in float3 bitangent,
-  in float2 texCoord,
-  in bool isInside
 )
 {
-  float perceptual_roughness = 0.0F;
-  float metallic = 0.0F;
-  float3 f0 = float3(0.0F, 0.0F, 0.0F);
-  float3 f90 = float3(1.0F, 1.0F, 1.0F);
-  float4 baseColor = float4(0.0F, 0.0F, 0.0F, 1.0F);
+   // Material Evaluated
+  PbrMaterial pbrMat;
 
-  // Normal Map
-  #ifdef USE_TEXTURES
-  if(material.normalTexture > -1)
+  // KHR_texture_transform
+  float2 texCoord = float2(mul(float3(mesh.tc,1), material.uvTransform).xy);
+
+  // Base Color/Albedo may be defined from a base texture or a flat color
+  float4 baseColor = material.pbrBaseColorFactor;
+  if(material.pbrBaseColorTexture > -1.0F)
   {
-    float3x3 tbn = float3x3(tangent, bitangent, normal);
-    #ifdef USE_TEXTURES
-#ifdef __SLANG__
-    float3 normal_vector = texturesMap[material.normalTexture].Sample(texCoord).xyz;
-#else
-    float3 normal_vector = texturesMap[material.normalTexture].SampleLevel(samplers, texCoord.xy, 0).xyz;
-#endif
-#endif
-    normal_vector = normal_vector * 2.0F - 1.0F;
-    normal_vector *= float3(material.normalTextureScale, material.normalTextureScale, 1.0F);
-    normal = normalize(mul(normal_vector, tbn));
+    baseColor *= GET_TEXTURE(texturesMap, samplers, material.pbrBaseColorTexture,texCoord);
   }
-  #endif
+  pbrMat.baseColor = baseColor.
+rgb;
+  pbrMat.opacity = baseColor.
+a;
 
 
   // Metallic-Roughness
+  float roughness = material.pbrRoughnessFactor;
+  float metallic = material.pbrMetallicFactor;
+  if(material.pbrMetallicRoughnessTexture > -1.0F)
   {
-    perceptual_roughness = material.pbrRoughnessFactor;
-    metallic = material.pbrMetallicFactor;
-    if(material.pbrMetallicRoughnessTexture > -1)
-    {
-      // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-      float4 mr_sample = texturesMap[material.pbrMetallicRoughnessTexture].Sample(texCoord);
-#else
-      float4 mr_sample = texturesMap[material.pbrMetallicRoughnessTexture].SampleLevel(samplers, texCoord.xy, 0);
-#endif
-      perceptual_roughness *= mr_sample.g;
-      metallic *= mr_sample.b;
-#endif
-    }
-
-    // The albedo may be defined from a base texture or a flat color
-    baseColor = material.pbrBaseColorFactor;
-    if(material.pbrBaseColorTexture > -1)
-    {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-      baseColor *= texturesMap[material.pbrBaseColorTexture].Sample(texCoord);
-#else
-      baseColor *= texturesMap[material.pbrBaseColorTexture].SampleLevel(samplers, texCoord.xy, 0);
-#endif
-#endif
-    }
-    float3 specular_color = lerp(float3(g_min_reflectance, g_min_reflectance, g_min_reflectance), baseColor.xyz, metallic);
-    f0 = specular_color;
+    // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
+    float4 mr_sample = GET_TEXTURE(texturesMap, samplers, material.pbrMetallicRoughnessTexture,texCoord);
+    roughness *= mr_sample.
+g;
+    metallic *= mr_sample.
+b;
   }
+  float r2 = roughness * roughness;
+  pbrMat.roughness = float2(r2, r2); // Square roughness for the microfacet model
+  pbrMat.metallic = clamp(metallic,0.0F,1.0F);
 
-  // Protection
-  metallic = clamp(metallic, 0.0F, 1.0F);
-
+  // Normal Map
+  float3 normal = mesh.N;
+  float3 tangent = mesh.T;
+  float3 bitangent = mesh.B;
+  if(material.normalTexture > -1)
+  {
+    float3x3 tbn = float3x3(mesh.T,mesh.B,mesh.N);
+    float3 normal_vector = GET_TEXTURE(texturesMap, samplers, material.normalTexture,texCoord).xyz;
+    normal_vector = normal_vector * 2.0F - 1.0F;
+    normal_vector *= float3(material.normalTextureScale,material.normalTextureScale,1.0F);
+    normal = normalize(mul(normal_vector, tbn));
+  }
+  // We should always have B = cross(N, T) * bitangentSign. Orthonormalize,
+  // in case the normal was changed or the input wasn't orthonormal:
+  pbrMat.N =
+normal;
+  pbrMat.B = cross(pbrMat.N,tangent);
+  float bitangentSign = sign(dot(bitangent,pbrMat.B));
+  pbrMat.B = normalize(pbrMat.B) *
+bitangentSign;
+  pbrMat.T = normalize(cross(pbrMat.B,pbrMat.N)) *
+bitangentSign;
+  pbrMat.Ng = mesh.
+Ng;
 
   // Emissive term
   float3 emissive = material.emissiveFactor;
-  if(material.emissiveTexture > -1)
+  if(material.emissiveTexture > -1.0F)
   {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-    emissive *= float3(texturesMap[material.emissiveTexture].Sample(texCoord).xyz);
-#else
-    emissive *= float3(texturesMap[material.emissiveTexture].SampleLevel(samplers, texCoord.xy, 0).xyz);
-#endif
-#endif
+    emissive *= float3(GET_TEXTURE(texturesMap, samplers, material.emissiveTexture,texCoord).xyz);
   }
-  
+  pbrMat.emissive = max(float3(0.0F,0.0F,0.0F),emissive);
+
   // KHR_materials_specular
   // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_materials_specular
-  float4 specularColorTexture = float4(1.0F, 1.0F, 1.0F, 1.0F);
+  pbrMat.specularColor = material.
+specularColorFactor;
   if(material.specularColorTexture > -1)
   {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-    specularColorTexture = texturesMap[material.specularColorTexture].SampleLevel(texCoord, 0);
-#else
-    specularColorTexture = texturesMap[material.specularColorTexture].SampleLevel(samplers, texCoord.xy, 0);
-#endif
-#endif
+    pbrMat.specularColor *= GET_TEXTURE(texturesMap, samplers, material.specularColorTexture,texCoord).
+rgb;
   }
-  float specularTexture = 1.0F;
+
+  pbrMat.specular = material.
+specularFactor;
   if(material.specularTexture > -1)
   {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-    specularTexture = texturesMap[material.specularTexture].SampleLevel(texCoord, 0).a;
-#else
-    specularTexture = texturesMap[material.specularTexture].SampleLevel(samplers, texCoord.xy, 0).a;
-#endif
-#endif
+    pbrMat.specular *= GET_TEXTURE(texturesMap, samplers, material.specularTexture,texCoord).
+a;
   }
-  
+
 
   // Dielectric Specular
-  float ior1 = 1.0F;
-  float ior2 = material.ior;
-  if(isInside)
+  float ior1 = 1.0F; // IOR of the current medium (e.g., air)
+  float ior2 = material.ior; // IOR of the material
+  if(mesh.isInside && (material.thicknessFactor > 0))  // If the material is thin-walled, we don't need to consider the inside IOR.
   {
-    ior1 = material.ior;
+    ior1 = material.
+ior;
     ior2 = 1.0F;
   }
-  float iorRatio = ((ior1 - ior2) / (ior1 + ior2));
-  float iorRatioSqr = iorRatio * iorRatio;
-
-  float3 dielectricSpecularF0 = material.specularColorFactor * specularColorTexture.rgb;
-  float dielectricSpecularF90 = material.specularFactor * specularTexture;
-
-  f0 = lerp(min(iorRatioSqr * dielectricSpecularF0, float3(1.0F, 1.0F, 1.0F)) * dielectricSpecularF0, baseColor.rgb, metallic);
-  float tempf90 = lerp(dielectricSpecularF90, 1.0F, metallic);
-  f90 = float3(tempf90, tempf90, tempf90);
-  
-
-  // Material Evaluated
-  PbrMaterial pbrMat;
-  pbrMat.albedo = baseColor;
-  pbrMat.f0 = f0;
-  pbrMat.f90 = f90;
-  pbrMat.roughness = perceptual_roughness;
-  pbrMat.metallic = metallic;
-  pbrMat.emissive = max(float3(0.0F, 0.0F, 0.0F), emissive);
-  pbrMat.normal = normal;
-  pbrMat.eta = (material.thicknessFactor == 0.0F) ? 1.0F : ior1 / ior2;
+  pbrMat.ior1 =
+ior1;
+  pbrMat.ior2 =
+ior2;
 
 
   // KHR_materials_transmission
-  pbrMat.transmissionFactor = material.transmissionFactor;
+  pbrMat.transmission = material.
+transmissionFactor;
   if(material.transmissionTexture > -1)
   {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-    pbrMat.transmissionFactor *= texturesMap[material.transmissionTexture].SampleLevel(texCoord, 0).r;
-#else
-    pbrMat.transmissionFactor *= texturesMap[material.transmissionTexture].SampleLevel(samplers, texCoord.xy, 0).r;
-#endif
-#endif
+    pbrMat.transmission *= GET_TEXTURE(texturesMap, samplers, material.transmissionTexture,texCoord).
+r;
   }
-
-  // KHR_materials_ior
-  pbrMat.ior = material.ior;
 
   // KHR_materials_volume
-  pbrMat.attenuationColor = material.attenuationColor;
-  pbrMat.attenuationDistance = material.attenuationDistance;
-  pbrMat.thicknessFactor = material.thicknessFactor;
+  pbrMat.attenuationColor = material.
+attenuationColor;
+  pbrMat.attenuationDistance = material.
+attenuationDistance;
+  pbrMat.thickness = material.
+thicknessFactor;
 
   // KHR_materials_clearcoat
-  pbrMat.clearcoatFactor = material.clearcoatFactor;
-  pbrMat.clearcoatRoughness = material.clearcoatRoughness;
+  pbrMat.clearcoat = material.
+clearcoatFactor;
+  pbrMat.clearcoatRoughness = material.
+clearcoatRoughness;
+  pbrMat.Nc = pbrMat.
+N;
   if(material.clearcoatTexture > -1)
   {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-    pbrMat.clearcoatFactor *= texturesMap[material.clearcoatTexture].SampleLevel(texCoord, 0).r;
-#else
-    pbrMat.clearcoatFactor *= texturesMap[material.clearcoatTexture].SampleLevel(samplers, texCoord.xy, 0).r;
-#endif
-#endif
+    pbrMat.clearcoat *= GET_TEXTURE(texturesMap, samplers, material.clearcoatTexture,texCoord).
+r;
   }
+
   if(material.clearcoatRoughnessTexture > -1)
   {
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-    pbrMat.clearcoatRoughness *= texturesMap[material.clearcoatRoughnessTexture].SampleLevel(texCoord, 0).g;
-#else
-    pbrMat.clearcoatRoughness *= texturesMap[material.clearcoatRoughnessTexture].SampleLevel(samplers, texCoord.xy, 0).g;
-#endif
-#endif
+    pbrMat.clearcoatRoughness *= GET_TEXTURE(texturesMap, samplers, material.clearcoatRoughnessTexture,texCoord).
+g;
   }
-  pbrMat.clearcoatRoughness = max(pbrMat.clearcoatRoughness, 0.001);
+  pbrMat.clearcoatRoughness = max(pbrMat.clearcoatRoughness,0.001F);
 
-  return pbrMat;
+  if(material.clearcoatNormalTexture > -1)
+  {
+    float3x3 tbn = float3x3(pbrMat.T,pbrMat.B,pbrMat.Nc);
+    float3 normal_vector = GET_TEXTURE(texturesMap, samplers, material.clearcoatNormalTexture,texCoord).xyz;
+    normal_vector = normal_vector * 2.0F - 1.0F;
+    pbrMat.Nc = normalize(mul(normal_vector,tbn));
+  }
+
+  // Iridescence
+  float iridescence = material.iridescenceFactor;
+  if(material.iridescenceTexture > -1)
+  {
+    iridescence *= GET_TEXTURE(texturesMap, samplers, material.iridescenceTexture,texCoord).
+x;
+  }
+  float iridescenceThickness = material.iridescenceThicknessMaximum;
+  if(material.iridescenceThicknessTexture > -1)
+  {
+    const float t = GET_TEXTURE(texturesMap, samplers, material.iridescenceThicknessTexture,texCoord).y;
+    iridescenceThickness = lerp(material.iridescenceThicknessMinimum,material.iridescenceThicknessMaximum,t);
+  }
+  pbrMat.iridescence = (iridescenceThickness > 0.0f) ? iridescence : 0.0f; // No iridescence when the thickness is zero.
+  pbrMat.iridescenceIor = material.
+iridescenceIor;
+  pbrMat.iridescenceThickness =
+iridescenceThickness;
+
+  // KHR_materials_anisotropy
+  float anisotropyStrength = material.anisotropyStrength;
+  float2 anisotropyDirection = float2(1.0f,0.0f); // By default the anisotropy strength is along the tangent.
+  if(material.anisotropyTexture > -1)
+  {
+    const float4 anisotropyTex = GET_TEXTURE(texturesMap, samplers, material.anisotropyTexture,texCoord);
+
+    // .xy encodes the direction in (tangent, bitangent) space. Remap from [0, 1] to [-1, 1].
+    anisotropyDirection = normalize(float2(anisotropyTex.xy) * 2.0f - 1.0f);
+    // .z encodes the strength in range [0, 1].
+    anisotropyStrength *= anisotropyTex.
+z;
+  }
+
+  // If the anisotropyStrength == 0.0f (default), the roughness is isotropic.
+  // No need to rotate the anisotropyDirection or tangent space.
+  if(anisotropyStrength > 0.0F)
+  {
+    pbrMat.roughness.x = lerp(pbrMat.roughness.y,1.0f,anisotropyStrength * anisotropyStrength);
+
+    const float s = sin(material.anisotropyRotation); // FIXME PERF Precalculate sin, cos on host.
+    const float c = cos(material.anisotropyRotation);
+
+    anisotropyDirection =
+        float2(c * anisotropyDirection.x + s * anisotropyDirection.y,c * anisotropyDirection.y - s * anisotropyDirection.x);
+
+    const float3 T_aniso = pbrMat.T * anisotropyDirection.x + pbrMat.B * anisotropyDirection.y;
+
+    pbrMat.B = normalize(cross(pbrMat.N,T_aniso));
+    pbrMat.T = cross(pbrMat.B,pbrMat.N);
+  }
+
+
+  // KHR_materials_sheen
+  float3 sheenColor = material.sheenColorFactor;
+  if(material.sheenColorTexture > -1)
+  {
+    sheenColor *= float3(GET_TEXTURE(texturesMap, samplers, material.sheenColorTexture,texCoord).xyz); // sRGB
+  }
+  pbrMat.sheenColor =
+sheenColor; // No sheen if this is black.
+
+  float sheenRoughness = material.sheenRoughnessFactor;
+  if(material.sheenRoughnessTexture > -1)
+  {
+    sheenRoughness *= GET_TEXTURE(texturesMap, samplers, material.sheenRoughnessTexture,texCoord).
+w;
+  }
+  sheenRoughness = max(MICROFACET_MIN_ROUGHNESS,sheenRoughness);
+  pbrMat.sheenRoughness =
+sheenRoughness;
+
+  return
+pbrMat;
 }
 
-PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-  in Sampler2D texturesMap[], 
-#else
-  in Texture2D texturesMap[],
-  in SamplerState samplers,
-#endif
-#endif
-  in float3 normal,
-  in float3 tangent,
-  in float3 bitangent,
-  in float2 texCoord)
-{
-  return evaluateMaterial(material,
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-  texturesMap, 
-#else
-  texturesMap,
-  samplers,
-#endif 
-#endif
-  normal, tangent, bitangent, texCoord, false);
-}
 
 #endif  // MAT_EVAL_H

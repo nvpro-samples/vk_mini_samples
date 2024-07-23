@@ -9,11 +9,8 @@ include(cmake/CPM.cmake)
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.1.20")
+set(Slang_VERSION  "2024.1.30")
 find_package(Slang)
-
-# Adding NVTX
-CPMAddPackage(NAME NVTX GITHUB_REPOSITORY NVIDIA/NVTX GIT_TAG release-v3 SOURCE_SUBDIR c)
 
 # Adding HLSL compiler function
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
@@ -159,7 +156,7 @@ function(create_sample  PROJECT_NAME)
         debug ${LIBRARIES_DEBUG}
         ${PLATFORM_LIBRARIES}
         ${UNIXLINKLIBS}
-        nvtx3-cpp
+        nvtx
     )
 
     # Compile definitions
@@ -212,16 +209,16 @@ function(create_sample  PROJECT_NAME)
     endif()
 
     if(USE_SLANG)
-      target_include_directories(${PROJECT_NAME} PRIVATE ${Slang_SDK})
+      target_include_directories(${PROJECT_NAME} PRIVATE ${Slang_SDK}/include)
       target_link_libraries(${PROJECT_NAME} PRIVATE ${Slang_LIBRARY})
       if(ARGS_SHADER_SLANG) 
           foreach(SLANG_FILE ${ARGS_SHADER_SLANG})
               compile_slang_file(
                 SOURCE_FILE ${SLANG_FILE}
-                FLAGS -I${SAMPLES_ROOT_DIR} ${ARGS_FLAGS}
+                FLAGS -I${SAMPLES_ROOT_DIR} -I${NVPRO_CORE_DIR} ${ARGS_FLAGS}
                 )
-              target_sources(${PROJECT_NAME} PRIVATE ${SLANG_OUTPUT_FILES})
-              source_group("Shaders" FILES ${SLANG_OUTPUT_FILES})
+              target_sources(${PROJECT_NAME} PRIVATE ${SLANG_FILE})
+              source_group("Shaders" FILES ${SLANG_FILE})
           endforeach()
       endif()
     endif()

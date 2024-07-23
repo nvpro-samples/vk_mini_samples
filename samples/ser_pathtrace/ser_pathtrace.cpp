@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -265,7 +265,7 @@ public:
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
     // Update the sky
-    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &m_skyParams);
+    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::SimpleSkyParameters), &m_skyParams);
 
     // Reset maximum for current frame
     vkCmdFillBuffer(cmd, m_bHeatStats.buffer, (uint32_t(m_frame) & 1) * sizeof(uint32_t), sizeof(uint32_t), 1);
@@ -384,7 +384,7 @@ private:
     m_pushConst.maxSamples            = 2;
 
     // Default Sky values
-    m_skyParams = nvvkhl_shaders::initSkyShaderParameters();
+    m_skyParams = nvvkhl_shaders::initSimpleSkyParameters();
   }
 
 
@@ -423,12 +423,12 @@ private:
     m_dutil->DBG_NAME(m_bFrameInfo.buffer);
 
     // Create the buffer of sky parameters, updated at each frame
-    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::SimpleSkyParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bSkyParams.buffer);
 
     // Create the buffer for the heatmap statistics
-    m_bHeatStats = m_alloc->createBuffer(sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    m_bHeatStats = m_alloc->createBuffer(sizeof(uint32_t) * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     m_dutil->DBG_NAME(m_bHeatStats.buffer);
 
     // Primitive instance information
@@ -817,7 +817,7 @@ private:
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
   std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
-  nvvkhl_shaders::ProceduralSkyShaderParameters m_skyParams{};
+  nvvkhl_shaders::SimpleSkyParameters m_skyParams{};
 
   // Resources
   struct PrimitiveMeshVk

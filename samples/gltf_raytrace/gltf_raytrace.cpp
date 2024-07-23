@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,7 +51,6 @@
 #include "nvvkhl/scene_camera.hpp"
 #include "nvvkhl/sky.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
-
 
 #include "shaders/dh_bindings.h"
 #include "utils.hpp"
@@ -107,7 +106,7 @@ public:
     m_device                     = device;
     const uint32_t c_queue_index = app->getQueue(1).familyIndex;
 
-    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);                    // Debug utility
+    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
     m_alloc      = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
              .physicalDevice = app->getPhysicalDevice(),
@@ -176,7 +175,7 @@ public:
         }
         if(PropertyEditor::treeNode("Sky"))
         {
-          changed |= nvvkhl::skyParametersUI(m_skyParams);
+          changed |= nvvkhl::physicalSkyUI(m_skyParams);
           PropertyEditor::treePop();
         }
         PropertyEditor::end();
@@ -220,8 +219,7 @@ public:
     proj[1][1] *= -1;
     DH::CameraInfo finfo{.projInv = glm::inverse(proj), .viewInv = glm::inverse(CameraManip.getMatrix())};
     vkCmdUpdateBuffer(cmd, m_bCameraInfo.buffer, 0, sizeof(DH::CameraInfo), &finfo);
-    auto shaderSkyParams = nvvkhl::fillSkyShaderParameters(m_skyParams);
-    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), &shaderSkyParams);  // Update the sky
+    vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::PhysicalSkyParameters), &m_skyParams);  // Update the sky
 
     m_pushConst.frame = m_frame;
 
@@ -267,8 +265,7 @@ private:
     m_pushConst.maxSamples            = 2;
 
     // Default sky parameters
-    m_skyParams.intensity   = 0.06F;
-    m_skyParams.angularSize = glm::radians(4.0F);
+    m_skyParams = nvvkhl_shaders::initPhysicalSkyParameters();
   }
 
   // Create all Vulkan buffer data
@@ -279,7 +276,7 @@ private:
                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bCameraInfo.buffer);
     // Create the buffer of sky parameters, updated at each frame
-    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::ProceduralSkyShaderParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::SimpleSkyParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_dutil->DBG_NAME(m_bSkyParams.buffer);
   }
@@ -425,7 +422,7 @@ private:
   nvvk::Buffer m_bSkyParams;   // Sky parameters
 
   // Data and setting
-  nvvkhl::SkyParameters m_skyParams = {};
+  nvvkhl_shaders::PhysicalSkyParameters m_skyParams = {};
 
   // Pipeline
   DH::PushConstant m_pushConst{};  // Information sent to the shader
@@ -470,8 +467,8 @@ auto main(int argc, char** argv) -> int
   vkContext.init(vkSetup);
 
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = false;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = false;
   spec.instance       = vkContext.m_instance;
   spec.device         = vkContext.m_device;
   spec.physicalDevice = vkContext.m_physicalDevice;

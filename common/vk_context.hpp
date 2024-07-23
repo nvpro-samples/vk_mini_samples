@@ -16,13 +16,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
 {
   if(messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
   {
-    // To ignore specific message, insert it to settings.ignoreDbgMessages
     auto ignoredMsg = reinterpret_cast<std::unordered_set<uint32_t>*>(userData);
     if(ignoredMsg->find(callbackData->messageIdNumber) != ignoredMsg->end())
       return VK_FALSE;
     fprintf(stderr, "%s\n", callbackData->pMessage);
 #if defined(_MSVC_LANG)
-    __debugbreak();
+    __debugbreak();  // If you break here, there is a Vulkan error that needs to be fixed
+                     // To ignore specific message, insert it to settings.ignoreDbgMessages
+                     // ex: "MessageID = 0x30b6e267"  ->  settings.ignoreDbgMessages.push_back(0x30b6e267);
 #elif defined(LINUX)
     raise(SIGTRAP);
 #endif
@@ -75,7 +76,7 @@ struct VkContextSettings
   bool enableValidationLayers = false;  // Disable validation layers in release
   bool verbose                = false;
 #else
-  bool enableValidationLayers = false;  // Enable validation layers
+  bool enableValidationLayers = true;  // Enable validation layers
   bool verbose                = true;
 #endif
 };
@@ -229,7 +230,7 @@ private:
   {
     // nvh::ScopedTimer st(__FUNCTION__);
     // Chain all custom features to the pNext chain of m_deviceFeatures
-    for(auto extension : m_settings.deviceExtensions)
+    for(const auto& extension : m_settings.deviceExtensions)
     {
       if(extension.feature)
         prependFeatures(reinterpret_cast<VkBaseOutStructure*>(&m_deviceFeatures),
@@ -523,7 +524,7 @@ inline void printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
     vkGetPhysicalDeviceProperties(device, &properties);
     LOGI(" - %s\n", properties.deviceName);
   }
-  LOGI("Using this GPU:\n", properties.deviceName);
+  LOGI("Using this GPU: %s\n", properties.deviceName);
   vkGetPhysicalDeviceProperties(usedGpu, &properties);
   printPhysicalDeviceProperties(properties);
 }

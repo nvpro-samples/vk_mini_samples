@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,7 +33,7 @@ static const int USE_SER = 1; // Missing Specialization constant feature #Slang
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
 [[vk::binding(B_outHeatmap)]] RWTexture2D<float4> outHeatmap;
 [[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
+[[vk::binding(B_skyParam)]] ConstantBuffer<SimpleSkyParameters> skyInfo;
 [[vk::binding(B_heatStats)]] RWStructuredBuffer<HeatStats> heatStats;
 [[vk::binding(B_materials)]] StructuredBuffer<float4> materials;
 [[vk::binding(B_instances)]] StructuredBuffer<InstanceInfo> instanceInfo;
@@ -173,7 +173,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
       // Hitting the environment, then exit
       if (payload.hitT == INFINITE)
       {
-          float3 sky_color = proceduralSky(skyInfo, r.Direction, 0.0F);
+          float3 sky_color = evalSimpleSky(skyInfo, r.Direction);
           return radiance + (sky_color * throughput);
       }
 
@@ -188,17 +188,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
       float3 L = normalize(skyInfo.directionToLight);
 
       // Setting up the material
-      PbrMaterial pbrMat;
-      pbrMat.albedo = albedo;
-      pbrMat.roughness = pushConst.roughness;
-      pbrMat.metallic = pushConst.metallic;
-      pbrMat.normal = payload.nrm;
-      pbrMat.emissive = float3(0.0F, 0.0F, 0.0F);
-      pbrMat.f0 = lerp(float3(0.04F, 0.04F, 0.04F), pbrMat.albedo.xyz, pushConst.metallic);
-      pbrMat.f90 = vec3(1, 1, 1);
-      pbrMat.eta = 1.0;
-      pbrMat.specularWeight = 1.0;   // product of specularFactor and specularTexture.a
-      pbrMat.transmissionFactor = 0; // KHR_materials_transmission
+      PbrMaterial pbrMat = defaultPbrMaterial(albedo.xyz, pushConst.metallic, pushConst.roughness, payload.nrm, payload.nrm);
 
       // Add dummy divergence
       // This sample shader is too simple to show the benefits of sorting
@@ -211,7 +201,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
           dummy = sin(dummy);
       }
 
-      pbrMat.albedo.xyz += dummy * 0.01;
+      pbrMat.baseColor.xyz += dummy * 0.01;
 
       float3 contrib = float3(0, 0, 0);
 
@@ -222,6 +212,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
           BsdfEvaluateData evalData;
           evalData.k1 = -r.Direction;
           evalData.k2 = normalize(skyInfo.directionToLight);
+          evalData.xi = float3(rand(seed), rand(seed), rand(seed));
           bsdfEvaluate(evalData, pbrMat);
 
           const float3 w = pushConst.intensity.xxx;
@@ -234,7 +225,7 @@ float3 pathTrace(RayDesc r, inout uint seed, inout HitPayload payload)
       {
           BsdfSampleData sampleData;
           sampleData.k1 = -r.Direction; // outgoing direction
-          sampleData.xi = float4(rand(seed), rand(seed), rand(seed), rand(seed));
+          sampleData.xi = float3(rand(seed), rand(seed), rand(seed));
 
           bsdfSample(sampleData, pbrMat);
           if (sampleData.event_type == BSDF_EVENT_ABSORB)

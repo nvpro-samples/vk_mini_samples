@@ -1,22 +1,29 @@
-# Ray Query
+# glTF renderer
 
-![](docs/ray_query.png)
+![](docs/gltf.png)
 
-In Vulkan, ray queries are a feature of the ray tracing extension [VK_KHR_ray_query](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_ray_query.html) introduced in Vulkan 1.2. Ray queries provide a way to perform intersection tests between rays and geometry directly on the GPU. This feature is particularly useful for applications that require efficient ray tracing, such as real-time rendering, ray-based physics simulations, and more.
+## Description
 
+This mini-sample shows how to load a glTF scene (tinyGLTF) and store it in an internal format `nvh::gltf::Scene`. 
+From this internal representation, a GPU version is created using `nvvkhl::SceneVk`, which basically creates the
+the buffers that hold the geometry and material. For raytracing we use the `nvvkhl::SceneRtx` class, which takes
+from the previously created buffers and creates the bottom and top level acceleration structures.
 
-The process of performing a ray query involves several steps:
+To load another glTF scene, pass the path to the scene to the executable argument.
 
-1. Create a ray query acceleration structure: This structure represents the scene's geometry and allows for efficient traversal and intersection testing. It is constructed using the bottom-level and top-level acceleration structures, which describe the geometry and the hierarchy of objects, respectively.
+## Pipeline
 
-2. Dispatch ray queries: Specify the origin and direction of the rays you want to test. You can dispatch a single ray query or a batch of ray queries simultaneously.
+In this sample we use a single compute shader and ray query to trigger rays and get intersection information.
+We use Shader Object and Push Descriptors. This works very well for scenes that don't have too many elements, 
+but would raise a warning if there are too many textures. See `pushDescriptorSet()`.
 
-3. Process ray queries: The GPU performs ray traversal and intersection testing against the acceleration structure. This determines whether each ray intersects any objects in the scene.
+## Rendering
 
-4. Retrieve intersection results: After the ray queries are processed, you can obtain information about the intersections, such as the closest hit point, the surface normal, or the distance to the intersection point.
+Rendering become very simple with this framework
 
-Ray queries provide additional capabilities compared to traditional ray tracing pipelines in Vulkan. They offer more flexibility and control by allowing you to selectively enable or disable certain intersection tests. For example, you can skip testing for shadows if you are only interested in primary ray intersections. This can help improve performance by reducing unnecessary computations.
+* Buffers that are changing each frame are updated, like the one holding the camera information
+* Descriptors are push: TLAS, final image, scene representation, ..
+* Push constants are also pushed
+* Dispatch compute shader
 
-Overall, ray queries in Vulkan enable efficient and powerful ray tracing capabilities, making them a valuable tool for various applications that require accurate intersection testing between rays and geometry.
-
-
+A memory barrier was added, such that the following computer (tonemapper) would work on a finished image.

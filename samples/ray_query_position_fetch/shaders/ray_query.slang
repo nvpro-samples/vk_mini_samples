@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -98,8 +98,8 @@ void computeMain(uint3 threadIdx : SV_DispatchThreadID)
     // Contribution
     for(int l = 0; l < 2; l++)
     {
-      pixel_color += ggxEvaluate(-direction, worldGeoNormal, light_dir[l], gold_basecolor, gold_metallic, gold_roughness)
-                     * light_intensty[l];
+        PbrMaterial mat = defaultPbrMaterial(gold_basecolor, gold_metallic, gold_metallic, worldGeoNormal, worldGeoNormal);
+        pixel_color += ggxEvaluate(-direction, light_dir[l], mat) * light_intensty[l];
     }
   }
   else

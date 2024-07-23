@@ -44,7 +44,7 @@ layout(location = 0) rayPayloadInEXT HitPayload payload;
 layout(set = 0, binding = B_tlas ) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = B_frameInfo) uniform FrameInfo_ { FrameInfo frameInfo; };
 layout(set = 0, binding = B_sceneDesc) readonly buffer SceneDesc_ { SceneDescription sceneDesc; };
-layout(set = 0, binding = B_skyParam) uniform SkyInfo_ { ProceduralSkyShaderParameters skyInfo; };
+layout(set = 0, binding = B_skyParam) uniform SkyInfo_ { SimpleSkyParameters skyInfo; };
 layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
 layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
 

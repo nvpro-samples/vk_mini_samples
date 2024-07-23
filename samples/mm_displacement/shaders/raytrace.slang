@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,7 +33,7 @@
 [[vk::binding(B_tlas)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
 [[vk::binding(B_frameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
+[[vk::binding(B_skyParam)]] ConstantBuffer<SimpleSkyParameters> skyInfo;
 [[vk::binding(B_materials)]] StructuredBuffer<float4> materials;
 [[vk::binding(B_instances)]] StructuredBuffer<InstanceInfo> instanceInfo;
 [[vk::binding(B_vertex)]]  StructuredBuffer<Vertex> vertices[];
@@ -221,7 +221,8 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   bool visible = shadowRay(hitState.pos, L);
 
   // Color at hit point
-  float3 color = ggxEvaluate(V, hitState.nrm, L, albedo, pushConst.metallic, pushConst.roughness);
+  PbrMaterial pbrMat = defaultPbrMaterial(albedo, pushConst.metallic, pushConst.roughness, hitState.nrm, hitState.geonrm);
+  float3 color = ggxEvaluate(V, L, pbrMat);
 
   if(pushConst.numBaseTriangles > 0)
   {
@@ -262,7 +263,7 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
 [shader("miss")]
 void rmissMain(inout HitPayload payload)
 {
-  float3 sky_color = proceduralSky(skyInfo, WorldRayDirection(), 0);
+  float3 sky_color = evalSimpleSky(skyInfo, WorldRayDirection());
   payload.color += sky_color * payload.weight;
   payload.depth = MISS_DEPTH; // Stop
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,11 +23,11 @@
 #include "common/shaders/dh_comp.hlsli"
 #include "common/shaders/dh_lighting.hlsli"
 #include "common/shaders/dh_scn_desc.hlsli"
+#include "common/shaders/sky.hlsli"
 #include "common/shaders/ggx.hlsli"
 #include "common/shaders/light_contrib.hlsli"
 #include "common/shaders/pbr_mat_eval.hlsli"
 #include "common/shaders/random.hlsli"
-#include "common/shaders/sky.hlsli"
 
 #include "common/shaders/vertex_accessor.slang"
 
@@ -48,7 +48,7 @@ struct Ray
 [[vk::binding(B_outImage)]] RWTexture2D<float4> outImage;
 [[vk::binding(B_cameraInfo)]] ConstantBuffer<CameraInfo> cameraInfo;
 [[vk::binding(B_sceneDesc)]] StructuredBuffer<SceneDescription> sceneDesc;
-[[vk::binding(B_skyParam)]] ConstantBuffer<ProceduralSkyShaderParameters> skyInfo;
+[[vk::binding(B_skyParam)]] ConstantBuffer<PhysicalSkyParameters> skyInfo;
 [[vk::binding(B_textures)]] Sampler2D texturesMap[];
 
 
@@ -173,25 +173,14 @@ struct DirectLight
 //-----------------------------------------------------------------------
 // This should sample any lights in the scene, but we only have the sun
 void sampleLights(in float3 pos, float3 normal, in float3 worldRayDirection, inout uint seed, out DirectLight directLight)
-{
-  float3 radiance = float3(0, 0, 0);
-  float lightPdf = 1.0;
-
-  // Light contribution
-  Light sun;
-  sun.type                  = eLightTypeDirectional;
-  sun.angularSizeOrInvRange = skyInfo.angularSizeOfLight;
-  sun.direction             = -skyInfo.directionToLight;
-  sun.color                 = skyInfo.lightColor;
-  sun.intensity             = 1;
-  float2         rand_val     = float2(rand(seed), rand(seed));
-  LightContrib lightContrib = singleLightContribution(sun, pos, normal, -worldRayDirection, rand_val);
-
-  // Return the light contribution
-  directLight.direction       = normalize(-lightContrib.incidentVector);
-  directLight.radianceOverPdf = lightContrib.intensity / lightPdf;
-  directLight.distance        = INFINITE;
-  directLight.pdf             = DIRAC;
+{ 
+  float2 randVal = float2(rand(seed), rand(seed));
+  SkySamplingResult skySample = samplePhysicalSky(skyInfo, randVal);
+  
+  directLight.direction = skySample.direction;
+  directLight.pdf = skySample.pdf;
+  directLight.distance = INFINITE;
+  directLight.radianceOverPdf = skySample.radiance / skySample.pdf;
 }
 
 //----------------------------------------------------------
@@ -337,7 +326,7 @@ float3 pathTrace(Ray ray, inout uint seed)
     // Hitting the environment, then exit
     if(payload.hitT == INFINITE)
     {
-      float3 sky_color = proceduralSky(skyInfo, ray.direction, 0);
+      float3 sky_color = evalPhysicalSky(skyInfo, ray.direction);
       return radiance + (sky_color * throughput);
     }
 
@@ -346,17 +335,27 @@ float3 pathTrace(Ray ray, inout uint seed)
 
     // Setting up the material
     RenderNode renderNode = renderNodes[payload.rnodeID];         // Instance information
-    RenderPrimitive renderPrim = renderPrimitive[payload.rprimID];       // Primitive information
+    RenderPrimitive renderPrim = renderPrimitive[payload.rprimID];// Primitive information
     int               matIndex  = max(0, renderNode.materialID);  // Material ID of hit mesh
     GltfShadeMaterial material = materials[matIndex];             // Material of the hit object
     material.pbrBaseColorFactor *= hit.color;
-    PbrMaterial pbrMat = evaluateMaterial(material, texturesMap, hit.nrm, hit.tangent, hit.bitangent, hit.uv, isInside);
+  
+    MeshState meshState;
+    meshState.N = hit.nrm;
+    meshState.T = hit.tangent;
+    meshState.B = hit.bitangent;
+    meshState.tc = hit.uv;
+    meshState.Ng = hit.geonrm;
+    meshState.isInside = isInside;
+
+    SamplerState dummy;
+    PbrMaterial pbrMat = evaluateMaterial(material,  meshState, texturesMap, dummy);
 
     // Adding emissive
     radiance += pbrMat.emissive * throughput;
 
     // Apply volume attenuation
-    bool thin_walled = pbrMat.thicknessFactor == 0;
+    bool thin_walled = (pbrMat.thickness == 0);
     if(isInside && !thin_walled)
     {
       const float3 abs_coeff = absorptionCoefficient(pbrMat);
@@ -368,7 +367,7 @@ float3 pathTrace(Ray ray, inout uint seed)
 
     // Light contribution; can be environment or punctual lights
     DirectLight directLight;
-    sampleLights(hit.pos, pbrMat.normal, ray.direction, seed, directLight);
+    sampleLights(hit.pos, pbrMat.N, ray.direction, seed, directLight);
 
     // Evaluation of direct light (sun)
     const bool nextEventValid = ((dot(directLight.direction, hit.geonrm) > 0.0f) != isInside) && directLight.pdf != 0.0f;
@@ -377,6 +376,7 @@ float3 pathTrace(Ray ray, inout uint seed)
       BsdfEvaluateData evalData;
       evalData.k1   = -ray.direction;
       evalData.k2   = directLight.direction;
+      evalData.xi   = float3(rand(seed), rand(seed), rand(seed));
       bsdfEvaluate(evalData, pbrMat);
 
       if(evalData.pdf > 0.0)
@@ -394,7 +394,7 @@ float3 pathTrace(Ray ray, inout uint seed)
     {
       BsdfSampleData sampleData;
       sampleData.k1   = -ray.direction;  // outgoing direction
-      sampleData.xi   = float4(rand(seed), rand(seed), rand(seed), rand(seed));
+      sampleData.xi   = float3(rand(seed), rand(seed), rand(seed));
       bsdfSample(sampleData, pbrMat);
 
       throughput *= sampleData.bsdf_over_pdf;
