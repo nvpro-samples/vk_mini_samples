@@ -1,29 +1,36 @@
-# glTF renderer
+# Vulkan-based glTF Renderer
 
-![](docs/gltf.png)
+![glTF Render Example](docs/gltf.png)
 
-## Description
+## Overview
 
-This mini-sample shows how to load a glTF scene (tinyGLTF) and store it in an internal format `nvh::gltf::Scene`. 
-From this internal representation, a GPU version is created using `nvvkhl::SceneVk`, which basically creates the
-the buffers that hold the geometry and material. For raytracing we use the `nvvkhl::SceneRtx` class, which takes
-from the previously created buffers and creates the bottom and top level acceleration structures.
+This sample demonstrates loading and rendering glTF scenes using Vulkan. It utilizes tinyGLTF for scene loading, `nvh::gltf::Scene` for internal representation, and `nvvkhl::SceneVk` for GPU resource creation.
 
-To load another glTF scene, pass the path to the scene to the executable argument.
+## Key Components
 
-## Pipeline
+- **Scene Loading**: tinyGLTF
+- **Internal Representation**: `nvh::gltf::Scene`
+- **GPU Resource Management**: `nvvkhl::SceneVk`
+- **Ray Tracing Acceleration Structures**: `nvvkhl::SceneRtx`
 
-In this sample we use a single compute shader and ray query to trigger rays and get intersection information.
-We use Shader Object and Push Descriptors. This works very well for scenes that don't have too many elements, 
-but would raise a warning if there are too many textures. See `pushDescriptorSet()`.
+## Pipeline Architecture
 
-## Rendering
+- Single compute shader with ray query
+- Shader Object and Push Descriptors implementation
+- Optimized for scenes with moderate element count
 
-Rendering become very simple with this framework
+## Render Process
 
-* Buffers that are changing each frame are updated, like the one holding the camera information
-* Descriptors are push: TLAS, final image, scene representation, ..
-* Push constants are also pushed
-* Dispatch compute shader
+1. Update frame-specific buffers (e.g., camera data)
+2. Push descriptors: TLAS, output image, scene data
+3. Set push constants
+4. Dispatch compute shader
+5. Apply memory barrier for post-processing
 
-A memory barrier was added, such that the following computer (tonemapper) would work on a finished image.
+## Usage
+
+Pass glTF scene path as an executable argument for custom scene loading.
+
+## Performance Considerations
+
+Push Descriptors may generate warnings for scenes with numerous textures. Refer to `pushDescriptorSet()` implementation for details.

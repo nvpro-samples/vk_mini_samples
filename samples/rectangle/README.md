@@ -1,11 +1,47 @@
-# Rectangle
+# Rectangle Rendering Sample
 
-![](docs/rectangle.png)
+![Rectangle Rendering Sample](docs/rectangle.png)
 
-This sample looks like `solid_color`, but in this one a simple quad will be render using vertex and fragment shaders. 
+## Overview
 
-When we add the `RectangleSample` to the `nvvk::Application`, the `onAttach(app)` method of `RectangleSample` is called. As with `solid_color`, we create an instance of the allocator and a utility to debug and view our named resources in Nsight Graphics. We also create the pipeline (`createPipeline()`) which has information about how things will be rendered, and we create in `createGeometryBuffers()` the vertice and index buffers that define the rectangle. 
+This sample demonstrates basic quad rendering using vertex and fragment shaders, building upon the concepts introduced in the `solid_color` sample. It showcases the implementation of a simple geometry pipeline and the use of G-Buffers for off-screen rendering.
 
-The `onResize(w,h)` will take care of creating the GBuffer, in which the rectangle will be rendered. The color format is set to `VK_FORMAT_R8G8B8A8_UNORM`, and the depth format is queried to get the best from the current physical device. The GBuffer image is displayed in `onUIRender()`, as mentioned in `solid_color`, the rendering is done in GBuffers and the result is displayed using ImGui. We never draw directly on the swapchain in the samples. 
+## Implementation Details
 
-In `onRender()`, we are using the [Vulkan Dynamic Rendering](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/proposals/VK_KHR_dynamic_rendering.adoc) and attach the Gbuffer color and depth, following the rendering of the primitive.
+### Initialization (`onAttach`)
+
+When `RectangleSample` is added to `nvvk::Application`, the `onAttach(app)` method is invoked, performing the following tasks:
+
+1. Instantiates a memory allocator for efficient resource management.
+2. Initializes a debug utility for resource naming and visualization in Nsight Graphics.
+3. Creates the rendering pipeline via `createPipeline()`, defining the rendering configuration.
+4. Generates vertex and index buffers defining the rectangle geometry in `createGeometryBuffers()`.
+
+### Resizing (`onResize`)
+
+The `onResize(w,h)` method manages G-Buffer creation:
+
+- Color format: `VK_FORMAT_R8G8B8A8_UNORM`
+- Depth format: Dynamically queried to optimize for the current physical device
+
+### Rendering
+
+#### G-Buffer Rendering
+
+- The rectangle is rendered into the G-Buffer, not directly to the swapchain.
+- G-Buffer contents are displayed using ImGui in `onUIRender()`.
+
+#### Main Rendering Pass (`onRender`)
+
+Utilizes [Vulkan Dynamic Rendering](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/proposals/VK_KHR_dynamic_rendering.adoc):
+
+1. Attaches G-Buffer color and depth targets.
+2. Executes primitive rendering.
+
+## Technical Specifications
+
+- **Shader Types**: Vertex and Fragment
+- **Geometry**: Single quad (rectangle)
+- **Rendering Technique**: Off-screen G-Buffer rendering with ImGui display
+- **Vulkan Features**: Dynamic Rendering
+

@@ -1,21 +1,40 @@
-#Simple Polygons
+# Simple Polygons
 
-![](docs/simple_polygons.png)
+![Simple Polygons Screenshot](docs/simple_polygons.png)
 
-Simple raster example, using a camera, various geometries and instances, basic lighting. 
+This project demonstrates a basic raster rendering example in Vulkan, featuring:
+- Camera manipulation
+- Various geometric primitives
+- Instance rendering
+- Basic lighting model
 
+## Overview
 
-## onAttach
+The Simple Polygons sample showcases fundamental 3D graphics concepts using a modern Vulkan implementation. It serves as an educational tool for understanding basic rendering pipelines and scene management.
 
-The `onAttach` function will create the VMA allocator, the scene, a collection of primitives, materials and instances referring the meshes. It creates the Vulkan representation of the scene by creating multiple buffers of vertices and indices in `createVkBuffers` and the pipeline to display.
+## Key Components
 
-## onUIRender
+### Scene Initialization (`onAttach`)
 
-Shows the camera widget in the setting window and the rendered image (G-Buffer) is displayed in the viewport window.
+The `onAttach` function sets up the rendering environment:
 
-## onRender
+1. Initializes the VMA (Vulkan Memory Allocator) for efficient memory management
+2. Constructs the scene graph, including:
+   - Primitive geometries
+   - Material definitions
+   - Instance references to meshes
+3. Creates Vulkan representations of the scene:
+   - Generates vertex and index buffers via `createVkBuffers`
+   - Establishes the rendering pipeline
 
-Render all instance nodes of the scene. 
+### User Interface (`onUIRender`)
 
-:warning: We could record a command buffer and execute it instead of looping over all rendering nodes. This would be better, especially with larger scenes.
+The UI component provides:
+- A camera widget in the settings window for view manipulation
+- A viewport window displaying the rendered G-Buffer
 
+### Rendering Loop (`onRender`)
+
+The main rendering function iterates through all instance nodes in the scene, drawing each element.
+
+> **Note:** For performance optimization, especially with larger scenes, consider recording a command buffer instead of looping over rendering nodes in real-time.

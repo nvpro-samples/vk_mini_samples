@@ -4,21 +4,6 @@ project(vk_mini_samples LANGUAGES C CXX)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_CXX_STANDARD 20)
 
-# CMake Package Manager 
-include(cmake/CPM.cmake)
-
-# Adding Slang
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.1.30")
-find_package(Slang)
-
-# Adding HLSL compiler function
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
-
-# Adding SLANG compiler function
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/slang.cmake)
-
-
 #--------------------------------------------------------------------------------------------------
 # look for nvpro_core 1) as a sub-folder 2) at some other locations
 # this cannot be put anywhere else since we still didn't find setup.cmake yet
@@ -46,6 +31,16 @@ else()
   message(FATAL_ERROR "could not find base directory, please set BASE_DIRECTORY to folder containing nvpro_core")
 endif()
 
+# Adding Slang
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+set(Slang_VERSION  "2024.1.30")
+find_package(Slang)
+
+# Adding HLSL compiler function
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/hlsl.cmake)
+
+# Adding SLANG compiler function
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/slang.cmake)
 
 # Various Paths
 set(SAMPLES_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})

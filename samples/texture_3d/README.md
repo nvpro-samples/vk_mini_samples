@@ -12,7 +12,7 @@ The image that is generated is always of power-of-two size, which means the imag
 
 ## Rendering
 
-A cube is rendered, and in the fragment shader, the intersection P1 and P2 is found, a ray-marching will be done between those points until it goes over a threshold value. Once the intersection point is found, the gradient is calculated to find the normal at the surface. This normal is used for shading. See [`raster.frag`](shaders/raster.frag) for the shading code.
+A cube is rendered, and in the fragment shader, the intersection P1 and P2 is found, a ray-marching will be done between those points until it goes over a threshold value. Once the intersection point is found, the gradient is calculated to find the normal at the surface. This normal is used for shading. See [`raster.frag.glsl`](shaders/raster.frag.glsl) for the shading code.
 
 ## Settings
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -56,6 +56,10 @@
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvk/error_vk.hpp"
+
+#include "vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
+
 
 namespace DH {
 using namespace glm;
@@ -110,23 +114,23 @@ public:
 
   void onUIMenu() override
   {
-    static bool close_app{false};
+    static bool closeApp{false};
 
     if(ImGui::BeginMenu("File"))
     {
       if(ImGui::MenuItem("Exit", "Ctrl+Q"))
       {
-        close_app = true;
+        closeApp = true;
       }
       ImGui::EndMenu();
     }
 
     if(ImGui::IsKeyPressed(ImGuiKey_Q) && ImGui::IsKeyDown(ImGuiKey_LeftCtrl))
     {
-      close_app = true;
+      closeApp = true;
     }
 
-    if(close_app)
+    if(closeApp)
     {
       m_app->close();
     }
@@ -150,9 +154,9 @@ public:
       // Pick the mouse coordinate if the mouse is down
       if(ImGui::GetIO().MouseDown[0])
       {
-        const glm::vec2 mouse_pos = ImGui::GetMousePos();         // Current mouse pos in window
+        const glm::vec2 mousePos  = ImGui::GetMousePos();         // Current mouse pos in window
         const glm::vec2 corner    = ImGui::GetCursorScreenPos();  // Corner of the viewport
-        m_pushConstant.mouseCoord = mouse_pos - corner;
+        m_pushConstant.mouseCoord = mousePos - corner;
       }
       else
       {
@@ -175,11 +179,12 @@ public:
       return;
 
     const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-    nvvk::createRenderingInfo r_info({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()}, m_gBuffers->getDepthImageView(),
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    r_info.pStencilAttachment = nullptr;
+    nvvk::createRenderingInfo             renderingInfo({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()},
+                                                        m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                                        VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
+    renderingInfo.pStencilAttachment = nullptr;
 
-    vkCmdBeginRendering(cmd, &r_info);
+    vkCmdBeginRendering(cmd, &renderingInfo);
     m_app->setViewport(cmd);
 
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -204,18 +209,22 @@ private:
   void createPipeline()
   {
 
-    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(DH::PushConstant)};
+    const VkPushConstantRange pushConstantRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                    sizeof(DH::PushConstant)};
 
-    VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    create_info.pushConstantRangeCount = 1;
-    create_info.pPushConstantRanges    = &push_constant_ranges;
-    vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout);
+    VkPipelineLayoutCreateInfo createInfo{
+        .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &pushConstantRanges,
+    };
+    vkCreatePipelineLayout(m_device, &createInfo, nullptr, &m_pipelineLayout);
 
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_colorFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
+    VkPipelineRenderingCreateInfo prendInfo{
+        .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+        .colorAttachmentCount    = 1,
+        .pColorAttachmentFormats = &m_colorFormat,
+        .depthAttachmentFormat   = m_depthFormat,
+    };
 
     nvvk::GraphicsPipelineState pstate;
     pstate.addBindingDescriptions({{0, sizeof(Vertex)}});
@@ -225,7 +234,7 @@ private:
     });
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
+    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prendInfo, pstate);
 #if(USE_SLANG)
     VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
     pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
@@ -308,11 +317,6 @@ int main(int argc, char** argv)
   nvprintSetCallback([](int level, const char* fmt) { g_logger.addLog(level, "%s", fmt); });
   g_logger.setLogLevel(LOGBITS_ALL);
 
-  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-
 
   // #debug_printf
   // Adding the GPU debug information to the KHRONOS validation layer
@@ -331,23 +335,32 @@ int main(int argc, char** argv)
       {layer_name, "printf_buffer_size", VK_LAYER_SETTING_TYPE_INT32_EXT, 1, &printf_buffer_size},
   };
 
-  VkLayerSettingsCreateInfoEXT layer_settings_create_info = {
+  VkLayerSettingsCreateInfoEXT layerSettingsCreateInfo = {
       .sType        = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT,
       .settingCount = static_cast<uint32_t>(std::size(settings)),
       .pSettings    = settings,
   };
-  vkSetup.instanceCreateInfoExt = &layer_settings_create_info;
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  VkContextSettings vkSetup{
+      .instanceExtensions    = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions      = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+      .instanceCreateInfoExt = &layerSettingsCreateInfo,
+  };
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
+  // Create the Vulkan context with the above settings
+  auto vkctx = std::make_unique<VkContext>(vkSetup);
+  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
+
+  // Setting how we want the application
   nvvkhl::ApplicationCreateInfo appInfo;
-  appInfo.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appInfo.vSync = true;
-  appInfo.instance       = vkContext.m_instance;
-  appInfo.device         = vkContext.m_device;
-  appInfo.physicalDevice = vkContext.m_physicalDevice;
-  appInfo.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkctx->getInstance();
+  appInfo.device         = vkctx->getDevice();
+  appInfo.physicalDevice = vkctx->getPhysicalDevice();
+  for(auto& q : vkctx->getQueueInfos())
+    appInfo.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
 
   // Setting up the layout of the application
   appInfo.dockSetup = [](ImGuiID viewportID) {
@@ -363,29 +376,24 @@ int main(int argc, char** argv)
   //------
   // #debug_printf
   // Vulkan message callback - for receiving the printf in the shader
-  // Note: there is already a callback in nvvk::Context, but by defaut it is not printing INFO severity
-  //       this callback will catch the message and will make it clean for display.
-  auto dbg_messenger_callback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
-                                   const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
+  auto dbgMessengerCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                 const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
     // Get rid of all the extra message we don't need
-    std::string clean_msg = callbackData->pMessage;
-    clean_msg             = clean_msg.substr(clean_msg.find('\n') + 1);
-    nvprintf("%s", clean_msg.c_str());  // <- This will end up in the Logger
-    return VK_FALSE;                    // to continue
+    std::string cleanMsg = callbackData->pMessage;
+    cleanMsg             = cleanMsg.substr(cleanMsg.find('\n') + 1);
+    nvprintfLevel(LOGLEVEL_DEBUG, "%s", cleanMsg.c_str());  // <- This will end up in the Logger (only if DEBUG is on)
+    return VK_FALSE;                                        // to continue
   };
 
   // Creating the callback
   VkDebugUtilsMessengerEXT           dbg_messenger{};
-  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
-  dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
-  dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
-  dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
+  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{
+      .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+      .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+      .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+      .pfnUserCallback = dbgMessengerCallback,
+  };
   NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getInstance(), &dbg_messenger_create_info, nullptr, &dbg_messenger));
-
-  // #debug_printf : By uncommenting the next line, we would allow all messages to go through the
-  // nvvk::Context::debugCallback. But the message wouldn't be clean as the one we made.
-  // Since we have the one above, it would also duplicate all messages.
-  //app->getContext()->setDebugSeverityFilterMask(VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT);
 
   // Create a view/render
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
@@ -399,7 +407,7 @@ int main(int argc, char** argv)
   vkDestroyDebugUtilsMessengerEXT(app->getInstance(), dbg_messenger, nullptr);
 
   app.reset();
-  vkContext.deinit();
+  vkctx.reset();
 
   return test->errorCode();
 }

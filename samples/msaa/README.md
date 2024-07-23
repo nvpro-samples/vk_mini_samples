@@ -1,35 +1,46 @@
-# Multi-Sampling Anti-Aliasing (MSAA)
+# Multi-Sample Anti-Aliasing (MSAA) in Vulkan
 
-![img](docs/msaa.png)
+![MSAA Demonstration](docs/msaa.png)
 
-This sample is showing the usage of Multi-Sampling Anti-Aliasing (MSAA). 
+## Overview
 
-## MSAA Image G-Buffers
+This sample demonstrates the implementation of Multi-Sample Anti-Aliasing (MSAA) in Vulkan.
 
-The creation of multi-sampling buffers is done in `createMsaaBuffers()`. Those buffers will be re-created if the size of the image changes or the `VkSampleCountFlagBits`. 
+## Key Components
 
-### Images
+### MSAA G-Buffers
+- Created in `createMsaaBuffers()`
+- Dynamically recreated on image size or `VkSampleCountFlagBits` changes
 
-The MSAA images are created using only the following usage for color and depth respectively:
+#### Image Usage Flags
+- Color: 
+  ```c
+  VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+  ```
+- Depth:
+  ```c
+  VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+  ```
 
-```` C
-color.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-depth.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-````
+### Non-MSAA G-Buffer
+- Required for display (MSAA textures cannot be directly attached/displayed)
+- Target for MSAA image resolution
 
-## Normal G-Buffer
+## Rendering Pipeline
 
-There is alway a normal G-Buffer, an image without multi-sampling because multi-sampling textures can't be attached and displayed. The multi-sampled image will need to be resolved in the normal G-Buffer, and this is the image that will be displayed.
+### `onRender(cmd)` Process
+1. Utilizes dynamic rendering
+2. Attaches G-Buffer as target
+3. For MSAA:
+   - Attaches multi-sampled image
+   - Attaches G-Buffer as resolve image
 
-## Rendering and resolving MSAA
-
-In `onRender(cmd)`, rendering is done using dynamic rendering. The G-Buffer is attached as the target and in the case of multi-sampling, the multi-sampled image is attached and the G-Buffer is attached as resoleved image. 
-
+## Technical Considerations
+- MSAA images require resolution to non-MSAA G-Buffer for display
+- Dynamic recreation of MSAA buffers ensures adaptability to runtime changes
 
 ## References
 
-Other Vulkan projects using MSAA
-
-* <https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/performance/msaa/msaa_tutorial.md>
-* <https://vulkan-tutorial.com/Multisampling>
-* <https://github.com/SaschaWillems/Vulkan/blob/master/examples/multisampling/multisampling.cpp>
+- [Khronos Vulkan Samples - MSAA Tutorial](https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/performance/msaa/msaa_tutorial.md)
+- [Vulkan Tutorial - Multisampling](https://vulkan-tutorial.com/Multisampling)
+- [Sascha Willems Vulkan Examples - Multisampling](https://github.com/SaschaWillems/Vulkan/blob/master/examples/multisampling/multisampling.cpp)

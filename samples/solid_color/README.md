@@ -2,10 +2,44 @@
 
 ![](docs/solid_color.png)
 
-The samples aren't rendering directly to the swapchain image. Instead, it is the rendered image that is displayed in the viewport. In this sample, we aren't rendering , but display a texture with the choosed color.
+# Solid Color Sample
 
-In `main()`, the `nvvk::Application` is created using the `nvvk::ApplicationCreateInfo`. This will have the effect, of creating the Vulkan instance, the device and the physical device, the creation of the GLFW window, the initialization of Dear Imgui, see `nvvk::Application::init()` for details. Following this, there is the creation of the `SolidColor` sample. This is derived from `nvvk::IAppEngine` which will allow the application to call some overloaded functions. The first function that is called is `onAttach()`, where the class `AllocVma` is created. This class derives from `nvvk::ResourceAllocator`, which is one of the core helper classes in `nvpro_core/nvvk`. It allows to create resources, like buffers and images, in a more efficient way than allocating memory directly with Vulkan. In our samples, we will be using the [Vulkan Memory Allocator(VMA)](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator), but other allocators are available.
+This sample demonstrates rendering a single-color texture to the viewport, bypassing direct swapchain image rendering.
 
-Still in `onAttach()`, we create the texture that will be displayed. It is only a `1x1` image, but the idea is to be able to dynamically change the value of this pixel and display the image in the viewport. 
+## Overview
 
-Back at `main()`, the application `->run()` will start an infinite loop until closure is requested. In the loop, `onUIRender()`, `onUIMenu()`, `onResize(w,h)` and `onRender(cmd)` are called. In `onUIRender()`, we render the GUI in the `"Settings"` window. The image is also a UI element, and we display it in the "Viewport" window using `ImGui::Image()`. The `onRender()` function is called at each frame and if the colors have changed, `setData(cmd)` will update the texture using the color chosen in the GUI.
+The sample utilizes a 1x1 texture to display a user-selected color, updating dynamically based on GUI input.
+
+## Implementation Details
+
+### Initialization
+
+In `main()`:
+1. `nvvkhl::Application` is instantiated using `nvvkhl::ApplicationCreateInfo`.
+   - This initializes the Vulkan instance, device, physical device, GLFW window, and Dear ImGui.
+   - For detailed initialization steps, refer to `nvvkhl::Application::init()`.
+2. The `SolidColor` sample is created, derived from `nvvkhl::IAppElement`.
+
+### Resource Allocation
+
+In `onAttach()`:
+1. `AllocVma` is instantiated, deriving from `nvvk::ResourceAllocator`.
+   - This core helper class from `nvpro_core/nvvk` facilitates efficient resource creation.
+   - The sample utilizes [Vulkan Memory Allocator (VMA)](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) for memory management.
+2. A 1x1 texture is created for color display.
+
+### Main Loop
+
+The application enters an infinite loop via `->run()` until closure is requested. Each iteration invokes:
+- `onUIRender()`: Renders the GUI in the "Settings" window.
+- `onUIMenu()`: Handles menu interactions.
+- `onResize(w,h)`: Manages viewport resizing.
+- `onRender(cmd)`: Executes per-frame rendering logic.
+
+### Rendering Process
+
+1. The texture is displayed as a UI element in the "Viewport" window using `ImGui::Image()`.
+2. `onRender()` is called each frame.
+3. If color changes are detected, `setData(cmd)` updates the texture with the new color selected in the GUI.
+
+This implementation showcases efficient texture updating and rendering techniques within a Vulkan-based application framework.

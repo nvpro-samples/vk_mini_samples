@@ -1,23 +1,44 @@
-# Raytrace
+# Vulkan Raytracing Implementation
 
-![](docs/raytrace.png)
+![Raytracing Render Example](docs/raytrace.png)
 
-Rendering simple primitives using ray tracing, GGX shading, shadows and reflections. 
+## Overview
 
-:warning: If you are looking for global illumination, look at the gltf_viewer sample.
+This sample demonstrates basic raytracing in Vulkan, featuring GGX shading, shadows, and reflections.
 
+## Key Components
 
-## `onAttach()`
+### `onAttach()` Method
+- Initializes utility classes for:
+  - Top-Level Acceleration Structure (TLAS)
+  - Bottom-Level Acceleration Structure (BLAS)
+  - Shading Binding Table (SBT)
+- Scene creation and buffer uploading
+- Acceleration structure generation
+- Ray tracing pipeline setup
 
-The overrided method `onAttach()` will be creating the utility classes for building top and bottom acceleration structures (TLAS/BLAS) as well as the utility for creating the shading binding table (SBT) used by the RTX pipeline. 
+### `onUIRender()` Method
+- UI rendering
+- Full viewport image display
 
-The scene (`createScene`) is created, the vertices and indices are uploaded in Vulkan buffer (`createVkBuffers`). The BLAS and TLAS are created respectively in `createBottomLevelAS` and `createTopLevelAS`. The ray tracing pipeline and shading binding table are created in `createRtPipeline`, this is where the raygen, miss and closest-hit shaders are attached. 
+### `onRender(cmd)` Method
+- Frame information buffer updates
+- `vkCmdTraceRaysKHR` invocation
 
-## `onUIRender`
+## Implementation Details
 
-This is where the UI is rendered, and where the rendered image is set to cover the entire viewport.
+1. **Scene Creation**: `createScene()`
+2. **Vulkan Buffer Generation**: `createVkBuffers()`
+3. **Acceleration Structures**:
+   - BLAS: `createBottomLevelAS()`
+   - TLAS: `createTopLevelAS()`
+4. **Pipeline Creation**: `createRtPipeline()`
+   - Shader attachment (raygen, miss, closest-hit)
 
-## `onRender(cmd)`
+## Technical Considerations
+- Optimization of acceleration structure updates
+- Efficient SBT management
+- Performance tuning for real-time raytracing
 
-The rendering of the scene is setting the information of the frame in buffers used by the shaders and call `vkCmdTraceRaysKHR`.
-
+## Note
+For global illumination implementations, refer to the `gltf_viewer` sample.

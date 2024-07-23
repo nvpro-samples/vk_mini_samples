@@ -2,76 +2,99 @@
 
 ![img](docs/printf.png)
 
-[Debug Printf](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md) allows to debug shaders using a debug printf function. 
+
+## Overview
+
+This sample demonstrates the integration of [Debug Printf](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md) into [nvpro-samples](https://github.com/nvpro-samples) applications, enabling in-shader debugging for Vulkan.
 
 Even with the help of a great debugging tool like [Nsight Graphics](https://developer.nvidia.com/nsight-graphics), debugging Vulkan shaders can be very challenging. [Debug Printf](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md) feature enables  to put Debug Print statements into shaders to debug them. This sample shows how it is added to [nvpro-sample](https://github.com/nvpro-samples) simple applications.
 
 
 
+## Implementation
 
 ## Enabling Debug_printf
 
-In `main()`, we will need a new extension [`VK_KHR_shader_non_semantic_info`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_shader_non_semantic_info.html) (prior to Vulkan 1.3) and enabling validation features through [`VkValidationFeaturesEXT`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkValidationFeaturesEXT.html). In this sample, we are only enabling **debug printf** and not disabling any features.
+We are not using the [`VkValidationFeaturesEXT`](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkValidationFeaturesEXT.html) but rather the [validation layers](https://vulkan.lunarg.com/doc/sdk/1.3.275.0/linux/khronos_validation_layer.html). The validation layers need to be provided at the creation of the Vulkan context, and here is how it is done.
 
 ````cpp
-  // #debug_printf
-  contextInfo.addDeviceExtension(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
-  std::vector<VkValidationFeatureEnableEXT> enables{VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT};
-  std::vector<VkValidationFeatureDisableEXT> disables{};
-  VkValidationFeaturesEXT features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
-  features.enabledValidationFeatureCount  = static_cast<uint32_t>(enables.size());
-  features.pEnabledValidationFeatures     = enables.data();
-  features.disabledValidationFeatureCount = static_cast<uint32_t>(disables.size());
-  features.pDisabledValidationFeatures    = disables.data();
-  contextInfo.instanceCreateInfoExt       = &features;
+  // Adding the GPU debug information to the KHRONOS validation layer
+  // See: https://vulkan.lunarg.com/doc/sdk/1.3.275.0/linux/khronos_validation_layer.html
+  const char*    layer_name           = "VK_LAYER_KHRONOS_validation";
+  const char*    validate_gpu_based[] = {"GPU_BASED_DEBUG_PRINTF"};
+  const VkBool32 printf_verbose       = VK_FALSE;
+  const VkBool32 printf_to_stdout     = VK_FALSE;
+  const int32_t  printf_buffer_size   = 1024;
+
+  const VkLayerSettingEXT settings[] = {
+      {layer_name, "validate_gpu_based", VK_LAYER_SETTING_TYPE_STRING_EXT,
+       static_cast<uint32_t>(std::size(validate_gpu_based)), &validate_gpu_based},
+      {layer_name, "printf_verbose", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &printf_verbose},
+      {layer_name, "printf_to_stdout", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &printf_to_stdout},
+      {layer_name, "printf_buffer_size", VK_LAYER_SETTING_TYPE_INT32_EXT, 1, &printf_buffer_size},
+  };
+
+  VkLayerSettingsCreateInfoEXT layerSettingsCreateInfo = {
+      .sType        = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT,
+      .settingCount = static_cast<uint32_t>(std::size(settings)),
+      .pSettings    = settings,
+  };
+
+  VkContextSettings vkSetup{
+      .instanceExtensions    = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions      = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+      .instanceCreateInfoExt = &layerSettingsCreateInfo,
+  };
 ````
 
-## Printf in Shaders
+## Shader Integration
 
-To print messages in a shader you need to add an extension.
+1. Enable extension:
 
-````cpp
+````glsl
 #extension GL_EXT_debug_printf : enable 
 ````
 
-Then you can use `debugPrintfEXT()` to print messages, but please note the [limitations](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md).
+2. Use `debugPrintfEXT()` in shader.
 
 ````cpp
 debugPrintfEXT("HERE");
 ````
 
-## Catching Messages
+**Note** : String [limitations](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/master/docs/debug_printf.md).
 
-To get messages, a Messenger need to be created with `INFO` flag to get the severty level that the printf send its messages. 
+## Message Handling
+
+Create a debug messenger with `VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT`:
 
 ```
   // Creating the callback
   VkDebugUtilsMessengerEXT           dbg_messenger{};
-  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
-  dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
-  dbg_messenger_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
-  dbg_messenger_create_info.pfnUserCallback = dbg_messenger_callback;
+  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{
+      .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+      .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+      .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+      .pfnUserCallback = dbgMessengerCallback,
+  };
   NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getInstance(), &dbg_messenger_create_info, nullptr, &dbg_messenger));
   ```
 
-The callback for the messages, have been written like this. Note that we are stripping the incomming string, to make the message more clear.
+Implement a callback to process debug messages:
+
 
 ```
-  // #debug_printf
   // Vulkan message callback - for receiving the printf in the shader
-  // Note: there is already a callback in nvvk::Context, but by defaut it is not printing INFO severity
-  //       this callback will catch the message and will make it clean for display.
-  auto dbg_messenger_callback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
-                                   const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
+  auto dbgMessengerCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                 const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
     // Get rid of all the extra message we don't need
-    std::string clean_msg = callbackData->pMessage;
-    clean_msg             = clean_msg.substr(clean_msg.find_last_of('|') + 1);
-    nvprintf(clean_msg.c_str());  // <- This will end up in the Logger
-    return VK_FALSE;              // to continue
+    std::string cleanMsg = callbackData->pMessage;
+    cleanMsg             = cleanMsg.substr(cleanMsg.find('\n') + 1);
+    nvprintfLevel(LOGLEVEL_DEBUG, "%s", cleanMsg.c_str());  // <- This will end up in the Logger (only if DEBUG is on)
+    return VK_FALSE;                   // to continue
   };
   ``` 
 
-  **NOTE** Do not forget to detroy the messenger at the end of the application.
+  **NOTE** Do not forget to destroy the messenger at the end of the application.
 
   ```
     // #debug_printf : Removing the callback

@@ -1,22 +1,46 @@
-# Ray Query
+# Vulkan Ray Query Implementation
 
-![](docs/ray_query.png)
+![Ray Query Visualization](docs/ray_query.png)
 
-In Vulkan, ray queries are a feature of the ray tracing extension [VK_KHR_ray_query](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_ray_query.html) introduced in Vulkan 1.2. Ray queries provide a way to perform intersection tests between rays and geometry directly on the GPU. This feature is particularly useful for applications that require efficient ray tracing, such as real-time rendering, ray-based physics simulations, and more.
+## Overview
 
+This sample demonstrates the implementation of ray queries using the Vulkan ray tracing extension [VK_KHR_ray_query](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_ray_query.html), introduced in Vulkan 1.2.
 
-The process of performing a ray query involves several steps:
+## Key Concepts
 
-1. Create a ray query acceleration structure: This structure represents the scene's geometry and allows for efficient traversal and intersection testing. It is constructed using the bottom-level and top-level acceleration structures, which describe the geometry and the hierarchy of objects, respectively.
+- GPU-based intersection testing between rays and geometry
+- Efficient ray tracing for real-time rendering and physics simulations
 
-2. Dispatch ray queries: Specify the origin and direction of the rays you want to test. You can dispatch a single ray query or a batch of ray queries simultaneously.
+## Implementation Process
 
-3. Process ray queries: The GPU performs ray traversal and intersection testing against the acceleration structure. This determines whether each ray intersects any objects in the scene.
+1. **Acceleration Structure Creation**
+   - Construct bottom-level and top-level acceleration structures
+   - Represents scene geometry for efficient traversal
 
-4. Retrieve intersection results: After the ray queries are processed, you can obtain information about the intersections, such as the closest hit point, the surface normal, or the distance to the intersection point.
+2. **Ray Query Dispatch**
+   - Specify ray origin and direction
+   - Support for single or batch ray queries
 
-Ray queries provide additional capabilities compared to traditional ray tracing pipelines in Vulkan. They offer more flexibility and control by allowing you to selectively enable or disable certain intersection tests. For example, you can skip testing for shadows if you are only interested in primary ray intersections. This can help improve performance by reducing unnecessary computations.
+3. **Query Processing**
+   - GPU performs ray traversal and intersection testing
+   - Utilizes acceleration structure for efficiency
 
-Overall, ray queries in Vulkan enable efficient and powerful ray tracing capabilities, making them a valuable tool for various applications that require accurate intersection testing between rays and geometry.
+4. **Result Retrieval**
+   - Access intersection data (hit points, normals, distances)
 
+## Technical Advantages
 
+- Selective intersection testing capabilities
+- Performance optimization through test skipping (e.g., shadow tests)
+- Enhanced flexibility compared to traditional ray tracing pipelines
+
+## Applications
+
+- Real-time rendering
+- Ray-based physics simulations
+- Any scenario requiring accurate ray-geometry intersection testing
+
+## Performance Considerations
+
+- Optimize acceleration structure updates for dynamic scenes
+- Balance between query complexity and rendering performance

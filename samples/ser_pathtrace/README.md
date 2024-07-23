@@ -1,26 +1,35 @@
-# Shading Execution Reorder
+# Shading Execution Reorder (SER) Implementation
 
-![](docs/ser_1.png)
+![SER Concept Illustration](docs/ser_1.png)
 
-Shading execution reorder is a way to instruct the GPU on how to schedule the tracing of rays. It helps reducing the execution divergence and data divergence.
+Shading Execution Reorder (SER) is an advanced GPU optimization technique that allows fine-grained control over the scheduling of ray tracing operations. By intelligently reordering shader invocations, SER significantly reduces both execution and data divergence, leading to improved performance in ray tracing applications.
 
-See this [PDF](https://developer.nvidia.com/sites/default/files/akamai/gameworks/ser-whitepaper.pdf)
+For a comprehensive understanding of SER, refer to NVIDIA's [technical whitepaper](https://developer.nvidia.com/sites/default/files/akamai/gameworks/ser-whitepaper.pdf).
 
+## Implementation Details
 
-## `main()`
+### Main Application (`main()`)
 
-To enable SER only a few things have been added. In main(), we have added the extension `VK_NV_ray_tracing_invocation_reorder`
+To enable SER functionality, the following modification has been made:
 
-## `RGEN Shader`
+- Added the `VK_NV_ray_tracing_invocation_reorder` extension to the Vulkan instance creation process.
 
-The other modification is done in the RGEN shader. We are reordering based on if the ray have hit the environment or not. This is done under the `USE_SER` scope (specialization constant variable).
+### Ray Generation (RGEN) Shader
 
-## Result
+The RGEN shader has been modified to implement SER:
 
-As a result when activating SER, we can see that the execution is better distributed.
+- Reordering logic is based on whether the ray has intersected with the environment or geometry.
+- The reordering implementation is encapsulated within the `USE_SER` scope, controlled by a specialization constant variable.
 
-![](docs/ser_2.png)
+## Performance Analysis
 
-## Slang Note
+Activation of SER results in a more efficient distribution of execution workloads, as illustrated in the following visualization:
 
-SER is currently always enabled in the shaders for Slang. It can be turned off by editing the value of `USE_SER` in `shaders/pathtrace.slang`.
+![SER Performance Visualization](docs/ser_2.png)
+
+## Slang-Specific Configuration
+
+For implementations using the Slang shader language:
+
+- SER is enabled by default in the shader code.
+- To disable SER, modify the `USE_SER` value in `shaders/pathtrace.slang`.

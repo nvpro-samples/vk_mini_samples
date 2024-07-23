@@ -1,29 +1,42 @@
-# Position Fetch
+# Position Fetch in Vulkan Ray Tracing
 
-![](docs/fetch.png)
+![Fetch Illustration](docs/fetch.png)
 
-Only the information provided by the acceleration structure is used to raytrace an object. The positions are fetched and the geometric normal is calculated from them. All buffers used to create the acceleration structures are deleted before rendering. This makes the rendering extremely lightweight.
+## Overview
 
-You can find more information on VK_KHR_ray_tracing_position_fetch in this blog: https://www.khronos.org/blog/introducing-vulkan-ray-tracing-position-fetch-extension
+This implementation demonstrates the use of `VK_KHR_ray_tracing_position_fetch` extension in Vulkan. It enables raytracing using only the acceleration structure data, without additional vertex buffers.
 
-## Implementation
+Key aspects:
+- Positions are fetched directly from the acceleration structure
+- Geometric normals are calculated from retrieved positions
+- All buffers used for acceleration structure creation are deleted pre-rendering
+- Results in a lightweight rendering process
 
-As usual, follow the `#FETCH` for what is specific to the sample.
+For detailed information: [Vulkan Ray Tracing Position Fetch Extension](https://www.khronos.org/blog/introducing-vulkan-ray-tracing-position-fetch-extension)
 
-### createBottomLevelAS()
+## Implementation Details
 
-The flag `VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_KHR` needed to be added to the bottom acceleration structure.
-
-### main()
-
-And the following extention was needed too:
-
+### Acceleration Structure Creation
+```cpp
+// Add to bottom acceleration structure
+VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_KHR
 ```
- VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR fetchFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR};
-  spec.vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, false, &fetchFeatures);  // #FETCH
+
+### Extension Enablement
+```cpp
+VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR fetchFeatures{
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR
+};
+spec.vkSetup.addDeviceExtension(
+    VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, 
+    false, 
+    &fetchFeatures
+);
 ```
 
-### raytrace.chit
-
-In the shader we are using `gl_HitTriangleVertexPositionsEXT[n]` to retrieve the 3 triangle positions.
+### Shader Implementation
+In the closest hit shader (`raytrace.chit`):
+```glsl
+vec3 vertex = gl_HitTriangleVertexPositionsEXT[n];
+```
 

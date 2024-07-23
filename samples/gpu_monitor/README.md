@@ -1,5 +1,23 @@
-# GPU Monitor
+# GPU Monitor for Vulkan Applications
 
-![](gpu_monitor.png)
+![GPU Monitor Interface](gpu_monitor.png)
 
-This example doesn't show any Vulkan specifics, but shows how to add the NVML element to the framework to display GPU usage. This is done by using the [NVIDIA Management Library (NVML)](https://developer.nvidia.com/nvidia-management-library-nvml) and retrieving the information at certain intervals. This data is displayed in a window that can be docked anywhere. 
+## Overview
+
+This sample demonstrates integration of NVIDIA Management Library (NVML) for GPU usage monitoring within a Vulkan framework.
+
+## Key Features
+
+- Real-time GPU metrics retrieval
+- Dockable display window for GPU statistics
+- Non-intrusive integration with existing Vulkan applications
+
+## Implementation Details
+
+- Utilizes [NVIDIA Management Library (NVML)](https://developer.nvidia.com/nvidia-management-library-nvml)
+- Periodic GPU data polling
+- Customizable update intervals for performance optimization
+
+## Use Case
+
+While not Vulkan-specific, this module enhances development workflows by providing immediate visibility into GPU resource utilization during application execution.

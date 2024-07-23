@@ -1,47 +1,59 @@
-# NSight Aftermath
+# NSight Aftermath Integration for Vulkan
 
-![img](docs/aftermath.jpg)
+![NSight Aftermath Example](docs/aftermath.jpg)
 
-This example shows how to add NSight Aftermath SDK to the project, to generate a dump helping to dump GPU crashes.
+This sample demonstrates the integration of NVIDIA NSight Aftermath SDK for GPU crash dump generation in Vulkan applications.
 
-There are a few wrong things that can go wrong, and this sample contains a few of them. Clicking on Crash button should create a device lost and dump a file on disk. This file can be openned in NSight Graphics to see where the error occured. 
+## Setup
 
-## Aftermath SDK
+1. Download NSight Aftermath SDK from [NVIDIA Developer](https://developer.nvidia.com/nsight-aftermath)
+2. Set `NSIGHT_AFTERMATH_SDK` CMake variable to the SDK extraction path
 
-Setup
+## Implementation
 
-* Download the Aftermath SDK from https://developer.nvidia.com/nsight-aftermath.
-* In CMake, set `NSIGHT_AFTERMATH_SDK` with the path of where the SDK was extracted.
+### Enabling Aftermath
 
-## Enabling NSight Aftermath
+1. Integration is handled in `nvpro-core` ([nsight_aftermath_vk.cpp](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvk/nsight_aftermath_vk.cpp))
+2. Set `NSIGHT_AFTERMATH_SDK` in CMake to enable `NVVK_SUPPORTS_AFTERMATH`
+3. In `nvvk::Context` construction, set `enableAftermath = true` in `nvvk::ContextCreateInfo`
 
-NSight Aftermath callbacks are integrated in `nvpro-core` under [nsight_aftermath_vk.cpp](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvk/nsight_aftermath_vk.cpp). If CMake has set `NSIGHT_AFTERMATH_SDK` to a valid path, this is enabling the define `NVVK_SUPPORTS_AFTERMATH` and will allow the usage of the Aftermath SDK. At the construction of the Vulkan context in `nvvk::Context`, we are setting to true `enableAftermath` from `nvvk::ContextCreateInfo`. This will setup additional device extensions and will initialize the Aftermath SDK.
+```cpp
+nvvk::ContextCreateInfo contextInfo;
+contextInfo.enableAftermath = true;
+```
 
-:warning: **Note**: Turning on Aftermath might impact the time of shader creation and will add overhead to the application.
+**Note**: Enabling Aftermath may impact shader compilation time and add runtime overhead.
 
-## Testing
+### Crash Scenarios
 
-The best way to test if it works, is to have a `VK_ERROR_DEVICE_LOST`. Click on the fist Crash button, a dislog should popup offering to save to the clipbord the path of the dump file.
+1. **Modified Pipeline Crash**: 
+   - In `createPipeline()`, pipelines are created with various constant specializations
+   - Shader contains `CRASH_TEST` variable set as a constant during pipeline creation
+   - Setting `CRASH_TEST` to 1 creates an infinite loop in the vertex shader
 
-The first crash, is the use of a modified pipeline. In `createPipeline()`, many pipelines are created, using various constant specializations. If you look in the shader, you will find `CRASH_TEST` and this variable is set as constant in the creation of the pipeline. The first button will set this value to **1** creating an infinite loop in the vertex shader.
+2. Additional crash scenarios are included for testing different error conditions
 
-A message similar to this should appear in the console if Aftermath correctly intercepted the crash.
+### Crash Dump Generation
 
-````
---------------------------------------------------------------
+On `VK_ERROR_DEVICE_LOST`, Aftermath intercepts the crash and generates a dump file:
+
+```
 Writing Aftermath dump file to:
-  C:\src\nvpro-samples\shipped\vk_mini_samples\build\samples\crash_aftermath\crash_aftermath-41584-1.nv-gpudmp
---------------------------------------------------------------
-````
+C:\path\to\crash_aftermath-[PID]-[ID].nv-gpudmp
+```
 
-## Dump File
+## Analysis
 
-![img](docs/crash.png)
+1. Open the `.nv-gpudmp` file in [NSight Graphics](https://developer.nvidia.com/nsight-graphics)
+2. Navigate to **Crash Info** for detailed crash analysis
 
-Open [NSight Graphics](https://developer.nvidia.com/nsight-graphics), and `File>Open Files` or drag and drop the `aftermath-*.nv-gpudmp` file. 
+![Crash Analysis](docs/crash.png)
 
-Click on **Crash Info** to have information about the crash. 
+## Best Practices
 
-## Other Crashes
+- Test various crash scenarios to ensure proper dump generation
+- Not all scenarios may crash, as drivers might recover from some errors
+- Use NSight Graphics for in-depth analysis of generated crash dumps
 
-Try other scenarios, not all of them might crash in this sample as the driver might be able to get over it, but some will definitly crash and the error will be reported.
+This integration enables efficient debugging of GPU crashes in Vulkan applications using NVIDIA's NSight Aftermath toolkit.
+

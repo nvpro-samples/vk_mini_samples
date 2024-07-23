@@ -1,13 +1,35 @@
-# OFFLINE
+# Vulkan Offline Rendering
 
-![](docs/offline.jpg)
+![Offline Rendering Output](docs/offline.jpg)
 
-This example shows how to create a Vulkan context, render and save the result to disk without creating any window.
+## Overview
 
-~~~~ batch
-offline.exe OPTIONS
--t, --time    Animation time
--w, --width   Render size width
--h, --height  Render size height
--o, --output  Output filename (must end with .jpg)
-~~~~
+This sample demonstrates creating a Vulkan context, rendering, and saving results to disk without a window interface.
+
+## Key Features
+
+- Windowless Vulkan context creation
+- Offline rendering pipeline
+- Image output to disk
+
+## Usage
+
+```bash
+offline.exe [OPTIONS]
+```
+
+### Options
+
+| Flag | Long Form | Description |
+|------|-----------|-------------|
+| -t   | --time    | Animation time |
+| -w   | --width   | Render width |
+| -h   | --height  | Render height |
+| -o   | --output  | Output filename (must be .jpg) |
+
+## Technical Considerations
+
+- Implements headless Vulkan instance
+- Manages render targets and framebuffers without display
+- Handles image data transfer from GPU to system memory
+- Implements image encoding and file I/O for output
