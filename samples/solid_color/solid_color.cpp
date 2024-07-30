@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -47,15 +47,14 @@
 #include <vulkan/vulkan_core.h>
 
 #define VMA_IMPLEMENTATION
-#include <backends/imgui_impl_vulkan.h>
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "vk_context.hpp"
+#include "backends/imgui_impl_vulkan.h"             // ImGui_ImplVulkan_AddTexture
+#include "common/vk_context.hpp"                    // Vulkan context
+#include "nvvk/debug_util_vk.hpp"                   // Vulkan debug names
+#include "nvvk/images_vk.hpp"                       // Image creation helpers
+#include "nvvkhl/alloc_vma.hpp"                     // VMA allocator
+#include "nvvkhl/application.hpp"                   // The application framework
+#include "nvvkhl/element_benchmark_parameters.hpp"  // Tests and benchmarks
 #include "nvvk/extensions_vk.hpp"
-
 
 class SolidColor : public nvvkhl::IAppElement
 {
@@ -198,19 +197,24 @@ int main(int argc, char** argv)
 {
   VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  vkSetup.instanceExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  auto vkctx = std::make_unique<VkContext>(vkSetup);
-  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
 
+  // Create Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
+
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+
+  // Application setup
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.instance       = vkctx->getInstance();
-  spec.device         = vkctx->getDevice();
-  spec.physicalDevice = vkctx->getPhysicalDevice();
-  for(auto& q : vkctx->getQueueInfos())
-    spec.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
+  spec.instance       = vkContext->getInstance();
+  spec.device         = vkContext->getDevice();
+  spec.physicalDevice = vkContext->getPhysicalDevice();
+  spec.queues         = vkContext->getQueueInfos();
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

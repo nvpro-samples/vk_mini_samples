@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,6 +38,7 @@ NVML Monitor:
 */
 
 #include <random>
+#include <glm/gtc/matrix_transform.hpp>
 
 // clang-format off
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
@@ -45,12 +46,13 @@ NVML Monitor:
 
 #define VMA_IMPLEMENTATION
 
-#include "glm/gtc/matrix_transform.hpp"
+#include "common/vk_context.hpp"
 #include "imgui/imgui_icon.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
@@ -60,6 +62,7 @@ NVML Monitor:
 #include "nvvkhl/element_nvml.hpp"
 #include "nvvkhl/element_profiler.hpp"
 #include "nvvkhl/gbuffer.hpp"
+#include "nvvk/renderpasses_vk.hpp"
 
 
 namespace DH {
@@ -152,6 +155,8 @@ public:
     m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);               // Debug utility
     m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);  // Descriptor Set helper
     m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);  // Descriptor Set helper
+
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
     // #INSPECTOR
     nvvkhl::ElementInspector::InitInfo inspectInfo{
@@ -283,7 +288,7 @@ public:
     ImGui::End();
   }
 
-  void onRender(VkCommandBuffer cmd)
+  void onRender(VkCommandBuffer cmd) override
   {
     auto _scope = m_dutil->DBG_SCOPE(cmd);
     auto sec    = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
@@ -340,7 +345,7 @@ private:
     }
 
     // Copy the particles to the device
-    if(m_bParticles.buffer != NULL)
+    if(m_bParticles.buffer != nullptr)
     {
       auto cmd = m_app->createTempCmdBuffer();
       m_alloc->getStaging()->cmdToBuffer(cmd, m_bParticles.buffer, 0, m_particles.size() * sizeof(DH::Particle),
@@ -502,7 +507,7 @@ private:
 
     // Create the shaders
     NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), static_cast<int>(shaderCreateInfos.size()),
-                                  shaderCreateInfos.data(), NULL, m_shaders.data()));
+                                  shaderCreateInfos.data(), nullptr, m_shaders.data()));
   }
 
   void createVkBuffers()
@@ -854,31 +859,35 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-
-  // Required extra extensions
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
-  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
+  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = true;
-  spec.width          = 1700;
-  spec.height         = 900;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  // Create Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
+
+  // Loading the Vulkan extension pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.width          = 1700;
+  appSetup.height         = 900;
+  appSetup.instance       = vkContext->getInstance();
+  appSetup.device         = vkContext->getDevice();
+  appSetup.physicalDevice = vkContext->getPhysicalDevice();
+  appSetup.queues         = vkContext->getQueueInfos();
 
   // Setting up the layout of the application
-  spec.dockSetup = [](ImGuiID viewportID) {
+  appSetup.dockSetup = [](ImGuiID viewportID) {
     ImGuiID settingID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Right, 0.2F, nullptr, &viewportID);
     ImGui::DockBuilderDockWindow("Settings", settingID);
     ImGuiID profilerID = ImGui::DockBuilderSplitNode(settingID, ImGuiDir_Down, 0.35F, nullptr, &settingID);
@@ -890,7 +899,7 @@ int main(int argc, char** argv)
   };
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // Global element used in sample
   g_profiler         = std::make_shared<nvvkhl::ElementProfiler>();   // #PROFILER
@@ -911,7 +920,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

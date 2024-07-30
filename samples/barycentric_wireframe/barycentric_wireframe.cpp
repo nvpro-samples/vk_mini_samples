@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //////////////////////////////////////////////////////////////////////////
@@ -40,21 +40,25 @@
 #define VMA_IMPLEMENTATION
 #define IMGUI_DEFINE_MATH_OPERATORS
 
+#include "common/vk_context.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/commands_vk.hpp"
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
+#include "nvvk/renderpasses_vk.hpp"
+#include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
+#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
-#include "nvvk/shaders_vk.hpp"
+
 
 namespace DH {
 using namespace glm;
@@ -116,7 +120,7 @@ public:
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     m_settings = presets[0];
-
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     createScene();
     createVkBuffers();
     createPipeline();
@@ -418,24 +422,29 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup{false};  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  static VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeat{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, false, &baryFeat);
+  // Extension feature needed.
+  VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Setting up how Vulkan context must be created
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, &baryFeature});
+
+  // Create the Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+  if(!vkContext->isValid())
+    std::exit(0);
 
   nvvkhl::ApplicationCreateInfo appInfo;
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
-  appInfo.instance       = vkContext.m_instance;
-  appInfo.device         = vkContext.m_device;
-  appInfo.physicalDevice = vkContext.m_physicalDevice;
-  appInfo.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(appInfo);
@@ -452,7 +461,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

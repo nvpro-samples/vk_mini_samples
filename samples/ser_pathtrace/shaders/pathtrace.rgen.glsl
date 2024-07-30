@@ -172,7 +172,7 @@ vec3 pathTrace(Ray r, inout uint seed)
     vec3  L   = normalize(skyInfo.directionToLight);
 
     // Setting up the material
-    vec3 baseColor = materials.m[iInfo.materialID].xyz;
+    vec3        baseColor = materials.m[iInfo.materialID].xyz;
     PbrMaterial pbrMat    = defaultPbrMaterial(baseColor, pc.metallic, pc.roughness, payload.nrm, payload.nrm);
 
     // Add dummy divergence

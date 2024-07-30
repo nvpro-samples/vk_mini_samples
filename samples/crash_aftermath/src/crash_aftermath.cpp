@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -443,6 +443,7 @@ int main(int argc, char** argv)
   nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
   vkSetup.setVersion(1, 3);
   vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  vkSetup.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
   vkSetup.enableAftermath = true;  // We want Aftermath
 
@@ -450,12 +451,12 @@ int main(int argc, char** argv)
   vkContext.init(vkSetup);
 
   nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
+  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  spec.vSync          = true;
   spec.instance       = vkContext.m_instance;
   spec.device         = vkContext.m_device;
   spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+  spec.queues.push_back({vkContext.m_queueGCT.familyIndex, vkContext.m_queueGCT.queueIndex, vkContext.m_queueGCT.queue});
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);

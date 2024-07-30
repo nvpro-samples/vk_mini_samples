@@ -44,7 +44,6 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/slang.cmake)
 
 # Various Paths
 set(SAMPLES_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-set(SAMPLES_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/common)
 set(NVPRO_CORE_DIR ${BASE_DIRECTORY}/nvpro_core)
 
 if(MSVC)

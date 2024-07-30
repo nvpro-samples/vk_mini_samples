@@ -62,6 +62,11 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
+
+#include "common/vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
+
+
 #include "shaders/dh_bindings.h"
 namespace DH {
 using namespace glm;
@@ -847,60 +852,54 @@ private:
 ///
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup{false};  // #MICROMESH cannot have validation layers (crash)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accel_feature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
-  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
-  vkSetup.addDeviceExtension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
-
   // #MICROMESH
   static VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
   static VkPhysicalDeviceDisplacementMicromapFeaturesNV mm_displacement_features = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DISPLACEMENT_MICROMAP_FEATURES_NV};
-  vkSetup.addDeviceExtension(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, true, &mm_opacity_features);
-  vkSetup.addDeviceExtension(VK_NV_DISPLACEMENT_MICROMAP_EXTENSION_NAME, true, &mm_displacement_features);
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.enableValidationLayers = false;  // #MICROMESH cannot have validation layers (crash)
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accel_feature});  // To build acceleration structures
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rt_pipeline_feature});  // To use vkCmdTraceRaysKHR
+  vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
+  vkSetup.deviceExtensions.push_back({VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME});
+  // #MICROMESH
+  vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
+  vkSetup.deviceExtensions.push_back({VK_NV_DISPLACEMENT_MICROMAP_EXTENSION_NAME, &mm_displacement_features});
+
   // Disable error messages introduced by micromesh
-  vkContext.ignoreDebugMessage(0x901f59ec);  // Unknown extension
-  vkContext.ignoreDebugMessage(0xdd73dbcf);  // Unknown structure
-  vkContext.ignoreDebugMessage(0xba164058);  // Unknown flag  vkGetAccelerationStructureBuildSizesKHR:
-  vkContext.ignoreDebugMessage(0x22d5bbdc);  // Unknown flag  vkCreateRayTracingPipelinesKHR
-  vkContext.ignoreDebugMessage(0x27112e51);  // Unknown flag  vkCreateBuffer
-  vkContext.ignoreDebugMessage(0x79de34d4);  // Unknown VK_NV_displacement_micromesh, VK_NV_opacity_micromesh
+  vkSetup.ignoreDbgMessages.insert(0x901f59ec);  // Unknown extension
+  vkSetup.ignoreDbgMessages.insert(0xdd73dbcf);  // Unknown structure
+  vkSetup.ignoreDbgMessages.insert(0xba164058);  // Unknown flag  vkGetAccelerationStructureBuildSizesKHR:
+  vkSetup.ignoreDbgMessages.insert(0x22d5bbdc);  // Unknown flag  vkCreateRayTracingPipelinesKHR
+  vkSetup.ignoreDbgMessages.insert(0x27112e51);  // Unknown flag  vkCreateBuffer
+  vkSetup.ignoreDbgMessages.insert(0x79de34d4);  // Unknown VK_NV_displacement_micromesh, VK_NV_opacity_micromesh
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = false;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
 
+  // Vulkan context creation
+  VkContext vkContext(vkSetup);
+  if(!vkContext.isValid())
+    std::exit(0);
+
+  // Loading the Vulkan extension pointers
+  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = false;
+  appSetup.instance       = vkContext.getInstance();
+  appSetup.device         = vkContext.getDevice();
+  appSetup.physicalDevice = vkContext.getPhysicalDevice();
+  appSetup.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
-
-  // #MICROMESH
-  if(mm_opacity_features.micromap == VK_FALSE)
-  {
-    LOGE("ERROR: Micro-Mesh not supported");
-    exit(0);
-  }
-
-  if(mm_displacement_features.displacementMicromap == VK_FALSE)
-  {
-    LOGE("ERROR: Micro-Mesh displacement not supported");
-    exit(0);  // Requiring a beta driver
-  }
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);

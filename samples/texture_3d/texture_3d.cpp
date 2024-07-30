@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,6 +29,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include "backends/imgui_impl_vulkan.h"
+#include "common/vk_context.hpp"
 #include "glm/gtc/noise.hpp"
 #include "nvh/primitives.hpp"
 #include "nvvk/debug_util_vk.hpp"
@@ -44,8 +45,7 @@
 #include "nvvkhl/element_gui.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/shaders/dh_comp.h"
-
-#include "vk_context.hpp"
+#include "nvvk/renderpasses_vk.hpp"
 
 namespace DH {
 using namespace glm;
@@ -115,6 +115,7 @@ public:
     m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);
     m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
     m_settings.perlin = DH::PerlinDefaultValues();
 
@@ -308,15 +309,15 @@ public:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     vkCmdBeginRendering(cmd, &r_info);
-    m_app->setViewport(cmd);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dsetRaster->getPipeLayout(), 0,
-                              static_cast<uint32_t>(m_dsetRastWrites.size()), m_dsetRastWrites.data());
-
-    const VkDeviceSize offsets{0};
-
     {
+      const VkDeviceSize offsets{0};
+      m_app->setViewport(cmd);
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dsetRaster->getPipeLayout(), 0,
+                                static_cast<uint32_t>(m_dsetRastWrites.size()), m_dsetRastWrites.data());
+
       // Push constant information
       DH::PushConstant pushConstant{};
       pushConstant.threshold = m_settings.threshold;
@@ -328,10 +329,11 @@ public:
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      auto num_indices = 36;
+      int32_t num_indices = 36;
       vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   }
 
   void onResize(uint32_t width, uint32_t height) override
@@ -623,20 +625,25 @@ int main(int argc, char** argv)
       .queues             = {VK_QUEUE_GRAPHICS_BIT},
   };
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  auto vkctx = std::make_unique<VkContext>(vkSetup);
-  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = true;
-  spec.instance       = vkctx->getInstance();
-  spec.device         = vkctx->getDevice();
-  spec.physicalDevice = vkctx->getPhysicalDevice();
-  for(auto& q : vkctx->getQueueInfos())
-    spec.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
+  // Vulkan context creation
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
+
+  // Loading function pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext->getInstance();
+  appSetup.device         = vkContext->getDevice();
+  appSetup.physicalDevice = vkContext->getPhysicalDevice();
+  appSetup.queues         = vkContext->getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // Create this example
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
@@ -647,6 +654,9 @@ int main(int argc, char** argv)
   app->addElement(std::make_shared<Texture3dSample>());
 
   app->run();
+
+  app.reset();
+  vkContext.reset();
 
   return test->errorCode();
 }

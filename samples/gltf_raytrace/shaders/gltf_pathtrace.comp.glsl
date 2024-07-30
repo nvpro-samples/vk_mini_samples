@@ -197,12 +197,12 @@ struct DirectLight
 // This should sample any lights in the scene, but we only have the sun
 void sampleLights(in vec3 pos, vec3 normal, in vec3 worldRayDirection, inout uint seed, out DirectLight directLight)
 {
-  vec2 randVal = vec2(rand(seed), rand(seed));
+  vec2              randVal   = vec2(rand(seed), rand(seed));
   SkySamplingResult skySample = samplePhysicalSky(skyInfo, randVal);
 
-  directLight.direction = skySample.direction;
-  directLight.pdf       = skySample.pdf;
-  directLight.distance  = INFINITE;
+  directLight.direction       = skySample.direction;
+  directLight.pdf             = skySample.pdf;
+  directLight.distance        = INFINITE;
   directLight.radianceOverPdf = skySample.radiance / skySample.pdf;
 }
 

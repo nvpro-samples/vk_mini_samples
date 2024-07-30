@@ -16,12 +16,12 @@ void main()
     return;
 
   vec2 pos = particles[particleID].velocity * setting.deltaTime;
-  if (isnan(pos.x) || isnan(pos.y))
+  if(isnan(pos.x) || isnan(pos.y))
   {
-    pos = vec2(0);
+    pos                            = vec2(0);
     particles[particleID].velocity = vec2(0);
   }
 
-  particles[particleID].position  += pos;
+  particles[particleID].position += pos;
   handleCollisions(particleID);
 }

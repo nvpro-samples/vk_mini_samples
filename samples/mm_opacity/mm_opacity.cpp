@@ -62,6 +62,10 @@
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/shaders/dh_sky.h"
 
+#include "common/vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
+
+
 #include "shaders/dh_bindings.h"
 namespace DH {
 using namespace glm;
@@ -812,41 +816,44 @@ private:
 ///
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup{false};  // #MICROMESH cannot have validation layers (crash)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-
-  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accel_feature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
-  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
+  // #MICROMAP
+  VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
+
+  // Setting how we want Vulkan context to be created
+  VkContextSettings vkSetup;  // #MICROMESH cannot have validation layers (crash)
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.enableValidationLayers = false;
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accel_feature});  // To build acceleration structures
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rt_pipeline_feature});  // To use vkCmdTraceRaysKHR
+  vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
+  vkSetup.deviceExtensions.push_back({VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
 #if USE_HLSL  // DXC is automatically adding the extension
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 #endif  // USE_HLSL
-  vkSetup.addDeviceExtension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
 
-  // #MICROMAP
-  static VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
-  vkSetup.addDeviceExtension(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, true, &mm_opacity_features);
+  // Creating the Vulkan context
+  VkContext vkContext(vkSetup);
+  if(!vkContext.isValid())
+    std::exit(0);
+  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
-
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = false;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = false;
+  appSetup.instance       = vkContext.getInstance();
+  appSetup.device         = vkContext.getDevice();
+  appSetup.physicalDevice = vkContext.getPhysicalDevice();
+  appSetup.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // #MICROMAP
   if(mm_opacity_features.micromap == VK_FALSE)

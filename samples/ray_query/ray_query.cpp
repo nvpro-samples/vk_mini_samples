@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,7 +28,6 @@
 #include <array>
 #include <vulkan/vulkan_core.h>
 
-#define VMA_IMPLEMENTATION
 #include "imgui/imgui_camera_widget.h"
 #include "imgui/imgui_helper.h"
 #include "nvh/primitives.hpp"
@@ -37,10 +36,10 @@
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvk/sbtwrapper_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_camera.hpp"
 #include "nvvkhl/element_gui.hpp"
@@ -49,6 +48,8 @@
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
 #include "nvvkhl/shaders/dh_sky.h"
+#include "common/vk_context.hpp"
+#include "common/alloc_dma.hpp"
 
 #include "nvtx3/nvtx3.hpp"
 
@@ -96,12 +97,7 @@ public:
     m_device = m_app->getDevice();
 
     m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc      = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-             .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-             .physicalDevice = app->getPhysicalDevice(),
-             .device         = app->getDevice(),
-             .instance       = app->getInstance(),
-    });  // Allocator
+    m_alloc      = std::make_unique<AllocDma>(m_device, m_app->getPhysicalDevice());
     m_rtSet      = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_device, m_alloc.get());
 
@@ -634,7 +630,7 @@ private:
   //
   nvvkhl::Application*                           m_app{nullptr};
   std::unique_ptr<nvvk::DebugUtil>               m_dutil;
-  std::unique_ptr<nvvkhl::AllocVma>              m_alloc;
+  std::unique_ptr<AllocDma>                      m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet;  // Descriptor set
   std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
   std::unique_ptr<nvvkhl::GBuffer>               m_gBuffers;  // G-Buffers: color + depth
@@ -680,38 +676,43 @@ private:
 ///
 auto main(int argc, char** argv) -> int
 {
-  nvvk::ContextCreateInfo vkSetup;
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-
-  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
   // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accelFeature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rtPipelineFeature);  // To use vkCmdTraceRaysKHR
-  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
-  VkPhysicalDeviceShaderClockFeaturesKHR clockFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME, false, &clockFeature);
-  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Config for Vulkan context creation
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature});  // To build acceleration structures
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature});  // To use vkCmdTraceRaysKHR
+  vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
+  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = false;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  // Vulkan context creation
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
+
+  // Loading the Vulkan extension pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+  // Application settings
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = false;
+  appSetup.instance       = vkContext->getInstance();
+  appSetup.device         = vkContext->getDevice();
+  appSetup.physicalDevice = vkContext->getPhysicalDevice();
+  appSetup.queues         = vkContext->getQueueInfos();
 
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
@@ -725,7 +726,7 @@ auto main(int argc, char** argv) -> int
 
   app->run();
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

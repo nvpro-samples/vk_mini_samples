@@ -32,32 +32,27 @@
 #include <vulkan/vulkan_core.h>
 
 #define VMA_IMPLEMENTATION
-#include "imgui/imgui_camera_widget.h"
-#include "imgui/imgui_helper.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/sbtwrapper_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-#include "nvvkhl/shaders/dh_sky.h"
-#include "nvvk/acceleration_structures.hpp"
-
-#include "shaders/dh_bindings.h"
+#include "common/vk_context.hpp"                    // Vulkan context creation
+#include "imgui/imgui_camera_widget.h"              // Camera UI
+#include "imgui/imgui_helper.h"                     // Property Editor
+#include "nvh/primitives.hpp"                       // Various primitives
+#include "nvvk/acceleration_structures.hpp"         // BLAS & TLAS creation helper
+#include "nvvk/descriptorsets_vk.hpp"               // Descriptor set creation helper
+#include "nvvk/extensions_vk.hpp"                   // Vulkan extension declaration
+#include "nvvk/sbtwrapper_vk.hpp"                   // Shading binding table creation helper
+#include "nvvk/shaders_vk.hpp"                      // Shader module creation wrapper
+#include "nvvkhl/alloc_vma.hpp"                     // VMA memory allocator
+#include "nvvkhl/element_benchmark_parameters.hpp"  // For benchmark and tests
+#include "nvvkhl/element_camera.hpp"                // To manipulate the camera
+#include "nvvkhl/element_gui.hpp"                   // Application Menu / titlebar
+#include "nvvkhl/gbuffer.hpp"                       // G-Buffer creation helper
+#include "nvvkhl/pipeline_container.hpp"            // Container to hold pipelines
+#include "nvvkhl/shaders/dh_sky.h"                  // Sun & Sky
 
 namespace DH {
 using namespace glm;
 #include "shaders/device_host.h"  // Shared between host and device
+#include "shaders/dh_bindings.h"
 }  // namespace DH
 
 
@@ -682,36 +677,41 @@ private:
 ///
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accel_feature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
-  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
   VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR fetchFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, true, &fetchFeatures);  // #FETCH
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accel_feature});  // To build acceleration structures
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rt_pipeline_feature});  // To use vkCmdTraceRaysKHR
+  vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, &fetchFeatures});  // #FETCH
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  // Create Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
+
+  // Loading the Vulkan extension pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext->getInstance();
+  appSetup.device         = vkContext->getDevice();
+  appSetup.physicalDevice = vkContext->getPhysicalDevice();
+  appSetup.queues         = vkContext->getQueueInfos();
 
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   if(fetchFeatures.rayTracingPositionFetch == VK_FALSE)
   {
@@ -731,7 +731,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

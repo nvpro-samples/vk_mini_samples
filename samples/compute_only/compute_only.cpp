@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,6 +24,10 @@
 #include "nvvkhl/gbuffer.hpp"                       // G-Buffer helper
 #include "nvvkhl/shaders/dh_comp.h"                 // Workgroup size and count
 #include "nvvkhl/element_benchmark_parameters.hpp"  // For testing
+
+#include "common/vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
+
 
 namespace DH {
 using namespace glm;
@@ -182,39 +186,40 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup{false};  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  static VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeat{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, false, &baryFeat);
-
-  // Required extra extensions
+  // Extension feature needed.
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
-  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  // Setting up how Vulkan context must be created
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Create the Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+  if(!vkContext->isValid())
+    std::exit(0);
 
+  // Setting up how the the application must be created
   nvvkhl::ApplicationCreateInfo appInfo;
-  appInfo.name = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appInfo.useMenu = SHOW_MENU ? true : false;
-  appInfo.instance       = vkContext.m_instance;
-  appInfo.device         = vkContext.m_device;
-  appInfo.physicalDevice = vkContext.m_physicalDevice;
-  appInfo.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.useMenu        = SHOW_MENU ? true : false;
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
-
-  auto app  = std::make_unique<nvvkhl::Application>(appInfo);                       // Create the application
+  auto app  = std::make_unique<nvvkhl::Application>(appInfo);                    // Create the application
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);  // Create the test framework
   app->addElement(test);                                                         // Add the test element (--test ...)
   app->addElement(std::make_shared<ComputeOnlyElement>());                       // Add our sample to the application
   app->run();  // Loop infinitely, and call IAppElement virtual functions at each frame
 
   app.reset();  // Clean up
-  vkContext.deinit();
+  //vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

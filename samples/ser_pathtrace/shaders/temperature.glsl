@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef TEMPERATURE_GLSL
 #define TEMPERATURE_GLSL
 
- // Utility for temperature and landscapeColor:
- // Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at
- // low, high, and (low + high) * 0.5.
+// Utility for temperature and landscapeColor:
+// Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at
+// low, high, and (low + high) * 0.5.
 float fade(float low, float high, float value)
 {
   float mid   = (low + high) * 0.5;

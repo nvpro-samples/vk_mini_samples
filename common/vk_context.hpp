@@ -1,10 +1,34 @@
+/*
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <csignal>
+
 #include <vulkan/vulkan_core.h>
 #include <stdexcept>
 #include <vector>
 #include <cstring>
 #include <unordered_set>
-#include "nvvk/error_vk.hpp"
+
 #include "nvh/nvprint.hpp"
+#include "nvh/timesampler.hpp"
+#include "nvvk/error_vk.hpp"
+#include "nvvkhl/application.hpp"  // For QueueInfo
 
 //--------------------------------------------------------------------------------------------------
 // CATCHING VULKAN ERRORS
@@ -19,7 +43,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
     auto ignoredMsg = reinterpret_cast<std::unordered_set<uint32_t>*>(userData);
     if(ignoredMsg->find(callbackData->messageIdNumber) != ignoredMsg->end())
       return VK_FALSE;
-    fprintf(stderr, "%s\n", callbackData->pMessage);
+    LOGE("%s\n", callbackData->pMessage);
 #if defined(_MSVC_LANG)
     __debugbreak();  // If you break here, there is a Vulkan error that needs to be fixed
                      // To ignore specific message, insert it to settings.ignoreDbgMessages
@@ -32,18 +56,20 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
 }
 
 // Vulkan Queue information
-struct QueueInfo
-{
-  uint32_t familyIndex;
-  uint32_t queueIndex;
-  VkQueue  queue;
-};
+//struct QueueInfo
+//{
+//  uint32_t familyIndex = ~0U;
+//  uint32_t queueIndex  = ~0U;
+//  VkQueue  queue       = VK_NULL_HANDLE;
+//};
+using QueueInfo = nvvkhl::ApplicationQueue;
 
 // Struct to hold an extension and its corresponding feature
 struct ExtensionFeaturePair
 {
   const char* extensionName = nullptr;
   void*       feature       = nullptr;  // [optional] Pointer to the feature structure for the extension
+  bool        required      = true;     // If the extension is required
 };
 
 
@@ -64,14 +90,14 @@ struct VkContextSettings
 {
   std::vector<const char*> instanceExtensions = {};  // Instance extensions: VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
   std::vector<ExtensionFeaturePair> deviceExtensions = {};  // Device extensions: {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature}, {OTHER}}
-  std::vector<VkQueueFlags>    queues = {VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT | VK_QUEUE_COMPUTE_BIT,
-                                         VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT};  // All desired queues, first is always GTC
+  std::vector<VkQueueFlags> queues = {VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT | VK_QUEUE_COMPUTE_BIT};  // All desired queues, first is always GTC
   std::unordered_set<uint32_t> ignoreDbgMessages;   // Ignore debug messages: 0x901f59ec
   void*       instanceCreateInfoExt = nullptr;      // Instance create info extension (ex: VkLayerSettingsCreateInfoEXT)
   const char* applicationName       = "No Engine";  // Application name
   uint32_t    apiVersion            = VK_API_VERSION_1_3;  // Vulkan API version
   VkAllocationCallbacks* alloc      = nullptr;             // Allocation callbacks
-  bool enableAllFeatures            = true;  // If true, pull all capability of `features` from the physical device
+  bool    enableAllFeatures         = true;  // If true, pull all capability of `features` from the physical device
+  int32_t forceGPU                  = -1;    // If != -1, use GPU index.
 #if NDEBUG
   bool enableValidationLayers = false;  // Disable validation layers in release
   bool verbose                = false;
@@ -87,9 +113,23 @@ struct VkContextSettings
 class VkContext
 {
 public:
-  VkContext(const VkContextSettings& settings = VkContextSettings())
-      : m_settings(settings)
+  VkContext() = default;
+  VkContext(const VkContextSettings& settings) { init(settings); }
+  ~VkContext() { deinit(); }
+
+  VkInstance             getInstance() const { return m_instance; }
+  VkDevice               getDevice() const { return m_device; }
+  VkPhysicalDevice       getPhysicalDevice() const { return m_physicalDevice; }
+  QueueInfo              getQueueInfo(uint32_t index) const { return m_queueInfos[index]; }
+  std::vector<QueueInfo> getQueueInfos() const { return m_queueInfos; }
+  bool                   isValid() const
   {
+    return m_instance != VK_NULL_HANDLE && m_device != VK_NULL_HANDLE && m_physicalDevice != VK_NULL_HANDLE;
+  }
+
+  void init(const VkContextSettings& settings = VkContextSettings())
+  {
+    m_settings = settings;
     {
       nvh::ScopedTimer st("Creating Vulkan Context");
       createInstance();
@@ -106,13 +146,23 @@ public:
       LOGI("_________________________________________________\n");
     }
   }
-  ~VkContext() { cleanup(); }
 
-  VkInstance             getInstance() const { return m_instance; }
-  VkDevice               getDevice() const { return m_device; }
-  VkPhysicalDevice       getPhysicalDevice() const { return m_physicalDevice; }
-  QueueInfo              getQueueInfo(uint32_t index) const { return m_queueInfos[index]; }
-  std::vector<QueueInfo> getQueueInfos() const { return m_queueInfos; }
+  void deinit()
+  {
+    if(m_dbgMessenger)
+    {
+      auto vkDestroyDebugUtilsMessengerEXT =
+          (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");
+      assert(vkDestroyDebugUtilsMessengerEXT != nullptr);
+      vkDestroyDebugUtilsMessengerEXT(m_instance, m_dbgMessenger, m_settings.alloc);
+      m_dbgMessenger = nullptr;
+    }
+    vkDestroyDevice(m_device, m_settings.alloc);
+    vkDestroyInstance(m_instance, m_settings.alloc);
+    m_device   = VK_NULL_HANDLE;
+    m_instance = VK_NULL_HANDLE;
+  }
+
 
 private:
   VkContextSettings m_settings{};  // What was used to create the information
@@ -153,7 +203,6 @@ private:
     if(m_settings.enableValidationLayers)
     {
       layers.push_back("VK_LAYER_KHRONOS_validation");
-      m_settings.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
     VkInstanceCreateInfo createInfo{
@@ -168,7 +217,10 @@ private:
 
     VkResult result = vkCreateInstance(&createInfo, m_settings.alloc, &m_instance);
     if(result != VK_SUCCESS)
+    {
       assert(!"failed to create instance!");
+      return;
+    }
 
     if(m_settings.enableValidationLayers)
     {
@@ -189,6 +241,9 @@ private:
 
   void selectPhysicalDevice()
   {
+    if(m_instance == VK_NULL_HANDLE)
+      return;
+
     // nvh::ScopedTimer st(std::string(__FUNCTION__) + "\n");
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
@@ -198,15 +253,36 @@ private:
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, gpus.data());
 
     // Find the discrete GPU if present, or use first one available.
-    m_physicalDevice = gpus[0];
-    int gpuIndex     = 0;
-    for(VkPhysicalDevice& device : gpus)
+    if((m_settings.forceGPU == -1) || (m_settings.forceGPU >= int(deviceCount)))
     {
-      VkPhysicalDeviceProperties properties;
-      vkGetPhysicalDeviceProperties(device, &properties);
-      if(properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+      m_physicalDevice = gpus[0];
+      for(VkPhysicalDevice& device : gpus)
       {
-        m_physicalDevice = device;
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(device, &properties);
+        if(properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        {
+          m_physicalDevice = device;
+        }
+      }
+    }
+    else
+    {
+      // Using specified GPU
+      m_physicalDevice = gpus[m_settings.forceGPU];
+    }
+
+    {  // Check for available Vulkan version
+      VkPhysicalDeviceProperties properties;
+      vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
+      uint32_t apiVersion = properties.apiVersion;
+      if((VK_VERSION_MAJOR(apiVersion) < VK_VERSION_MAJOR(m_settings.apiVersion))
+         || (VK_VERSION_MINOR(apiVersion) < VK_VERSION_MINOR(m_settings.apiVersion)))
+      {
+        LOGE("Requested Vulkan version (%d.%d) is higher than available version (%d.%d).\n", VK_VERSION_MAJOR(m_settings.apiVersion),
+             VK_VERSION_MINOR(m_settings.apiVersion), VK_VERSION_MAJOR(apiVersion), VK_VERSION_MINOR(apiVersion));
+        m_physicalDevice = {};
+        return;
       }
     }
 
@@ -220,14 +296,28 @@ private:
 
     // Find the queues that we need
     m_desiredQueues = m_settings.queues;
-    findQueueFamilies();
+    if(!findQueueFamilies())
+    {
+      m_physicalDevice = {};
+      return;
+    }
 
     // Filter the available extensions otherwise the device creation will fail
-    m_settings.deviceExtensions = filterAvailableExtensions(getDeviceExtensions(m_physicalDevice), m_settings.deviceExtensions);
+    std::vector<ExtensionFeaturePair> filteredExtensions;
+    bool allFound = filterAvailableExtensions(getDeviceExtensions(m_physicalDevice), m_settings.deviceExtensions, filteredExtensions);
+    if(!allFound)
+    {
+      m_physicalDevice = {};
+      return;
+    }
+    m_settings.deviceExtensions = filteredExtensions;
   }
 
   void createDevice()
   {
+    if(m_physicalDevice == VK_NULL_HANDLE)
+      return;
+
     // nvh::ScopedTimer st(__FUNCTION__);
     // Chain all custom features to the pNext chain of m_deviceFeatures
     for(const auto& extension : m_settings.deviceExtensions)
@@ -272,7 +362,7 @@ private:
     baseStruct->pNext = prependStruct;  // Prepend the prependStruct to the baseStruct
   }
 
-  void findQueueFamilies()
+  bool findQueueFamilies()
   {
     uint32_t queueFamilyCount;
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
@@ -355,7 +445,8 @@ private:
       if(!found)
       {
         // If no suitable queue family is found, assert a failure
-        assert(!"Failed to find a suitable queue family!");
+        LOGE("Failed to find a suitable queue family!\n");
+        return false;
       }
     }
 
@@ -368,16 +459,19 @@ private:
                                       m_queuePriorities.back().data()});
       }
     }
+    return true;
   }
 
-  std::vector<ExtensionFeaturePair> filterAvailableExtensions(const std::vector<VkExtensionProperties>& availableExtensions,
-                                                              const std::vector<ExtensionFeaturePair>& desiredExtensions)
+  bool filterAvailableExtensions(const std::vector<VkExtensionProperties>& availableExtensions,
+                                 const std::vector<ExtensionFeaturePair>&  desiredExtensions,
+                                 std::vector<ExtensionFeaturePair>&        filteredExtensions)
   {
+    bool allFound = true;
+
     std::unordered_map<std::string, bool> availableExtensionsMap;
     for(const auto& ext : availableExtensions)
       availableExtensionsMap[ext.extensionName] = true;
 
-    std::vector<ExtensionFeaturePair> filteredExtensions;
     for(const auto& desiredExtension : desiredExtensions)
     {
       if(availableExtensionsMap.find(desiredExtension.extensionName) != availableExtensionsMap.end())
@@ -386,24 +480,17 @@ private:
       }
       else
       {
-        LOGE("Extension not available: %s\n", desiredExtension.extensionName);
+        if(desiredExtension.required)
+        {
+          LOGE("Extension not available: %s\n", desiredExtension.extensionName);
+          allFound = false;
+        }
+        else
+          LOGW("Extension not available: %s\n", desiredExtension.extensionName);
       }
     }
 
-    return filteredExtensions;
-  }
-
-  void cleanup()
-  {
-    vkDestroyDevice(m_device, m_settings.alloc);
-    if(m_dbgMessenger)
-    {
-      auto vkDestroyDebugUtilsMessengerEXT =
-          (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");
-      assert(vkDestroyDebugUtilsMessengerEXT != nullptr);
-      vkDestroyDebugUtilsMessengerEXT(m_instance, m_dbgMessenger, m_settings.alloc);
-    }
-    vkDestroyInstance(m_instance, m_settings.alloc);
+    return allFound;
   }
 };
 
@@ -469,6 +556,9 @@ inline void printInstanceExtensions(const std::vector<const char*> ext)
 
 inline void printDeviceExtensions(VkPhysicalDevice physicalDevice, const std::vector<ExtensionFeaturePair> ext)
 {
+  if(physicalDevice == VK_NULL_HANDLE)
+    return;
+
   std::unordered_set<std::string> exist;
   for(auto& e : ext)
     exist.insert(e.extensionName);
@@ -519,12 +609,18 @@ inline void printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
   LOGI("Available GPUS: %d\n", deviceCount);
 
   VkPhysicalDeviceProperties properties;
-  for(VkPhysicalDevice& device : gpus)
+  for(uint32_t d = 0; d < deviceCount; d++)
   {
-    vkGetPhysicalDeviceProperties(device, &properties);
-    LOGI(" - %s\n", properties.deviceName);
+    vkGetPhysicalDeviceProperties(gpus[d], &properties);
+    LOGI(" - %d) %s\n", d, properties.deviceName);
   }
-  LOGI("Using this GPU: %s\n", properties.deviceName);
+  if(usedGpu == VK_NULL_HANDLE)
+  {
+    LOGE("No compatible GPU\n");
+    return;
+  }
+
+  LOGI("Using GPU:\n");
   vkGetPhysicalDeviceProperties(usedGpu, &properties);
   printPhysicalDeviceProperties(properties);
 }

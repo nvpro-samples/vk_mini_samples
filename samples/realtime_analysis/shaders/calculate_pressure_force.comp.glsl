@@ -8,11 +8,11 @@
 #include "device_host.h"
 #include "layouts.h"
 
- #define INSPECTOR_MODE_COMPUTE 
- #define INSPECTOR_DESCRIPTOR_SET 0 
- #define INSPECTOR_INSPECTION_DATA_BINDING eThreadInspection
- #define INSPECTOR_METADATA_BINDING eThreadMetadata
- #include "nvvkhl/shaders/dh_inspector.h"
+#define INSPECTOR_MODE_COMPUTE
+#define INSPECTOR_DESCRIPTOR_SET 0
+#define INSPECTOR_INSPECTION_DATA_BINDING eThreadInspection
+#define INSPECTOR_METADATA_BINDING eThreadMetadata
+#include "nvvkhl/shaders/dh_inspector.h"
 
 #include "fluid_sim_2D.h"
 
@@ -23,7 +23,7 @@ void main()
     return;
 
   vec2 acceleration = calculatePressure(particleID);
-  inspect32BitValue(0, floatBitsToUint( acceleration.x));
-  inspect32BitValue(1, floatBitsToUint( acceleration.y));
+  inspect32BitValue(0, floatBitsToUint(acceleration.x));
+  inspect32BitValue(1, floatBitsToUint(acceleration.y));
   particles[particleID].velocity += acceleration * setting.deltaTime;
 }

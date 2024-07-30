@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -56,6 +56,9 @@
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
+#include "nvvk/extensions_vk.hpp"
+#include "common/vk_context.hpp"
+
 
 #if USE_HLSL
 #include "_autogen/raster_vertexMain.spirv.h"
@@ -347,16 +350,20 @@ public:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     vkCmdBeginRendering(cmd, &r_info);
-    m_app->setViewport(cmd);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant), &m_pushConst);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
-    const VkDeviceSize offsets{0};
-    vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
-    vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    {
+      const VkDeviceSize offsets{0};
+      m_app->setViewport(cmd);
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant), &m_pushConst);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
+      vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
+      vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    }
     vkCmdEndRendering(cmd);
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   }
 
 private:
@@ -531,24 +538,29 @@ private:
 /// <returns></returns>
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  // Vulkan creation context information
+  VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
-  
+  // Creation of the Vulkan context
+  VkContext vkContext(vkSetup);
+  if(!vkContext.isValid())
+    std::exit(0);
+
+  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext.getInstance();
+  appSetup.device         = vkContext.getDevice();
+  appSetup.physicalDevice = vkContext.getPhysicalDevice();
+  appSetup.queues         = vkContext.getQueueInfos();
+
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // Create a view/render
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);

@@ -3,220 +3,214 @@ import sys
 import argparse
 import subprocess
 import datetime
-from sys import platform
+from pathlib import Path
+from typing import List, Tuple, Optional
+from enum import Enum, auto
+import logging
 
-# Global variables
-build_dir = "build/"
-install_dir = "_install/"
-build_commands = ["cmake", "--build", ".", "--config", "Release", "--parallel"]
-test_arguments = ["-test-frames", "10"]
-names_to_avoid = ["gpu_monitor", "offscreen"]
+class ShaderLanguage(Enum):
+    GLSL = "GLSL"
+    HLSL = "HLSL"
+    SLANG = "SLANG"
 
+    def __str__(self):
+        return self.value
 
-def header(name):
+class ReturnCode(Enum):
+    SUCCESS = 0
+    BUILD_ERROR = 1
+    TEST_ERROR = 2
+    ENVIRONMENT_ERROR = 3
+
+# Constants
+BUILD_DIR = Path("build")
+INSTALL_DIR = Path("_install")
+BUILD_COMMANDS = ["cmake", "--build", ".", "--config", "Release", "--parallel"]
+TEST_ARGUMENTS = ["-test-frames", "10"]
+NAMES_TO_AVOID = ["gpu_monitor", "offscreen"]
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def header(name: str) -> None:
     """Print a header with a given name."""
-    print("")
-    print("***************************************************************************")
-    print(f"  {name}")
-    print("***************************************************************************")
+    logger.info("*" * 75)
+    logger.info(f"  {name}")
+    logger.info("*" * 75)
 
-
-def create_directory_if_not_exists(directory):
+def create_directory_if_not_exists(directory: Path) -> None:
     """Create a directory if it does not exist."""
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+    directory.mkdir(parents=True, exist_ok=True)
 
-
-def run_cmake(commands):
-    """Run CMake commands."""
-    print("Running CMake with the following commands:", commands)
+def run_command(commands: List[str]) -> None:
+    """Run a command and handle potential errors."""
+    logger.info(f"Running command: {' '.join(commands)}")
     try:
-        subprocess.run(commands, check=True)
+        subprocess.run(commands, check=True, text=True, capture_output=True)
     except subprocess.CalledProcessError as e:
-        print(f"Error occurred while running CMake: {e}")
+        logger.error(f"Error occurred while running command: {e}")
+        logger.error(f"Command output:\n{e.stdout}\n{e.stderr}")
+        raise
 
+def simple_progress(iterable, desc: str):
+    """A simple progress indicator using only standard libraries."""
+    total = len(iterable)
+    for i, item in enumerate(iterable, 1):
+        yield item
+        sys.stdout.write(f"\r{desc}: {i}/{total} ({i/total:.1%})\n")
+        sys.stdout.flush()
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
-def build(shader_language):
+def build(shader_language: ShaderLanguage) -> ReturnCode:
     """Build the project with the specified shader language."""
-    header("BUILDING PROJECT")
+    header(f"BUILDING PROJECT WITH {shader_language.name}")
 
-    # Create build and install directories if they do not exist
-    create_directory_if_not_exists(build_dir)
-    create_directory_if_not_exists(install_dir)
+    try:
+        create_directory_if_not_exists(BUILD_DIR)
+        create_directory_if_not_exists(INSTALL_DIR)
 
-    # Change to the build directory
-    os.chdir(build_dir)
+        os.chdir(BUILD_DIR)
 
-    # Run CMake to generate build files
-    cmake_args = ["cmake", ".."]
+        cmake_args = [
+            "cmake",
+            "..",
+            f"-DUSE_SHADER_LANGUAGE={shader_language.name}",
+        ]
 
-    if shader_language == "GLSL":
-        cmake_args += ["-DUSE_SHADER_LANGUAGE=GLSL"]
-    elif shader_language == "HLSL":
-        cmake_args += ["-DUSE_SHADER_LANGUAGE=HLSL"]
-    elif shader_language == "SLANG":
-        cmake_args += ["-DUSE_SHADER_LANGUAGE=SLANG"]
-    else:
-        print("Invalid shader language specified.")
-        return
+        run_command(cmake_args)
+        run_command(BUILD_COMMANDS)
 
-    run_cmake(cmake_args)
+        os.chdir("..")
 
-    # Call cmake to build the release config in parallel
-    run_cmake(build_commands)
+        bin_x64_dir = INSTALL_DIR / "bin_x64"
+        if bin_x64_dir.exists():
+            exe_files = list(bin_x64_dir.glob("*.exe"))
+            for file in simple_progress(exe_files, "Removing old executables"):
+                file.unlink()
 
-    # Change back to the original directory
-    os.chdir("..")
+        run_command(["cmake", "--install", "build", "--prefix", str(INSTALL_DIR)])
+        return ReturnCode.SUCCESS
+    except Exception as e:
+        logger.error(f"Build failed: {e}")
+        return ReturnCode.BUILD_ERROR
 
-    # Remove all .exe files in the bin_x64 directory
-    bin_x64_dir = os.path.join(install_dir, "bin_x64/")
-    if os.path.exists(bin_x64_dir):
-        for file in os.listdir(bin_x64_dir):
-            if file.endswith(".exe"):
-                os.remove(os.path.join(bin_x64_dir, file))
-
-    # Call cmake to install
-    run_cmake(["cmake", "--install", "build", "--prefix", install_dir])
-
-
-def extract_testing_time(log_file):
+def extract_testing_time(log_file: Path) -> str:
     """Extract testing time from the log file."""
-    testing_time = None
-    if os.path.exists(log_file):
-        with open(log_file, "r") as file:
-            lines = file.readlines()
-            for line in lines:
-                if "Testing Time" in line:
-                    testing_time = line.split(":")[1].strip()
-                    break
-    if testing_time is None:
-        testing_time = "N/A"
-    return testing_time
+    if log_file.exists():
+        content = log_file.read_text()
+        for line in content.splitlines():
+            if "Testing Time" in line:
+                return line.split(":")[1].strip()
+    return "N/A"
 
-
-def test(shader_language):
+def test(shader_language: ShaderLanguage) -> Tuple[List[Tuple[str, int, str]], ReturnCode]:
     """Run tests on the built executables."""
-    print(f"Executing test function with shader language: {shader_language}")
-    test_dir = os.path.join(install_dir, "bin_x64/")
+    logger.info(f"Executing test function with shader language: {shader_language.name}")
+    test_dir = INSTALL_DIR / "bin_x64"
 
-    # Check if test directory exists
-    if not os.path.exists(test_dir):
-        print(f"Test directory '{test_dir}' does not exist.")
-        return
+    if not test_dir.exists():
+        logger.error(f"Test directory '{test_dir}' does not exist.")
+        return [], ReturnCode.ENVIRONMENT_ERROR
 
-    current_dir = os.getcwd()
+    current_dir = Path.cwd()
     os.chdir(test_dir)
 
-    # Find all executables in the test directory
-    executables = [
-        f
-        for f in os.listdir(".")
-        if os.path.isfile(os.path.join(".", f))
-        and (f.endswith(".exe") or f.endswith("_app"))
-    ]
+    try:
+        executables = [f for f in Path('.').iterdir() if f.is_file() and (f.suffix == ".exe" or f.name.endswith("_app"))]
+        test_results = []
+        overall_result = ReturnCode.SUCCESS
 
-    # Initialize a list to store test results
-    test_results = []
+        for executable in simple_progress(executables, "Running tests"):
+            if not any(name in executable.name for name in NAMES_TO_AVOID):
+                log_file = f"log_{executable.stem}_{shader_language.name}.txt"
+                image_file = f"snap_{executable.stem}_{shader_language.name}.jpg"
 
-    # Call each executable with options --test and --screenshot
-    for executable in executables:
-        executable_path = os.path.join(".", executable)
-        args = [executable_path]
+                args = [
+                    str(executable),
+                    "-test",
+                    *TEST_ARGUMENTS,
+                    "-screenshot", image_file,
+                    "-logfile", log_file,
+                ]
 
-        if not any(name in executable for name in names_to_avoid):
-            log_file = f"log_{executable[:-4]}_{shader_language}.txt"
-            image_file = f"snap_{executable[:-4]}_{shader_language}.jpg"
+                try:
+                    header(f"Testing '{executable.name}' with shader language: {shader_language.name}")
+                    run_command(args)
+                    testing_time = extract_testing_time(Path(log_file))
+                    test_results.append((executable.name, ReturnCode.SUCCESS.value, testing_time))
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Error occurred while testing: {e}")
+                    returncode = ReturnCode.TEST_ERROR.value
+                    test_results.append((executable.name, returncode, "N/A"))
+                    overall_result = ReturnCode.TEST_ERROR
 
-            args += ["-test"]
-            args += test_arguments
-            args += ["-screenshot", image_file]
-            args += ["-logfile", log_file]
-            try:
-                header(
-                    f"Testing '{executable}' with shader language: {shader_language}"
-                )
-                subprocess.run(args, check=True)
-                testing_time = extract_testing_time(log_file)
-                test_results.append(
-                    (executable, 0, testing_time)
-                )  # Success, so error code is 0
+                    # Ignore errors from ray_query_position_fetch in CI
+                    if (
+                        ("CI" in os.environ)
+                        and ("ray_query_position_fetch" in executable.name)
+                        and datetime.datetime.now().date() < datetime.date(year=2024, month=2, day=1)
+                    ):
+                        logger.warning("Ignored error for ray_query_position_fetch in CI environment")
+                        test_results[-1] = (executable.name, ReturnCode.SUCCESS.value, "N/A")
 
-            except subprocess.CalledProcessError as e:
-                print(f"Error occurred while testing: {e}")
-                returncode = e.returncode
-                test_results.append((executable, returncode, "N/A"))
+        return test_results, overall_result
+    finally:
+        os.chdir(current_dir)
 
-                # Ignore errors from ray_query_position_fetch in CI
-                if (
-                    ("CI" in os.environ)
-                    and ("ray_query_position_fetch" in executable)
-                    and datetime.datetime.now().date()
-                    < datetime.date(year=2024, month=2, day=1)
-                ):
-                    print("Ignored")
-                    returncode = 0
-                    test_results[-1] = (
-                        executable,
-                        returncode,
-                        "N/A",
-                    )  # Update the test result
+def final_report(shader_language: ShaderLanguage, test_results: List[Tuple[str, int, str]]) -> None:
+    logger.info(f"\nFinal Report for {shader_language.name}:")
+    logger.info("-" * 60)
+    logger.info("{:<30} | {:<12} | {:<8}".format("Executable", "Return Code", "Time"))
+    logger.info("-" * 60)
+    for executable, return_code, testing_time in test_results:
+        logger.info("{:<30} | {:<12} | {:<8}".format(executable, ReturnCode(return_code).name, testing_time))
+    logger.info("-" * 60)
 
-    os.chdir(current_dir)
-    if any(error_code != 0 for _, error_code, time in test_results):
-        sys.exit(1)
-
-    return test_results
-
-
-def finalReport(shader_language, test_results):
-    print("\nFinal Report for", shader_language, ":")
-    print("-" * 60)
-    print("{:<30} | {:<12} | {:<8}".format("Executable", "Error Code", "Time"))
-    print("-" * 60)
-    for test_result in test_results:
-        executable, error_code, testing_time = test_result
-        print("{:<30} | {:<12} | {:<8}".format(executable, error_code, testing_time))
-    print("-" * 60)
-
-
-if __name__ == "__main__":
-    # Create the parser
-    parser = argparse.ArgumentParser()
-
-    # Add the command line options
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build and test the project with different shader languages.")
     parser.add_argument("--test", action="store_true", help="Execute test function")
     parser.add_argument(
         "--build",
-        nargs="?",
-        default=None,
-        choices=["GLSL", "HLSL", "SLANG"],
-        help="Execute build function with optional shader language",
+        type=ShaderLanguage,
+        choices=list(ShaderLanguage),
+        help="Execute build function with specified shader language (GLSL, HLSL, or SLANG)",
     )
 
-    # Parse the command line arguments
     args = parser.parse_args()
+    
+    if args.build is None and not args.test:
+        parser.error("At least one of --build or --test must be specified")
+    
+    return args
 
-    shading_language = "GLSL"
+def main() -> ReturnCode:
+    args = parse_args()
+
+    shader_language = args.build or ShaderLanguage.GLSL
+
+    overall_result = ReturnCode.SUCCESS
+
     if args.build:
-      if args.build in ["GLSL", "HLSL", "SLANG"]:
-          shading_language = args.build
-          build(shading_language)  # Build with specified shader language
-      else:
-          print("Invalid shader language specified.")
-          sys.exit(1)
+        logger.info(f"Building with shader language: {shader_language}")
+        build_result = build(shader_language)
+        if build_result != ReturnCode.SUCCESS:
+            return build_result
 
     if args.test:
-        test_results = test(shading_language)  # Test with specified shader language
-        finalReport(shading_language, test_results)
-      
-    #    # If no argument is provided, call build with all shader languages
-    #    for language in ["GLSL", "HLSL", "SLANG"]:
-    #        if args.build:
-    #            build(language)
-    #        test_results_all_languages.append(test(language))
-    #    # Print the final report for all shader languages
-    #    print("\nFinal Report for all shader languages:")
-    #    for shader_language, test_results in zip(
-    #        ["GLSL", "HLSL", "SLANG"], test_results_all_languages
-    #    ):
-    #        finalReport(shader_language, test_results)
+        test_results, test_result = test(shader_language)
+        final_report(shader_language, test_results)
+        if test_result != ReturnCode.SUCCESS:
+            overall_result = test_result
+
+    return overall_result
+
+if __name__ == "__main__":
+    try:
+        result = main()
+        sys.exit(result.value)
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred: {e}")
+        sys.exit(ReturnCode.ENVIRONMENT_ERROR.value)
+        

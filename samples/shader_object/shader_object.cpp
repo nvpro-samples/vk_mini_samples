@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //////////////////////////////////////////////////////////////////////////
@@ -26,12 +26,14 @@
 
 
 #define VMA_IMPLEMENTATION
+#include "common/vk_context.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "imgui/imgui_helper.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/memallocator_dma_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/element_camera.hpp"
@@ -551,28 +553,33 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
   // #SHADER_OBJECT
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  // Create Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
 
+  // Loading the Vulkan extension pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext->getInstance();
+  appSetup.device         = vkContext->getDevice();
+  appSetup.physicalDevice = vkContext->getPhysicalDevice();
+  appSetup.queues         = vkContext->getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   if(shaderObjFeature.shaderObject == VK_FALSE)
   {
@@ -592,7 +599,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

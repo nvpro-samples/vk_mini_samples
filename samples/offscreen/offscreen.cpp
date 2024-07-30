@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,7 +42,7 @@
 #include "nvvk/shaders_vk.hpp"
 
 #include "stb_image_write.h"
-#include "vk_context.hpp"  // Simple but complete Vulkan context creation
+#include "common/vk_context.hpp"  // Simple but complete Vulkan context creation
 
 // Shaders
 namespace DH {
@@ -102,6 +102,7 @@ public:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     vkCmdBeginRendering(cmd, &r_info);
 
     const glm::vec2 size_f = {static_cast<float>(m_gBuffers->getSize().width), static_cast<float>(m_gBuffers->getSize().height)};
@@ -124,6 +125,7 @@ public:
 
     // Done and submit execution
     vkCmdEndRendering(cmd);
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
 
     m_cmdPool->submitAndWait(cmd);
   }
@@ -272,11 +274,11 @@ int main(int argc, char** argv)
   }
 
   // Creating the Vulkan instance and device, with only defaults, no extension
-  auto vkctx = std::make_unique<VkContext>();
+  auto vkContext = std::make_unique<VkContext>(VkContextSettings());
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::OfflineRender>(vkctx->getInstance(), vkctx->getDevice(),
-                                                     vkctx->getPhysicalDevice(), vkctx->getQueueInfo(0).familyIndex);
+  auto app = std::make_unique<nvvkhl::OfflineRender>(vkContext->getInstance(), vkContext->getDevice(),
+                                                     vkContext->getPhysicalDevice(), vkContext->getQueueInfo(0).familyIndex);
 
   app->createFramebuffer(render_size);  // Framebuffer where it will render
   app->createPipeline();                // How the quad will be rendered: shaders and more
@@ -285,7 +287,7 @@ int main(int argc, char** argv)
   app->saveImage(output_file);  // Saving rendered image
 
   app.reset();
-  vkctx.reset();
+  vkContext.reset();
 
   return 0;
 }

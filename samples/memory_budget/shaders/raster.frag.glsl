@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 450
@@ -41,14 +41,14 @@ layout(push_constant) uniform PushConstant_
 vec3 simpleShading(vec3 viewDir, vec3 lightDir, vec3 normal, vec3 color, float expo)
 {
   // Diffuse + Specular
-  vec3 reflDir = normalize(-reflect(lightDir, normal));
-  float lt = clamp(dot(normal, lightDir), 0, 1) + pow(max(0., dot(reflDir, viewDir)), expo);
+  vec3  reflDir = normalize(-reflect(lightDir, normal));
+  float lt      = clamp(dot(normal, lightDir), 0, 1) + pow(max(0., dot(reflDir, viewDir)), expo);
   color *= lt;
 
   // Slight ambient term (sky effect)
-  vec3 skyUpDir = vec3(0, 1, 0);
+  vec3 skyUpDir    = vec3(0, 1, 0);
   vec3 groundColor = vec3(0.1, 0.1, 0.4);
-  vec3 skyColor = vec3(0.8, 0.6, 0.2);
+  vec3 skyColor    = vec3(0.8, 0.6, 0.2);
   color += mix(skyColor, groundColor, dot(normal, skyUpDir.xyz) * 0.5 + 0.5) * 0.2;
 
   return color;
@@ -57,14 +57,14 @@ vec3 simpleShading(vec3 viewDir, vec3 lightDir, vec3 normal, vec3 color, float e
 
 void main()
 {
-  vec3 V = normalize(frameInfo.camPos - inFragPos); // vector that goes from the hit position towards the origin of the ray  
+  vec3 V = normalize(frameInfo.camPos - inFragPos);  // vector that goes from the hit position towards the origin of the ray
   vec3 color = simpleShading(V, V, inFragNrm, pushConst.color.xyz, 16.0);
-  color = pow(color, vec3(1.0/2.2)); // Gamma correction
+  color      = pow(color, vec3(1.0 / 2.2));  // Gamma correction
 
   // Darker in the center
   float nb_subdiv = pow(3.0F, MENGER_SUBDIV);
-  vec3 cx = floor(abs((inFragPos * nb_subdiv) + vec3(0.001))) / nb_subdiv * 2.0;
-  float factor = pow(max(cx.x, max(cx.y, cx.z)), 1.5);
+  vec3  cx        = floor(abs((inFragPos * nb_subdiv) + vec3(0.001))) / nb_subdiv * 2.0;
+  float factor    = pow(max(cx.x, max(cx.y, cx.z)), 1.5);
   color *= factor;
   outColor = vec4(color, 1);
 }

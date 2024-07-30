@@ -153,5 +153,4 @@ void main()
     color *= 0.3F;
 
   payload.color += color * lightIntensity;
-
 }

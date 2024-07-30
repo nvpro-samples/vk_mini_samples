@@ -54,21 +54,21 @@ void main()
   const vec3 rayOrigin    = vec3(frameInfo.viewInv * vec4(0.0, 0.0, 0.0, 1.0));
   const vec3 rayDirection = vec3(frameInfo.viewInv * vec4(target.xyz, 0.0));
 
-  const uint  rayFlags  = gl_RayFlagsCullBackFacingTrianglesEXT;
-  const float tMin      = 0.001;
-  const float tMax      = INFINITE;
+  const uint  rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT;
+  const float tMin     = 0.001;
+  const float tMax     = INFINITE;
 
-  traceRayEXT(topLevelAS,     // acceleration structure
-              rayFlags,       // rayFlags
-              0xFF,           // cullMask
-              0,              // sbtRecordOffset
-              0,              // sbtRecordStride
-              0,              // missIndex
-              rayOrigin,      // ray origin
-              tMin,           // ray min range
-              rayDirection,   // ray direction
-              tMax,           // ray max range
-              0               // payload (location = 0)
+  traceRayEXT(topLevelAS,    // acceleration structure
+              rayFlags,      // rayFlags
+              0xFF,          // cullMask
+              0,             // sbtRecordOffset
+              0,             // sbtRecordStride
+              0,             // missIndex
+              rayOrigin,     // ray origin
+              tMin,          // ray min range
+              rayDirection,  // ray direction
+              tMax,          // ray max range
+              0              // payload (location = 0)
   );
 
   imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.color, 1.F));

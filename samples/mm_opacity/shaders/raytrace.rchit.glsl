@@ -169,7 +169,7 @@ void main()
   vec3 albedo = materials.m[iInfo.materialID].xyz;
 
   // Color at hit point
-  PbrMaterial mat   = defaultPbrMaterial(albedo, pc.metallic, pc.roughness, hit.nrm, hit.geonrm);
+  PbrMaterial mat = defaultPbrMaterial(albedo, pc.metallic, pc.roughness, hit.nrm, hit.geonrm);
 
   vec3 color = ggxEvaluate(V, L, mat);
 

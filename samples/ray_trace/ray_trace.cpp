@@ -36,34 +36,33 @@
 
 #define IMGUI_DEFINE_MATH_OPERATORS  // ImGUI ImVec maths
 
-#define VMA_IMPLEMENTATION
-#include "imgui/imgui_axis.hpp"
-#include "imgui/imgui_camera_widget.h"
-#include "imgui/imgui_helper.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/sbtwrapper_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-#include "nvvkhl/shaders/dh_sky.h"
-#include "nvvk/acceleration_structures.hpp"
+#include "common/vk_context.hpp"                    // Vulkan context creation
+#include "common/alloc_dma.hpp"                     // Memory allocator
+#include "imgui/imgui_axis.hpp"                     // Display of axis
+#include "imgui/imgui_camera_widget.h"              // Camera UI
+#include "imgui/imgui_helper.h"                     // Property editor
+#include "nvh/primitives.hpp"                       // Various primitives
+#include "nvvk/acceleration_structures.hpp"         // BLAS & TLAS creation helper
+#include "nvvk/descriptorsets_vk.hpp"               // Descriptor set creation helper
+#include "nvvk/extensions_vk.hpp"                   // Vulkan extension declaration
+#include "nvvk/sbtwrapper_vk.hpp"                   // Shading binding table creation helper
+#include "nvvk/shaders_vk.hpp"                      // Shader module creation wrapper
+#include "nvvkhl/element_benchmark_parameters.hpp"  // For benchmark and tests
+#include "nvvkhl/element_camera.hpp"                // To manipulate the camera
+#include "nvvkhl/element_gui.hpp"                   // Application Menu / titlebar
+#include "nvvkhl/gbuffer.hpp"                       // G-Buffer creation helper
+#include "nvvkhl/pipeline_container.hpp"            // Container to hold pipelines
+#include "nvvkhl/sky.hpp"                           // Sun & Sky
+#include "nvvk/renderpasses_vk.hpp"
 
-#include "shaders/dh_bindings.h"
-#include "nvvkhl/sky.hpp"
 
 namespace DH {
 using namespace glm;
 #include "shaders/device_host.h"  // Shared between host and device
+#include "shaders/dh_bindings.h"  // Local device/host shared structures
 }  // namespace DH
 
-//#undef USE_HLSL
-
+// Local shaders
 #if USE_HLSL
 #include "_autogen/raytrace_rgenMain.spirv.h"
 #include "_autogen/raytrace_rchitMain.spirv.h"
@@ -82,8 +81,8 @@ const auto& rchit_shd = std::vector<uint32_t>{std::begin(raytrace_rchit_glsl), s
 const auto& rmiss_shd = std::vector<uint32_t>{std::begin(raytrace_rmiss_glsl), std::end(raytrace_rmiss_glsl)};
 #endif
 
-
-#define MAXRAYRECURSIONDEPTH 10
+// The maximum depth recursion for the ray tracer
+uint32_t MAXRAYRECURSIONDEPTH = 10;
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Ray trace multiple primitives
@@ -101,17 +100,13 @@ public:
     m_device = m_app->getDevice();
 
     m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app->getPhysicalDevice(),
-        .device         = app->getDevice(),
-        .instance       = app->getInstance(),
-    });  // Allocator
+    m_alloc = std::make_unique<AllocDma>(m_device, m_app->getPhysicalDevice());
     m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Requesting ray tracing properties
     VkPhysicalDeviceProperties2 prop2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &m_rtProperties};
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
+    MAXRAYRECURSIONDEPTH = std::min(m_rtProperties.maxRayRecursionDepth, MAXRAYRECURSIONDEPTH);
 
     // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
     const uint32_t gct_queue_index = m_app->getQueue(0).familyIndex;
@@ -134,7 +129,7 @@ public:
   void onResize(uint32_t width, uint32_t height) override
   {
     nvh::ScopedTimer st(__FUNCTION__);
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), VkExtent2D{width, height}, m_colorFormat, m_depthFormat);
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), VkExtent2D{width, height}, m_colorFormat);
     writeRtDesc();
   }
 
@@ -155,10 +150,7 @@ public:
       ImGui::Separator();
       ImGui::Text("Sun Orientation");
       PropertyEditor::begin();
-      //glm::vec3 dir = m_skyParams.directionToLight;
-      ImGuiH::azimuthElevationSliders(m_skyParams.directionToLight, false);
-      //m_skyParams.directionToLight = dir;
-      //nvvkhl::skyParametersUI(m_skyParams);
+      nvvkhl::skyParametersUI(m_skyParams);
       PropertyEditor::end();
       ImGui::End();
     }
@@ -272,10 +264,10 @@ private:
     CameraManip.setLookat({-0.5F, 0.0F, 5.0F}, {-0.5F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
 
     // Default parameters for overall material
-    m_pushConst.intensity = 2.5F;
+    m_pushConst.intensity = 5.0F;
     m_pushConst.maxDepth  = 5;
-    m_pushConst.roughness = 0.0F;
-    m_pushConst.metallic  = 0.6F;
+    m_pushConst.roughness = 0.2F;
+    m_pushConst.metallic  = 0.3F;
 
     // Default Sky values
     m_skyParams = nvvkhl_shaders::initSimpleSkyParameters();
@@ -592,7 +584,7 @@ private:
         .pushConstantRangeCount = 1,
         .pPushConstantRanges    = &push_constant,
     };
-    vkCreatePipelineLayout(m_device, &pipeline_layout_create_info, nullptr, &p.layout);
+    NVVK_CHECK(vkCreatePipelineLayout(m_device, &pipeline_layout_create_info, nullptr, &p.layout));
     m_dutil->DBG_NAME(p.layout);
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
@@ -602,10 +594,10 @@ private:
         .pStages                      = stages.data(),
         .groupCount                   = static_cast<uint32_t>(shader_groups.size()),
         .pGroups                      = shader_groups.data(),
-        .maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH + 1,  // Ray dept
+        .maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH,  // Ray dept
         .layout                       = p.layout,
     };
-    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &ray_pipeline_info, nullptr, &p.plines[0]);
+    NVVK_CHECK(vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &ray_pipeline_info, nullptr, &p.plines[0]));
     m_dutil->DBG_NAME(p.plines[0]);
 
     // Creating the SBT
@@ -684,13 +676,12 @@ private:
   //
   nvvkhl::Application*                          m_app = nullptr;
   std::unique_ptr<nvvk::DebugUtil>              m_dutil;
-  std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
+  std::unique_ptr<AllocDma>                     m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer> m_rtSet;  // Descriptor set
 
-  VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
-  VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
+  VkFormat                            m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
+  VkDevice                            m_device      = VK_NULL_HANDLE;            // Convenient
+  std::unique_ptr<nvvkhl::GBuffer>    m_gBuffers;                                // G-Buffers: color + depth
   nvvkhl_shaders::SimpleSkyParameters m_skyParams{};
 
   // Resources
@@ -731,20 +722,21 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.addDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-  // #VKRay: Activate the ray tracing extension
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false, &accel_feature);  // To build acceleration structures
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false, &rt_pipeline_feature);  // To use vkCmdTraceRaysKHR
-  vkSetup.addDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);  // Required by ray tracing pipeline
+
+  // Configure Vulkan context creation
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accel_feature});  // To build acceleration structures
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rt_pipeline_feature});  // To use vkCmdTraceRaysKHR
+  vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
 #if USE_HLSL || USE_SLANG  // DXC is automatically adding the extension
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-  vkSetup.addDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false, &rayqueryFeature);
+  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 #endif  // USE_HLSL
 
 #if(VK_HEADER_VERSION >= 283)
@@ -752,19 +744,25 @@ int main(int argc, char** argv)
   // https://developer.nvidia.com/blog/ray-tracing-validation-at-the-driver-level/
   // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_NV_ray_tracing_validation.html
   VkPhysicalDeviceRayTracingValidationFeaturesNV validationFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV};
-  vkSetup.addDeviceExtension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, true, &validationFeatures);
+  vkSetup.deviceExtensions.push_back({VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, &validationFeatures, false});
 #endif
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Create Vulkan context
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
 
+  // Loading the Vulkan extension pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+  // Configure application creation
   nvvkhl::ApplicationCreateInfo spec;
   spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   spec.vSync          = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  spec.instance       = vkContext->getInstance();
+  spec.device         = vkContext->getDevice();
+  spec.physicalDevice = vkContext->getPhysicalDevice();
+  spec.queues         = vkContext->getQueueInfos();
 
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(spec);
@@ -789,7 +787,7 @@ int main(int argc, char** argv)
 
   app->run();
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

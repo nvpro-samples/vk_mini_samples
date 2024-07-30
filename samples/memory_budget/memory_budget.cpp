@@ -44,6 +44,7 @@
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/memallocator_dma_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
@@ -54,7 +55,7 @@
 #include "nvvkhl/gbuffer.hpp"
 
 #include "common/alloc_dma.hpp"
-
+#include "common/vk_context.hpp"
 
 namespace DH {
 using namespace glm;
@@ -428,8 +429,8 @@ private:
   void createMeshes(const std::vector<int>& toCreate)
   {
     LOGI("Creating %d meshes\n", static_cast<int>(toCreate.size()));
-    nvvk::CommandPool cmd_pool(m_device, m_app->getQueue(2).familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                               m_app->getQueue(2).queue);
+    nvvk::CommandPool cmd_pool(m_device, m_app->getQueue(1).familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                               m_app->getQueue(1).queue);
 
     float progressInc   = 1.0F / static_cast<float>(toCreate.size());
     m_settings.progress = 0.0F;
@@ -673,8 +674,8 @@ private:
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
+  nvvkhl::Application*              m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
   //std::shared_ptr<AllocDma> m_alloc;
 
@@ -713,31 +714,36 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  // #MEMORY_BUDGET
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  vkSetup.addDeviceExtension(VK_EXT_SHADER_OBJECT_EXTENSION_NAME, false, &shaderObjFeature);
-  vkSetup.addDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, false);
-  vkSetup.addInstanceExtension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, false);
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Vulkan creation context information
+  VkContextSettings vkSetup;
+  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  // #MEMORY_BUDGET
+  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
+  vkSetup.deviceExtensions.push_back({VK_EXT_MEMORY_BUDGET_EXTENSION_NAME});
+  vkSetup.instanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+  vkSetup.queues.push_back(VK_QUEUE_TRANSFER_BIT);  // Used in other thread
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  // Creating the Vulkan Context
+  VkContext vkContext(vkSetup);
+  if(!vkContext.isValid())
+    std::exit(0);
+  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
-
+  // Application setup information
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext.getInstance();
+  appSetup.device         = vkContext.getDevice();
+  appSetup.physicalDevice = vkContext.getPhysicalDevice();
+  appSetup.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   if(shaderObjFeature.shaderObject == VK_FALSE)
   {

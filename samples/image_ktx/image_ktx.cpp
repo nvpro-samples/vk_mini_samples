@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -61,6 +61,10 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 #include "nvvkhl/tonemap_postprocess.hpp"
+#include "nvvk/renderpasses_vk.hpp"
+
+#include "common/vk_context.hpp"
+#include "nvvk/extensions_vk.hpp"
 
 #if USE_HLSL
 #include "_autogen/raster_vertexMain.spirv.h"
@@ -213,6 +217,8 @@ public:
     m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_device, m_alloc.get());
     m_dset       = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+
     // Find image file
     const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
     const std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
@@ -363,6 +369,7 @@ private:
                                      VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     r_info.pStencilAttachment = nullptr;
 
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(1), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     vkCmdBeginRendering(cmd, &r_info);
     m_app->setViewport(cmd);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
@@ -384,6 +391,7 @@ private:
     }
 
     vkCmdEndRendering(cmd);
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(1), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   }
 
   void renderPost(VkCommandBuffer cmd)
@@ -406,9 +414,11 @@ private:
                                        VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
       r_info.pStencilAttachment = nullptr;
 
+      nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
       vkCmdBeginRendering(cmd, &r_info);
       m_tonemapper->runGraphic(cmd);
       vkCmdEndRendering(cmd);
+      nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
     }
   }
 
@@ -568,25 +578,30 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  // Setting up what's needed for the Vulkan context creation
+  VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Create the Vulkan context
+  VkContext vkContext(vkSetup);
+  if(!vkContext.isValid())
+    std::exit(0);
+  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC};
+  // How we want the application
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext.getInstance();
+  appSetup.device         = vkContext.getDevice();
+  appSetup.physicalDevice = vkContext.getPhysicalDevice();
+  appSetup.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);

@@ -46,26 +46,28 @@ namespace fs = std::filesystem;
 
 #define VMA_IMPLEMENTATION
 #define IMGUI_DEFINE_MATH_OPERATORS
+#include "common/vk_context.hpp"
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/descriptorsets_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/images_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvk/renderpasses_vk.hpp"
+#include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
-#include "nvvkhl/element_gui.hpp"
 #include "nvvkhl/element_benchmark_parameters.hpp"
+#include "nvvkhl/element_gui.hpp"
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/glsl_compiler.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
 
 #if USE_SLANG
-#include "slang_compiler.hpp"
+#include "common/slang_compiler.hpp"
 #endif
 
-#include "nvvk/shaders_vk.hpp"
 
 // ShaderToy inputs
 struct InputUniforms
@@ -348,26 +350,29 @@ private:
                                      m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_LOAD_OP_CLEAR);
     r_info.pStencilAttachment = nullptr;
 
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     vkCmdBeginRendering(cmd, &r_info);
-    m_app->setViewport(cmd);
+    {
+      m_app->setViewport(cmd);
 
-    // Writing descriptor
-    const VkDescriptorImageInfo       in_desc = m_gBuffers->getDescriptorImageInfo(inImage);
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0,
-                              static_cast<uint32_t>(writes.size()), writes.data());
+      // Writing descriptor
+      const VkDescriptorImageInfo       in_desc = m_gBuffers->getDescriptorImageInfo(inImage);
+      std::vector<VkWriteDescriptorSet> writes;
+      writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
+      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0,
+                                static_cast<uint32_t>(writes.size()), writes.data());
 
-    // Pushing the "Input Uniforms"
-    vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms), &m_inputUniform);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+      // Pushing the "Input Uniforms"
+      vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms), &m_inputUniform);
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    const VkDeviceSize offsets{0};
-    vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
-    vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
-
+      const VkDeviceSize offsets{0};
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
+      vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
+      vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    }
     vkCmdEndRendering(cmd);
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   }
 
   void createGbuffers(VkExtent2D size)
@@ -664,25 +669,31 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  vkSetup.addDeviceExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Vulkan context creation
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync          = true;
-  spec.instance       = vkContext.m_instance;
-  spec.device         = vkContext.m_device;
-  spec.physicalDevice = vkContext.m_physicalDevice;
-  spec.queues         = {vkContext.m_queueGCT, vkContext.m_queueC, vkContext.m_queueT};
+  // Loading function pointers
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+
+
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync          = true;
+  appSetup.instance       = vkContext->getInstance();
+  appSetup.device         = vkContext->getDevice();
+  appSetup.physicalDevice = vkContext->getPhysicalDevice();
+  appSetup.queues         = vkContext->getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
   app->addElement(test);
@@ -690,8 +701,9 @@ int main(int argc, char** argv)
   app->addElement(std::make_shared<TinyShaderToy>());
 
   app->run();
+
   app.reset();
-  vkContext.deinit();
+  vkContext.reset();
 
   return test->errorCode();
 }

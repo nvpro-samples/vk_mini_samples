@@ -25,7 +25,7 @@
 void main()
 {
   uint particleID = gl_GlobalInvocationID.x;
-  if(particleID >= setting.numParticles -1 )
+  if(particleID >= setting.numParticles - 1)
   {
     return;
   }
@@ -33,7 +33,7 @@ void main()
   uint i    = particleID;
   uint null = setting.numParticles;
 
-  uint key = spatialInfo[i].indices.z;
+  uint key     = spatialInfo[i].indices.z;
   uint keyPrev = (i == 0 ? null : spatialInfo[i - 1].indices.z);
 
   if(key != keyPrev)

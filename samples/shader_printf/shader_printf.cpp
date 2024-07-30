@@ -44,21 +44,21 @@
 #include <imgui.h>
 
 #define VMA_IMPLEMENTATION
+#include "common/vk_context.hpp"
 #include "nvh/nvprint.hpp"
 #include "nvvk/debug_util_vk.hpp"
 #include "nvvk/dynamicrendering_vk.hpp"
+#include "nvvk/error_vk.hpp"
+#include "nvvk/extensions_vk.hpp"
 #include "nvvk/pipeline_vk.hpp"
 #include "nvvk/renderpasses_vk.hpp"
 #include "nvvk/shaders_vk.hpp"
 #include "nvvkhl/alloc_vma.hpp"
 #include "nvvkhl/application.hpp"
-#include "nvvkhl/element_logger.hpp"
 #include "nvvkhl/element_benchmark_parameters.hpp"
+#include "nvvkhl/element_logger.hpp"
 #include "nvvkhl/gbuffer.hpp"
-#include "nvvk/error_vk.hpp"
-
-#include "vk_context.hpp"
-#include "nvvk/extensions_vk.hpp"
+#include "nvvk/images_vk.hpp"
 
 
 namespace DH {
@@ -184,19 +184,21 @@ public:
                                                         VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
     renderingInfo.pStencilAttachment = nullptr;
 
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     vkCmdBeginRendering(cmd, &renderingInfo);
-    m_app->setViewport(cmd);
+    {
+      m_app->setViewport(cmd);
+      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                         sizeof(DH::PushConstant), &m_pushConstant);
 
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                       sizeof(DH::PushConstant), &m_pushConstant);
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    const VkDeviceSize offsets{0};
-    vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
-    vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
-
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+      const VkDeviceSize offsets{0};
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
+      vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
+      vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    }
     vkCmdEndRendering(cmd);
+    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   }
 
 private:
@@ -349,18 +351,19 @@ int main(int argc, char** argv)
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
   // Create the Vulkan context with the above settings
-  auto vkctx = std::make_unique<VkContext>(vkSetup);
-  load_VK_EXTENSIONS(vkctx->getInstance(), vkGetInstanceProcAddr, vkctx->getDevice(), vkGetDeviceProcAddr);
+  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  if(!vkContext->isValid())
+    std::exit(0);
+  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
 
   // Setting how we want the application
   nvvkhl::ApplicationCreateInfo appInfo;
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
-  appInfo.instance       = vkctx->getInstance();
-  appInfo.device         = vkctx->getDevice();
-  appInfo.physicalDevice = vkctx->getPhysicalDevice();
-  for(auto& q : vkctx->getQueueInfos())
-    appInfo.queues.emplace_back(q.queue, q.familyIndex, q.queueIndex);
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
   // Setting up the layout of the application
   appInfo.dockSetup = [](ImGuiID viewportID) {
@@ -407,7 +410,7 @@ int main(int argc, char** argv)
   vkDestroyDebugUtilsMessengerEXT(app->getInstance(), dbg_messenger, nullptr);
 
   app.reset();
-  vkctx.reset();
+  vkContext.reset();
 
   return test->errorCode();
 }

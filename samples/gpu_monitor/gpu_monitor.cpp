@@ -29,33 +29,41 @@
 
 #include "nvvkhl/application.hpp"
 #include "nvvkhl/element_nvml.hpp"
+#include "common/vk_context.hpp"
 
 int main(int argc, char** argv)
 {
-  nvvk::ContextCreateInfo vkSetup;  // Vulkan creation context information (see nvvk::Context)
-  vkSetup.setVersion(1, 3);
-  vkSetup.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  vkSetup.apiVersion             = VK_API_VERSION_1_3;
+  vkSetup.enableAllFeatures      = false;
+  vkSetup.enableValidationLayers = false;
+  vkSetup.verbose                = false;
 
-  nvvk::Context vkContext;
-  vkContext.init(vkSetup);
+  // Create the Vulkan context
+  VkContext vkContext(vkSetup);
+  if(!vkContext.isValid())
+    std::exit(0);
 
-  nvvkhl::ApplicationCreateInfo spec;
-  spec.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  spec.vSync                 = true;
-  spec.hasUndockableViewport = false;
-  spec.width                 = 750;
-  spec.height                = 400;
-  spec.instance              = vkContext.m_instance;
-  spec.device                = vkContext.m_device;
-  spec.physicalDevice        = vkContext.m_physicalDevice;
-  spec.queues                = {vkContext.m_queueGCT};
+  // Set how the application should be
+  nvvkhl::ApplicationCreateInfo appSetup;
+  appSetup.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appSetup.vSync                 = true;
+  appSetup.hasUndockableViewport = false;
+  appSetup.width                 = 750;
+  appSetup.height                = 400;
+  appSetup.instance              = vkContext.getInstance();
+  appSetup.device                = vkContext.getDevice();
+  appSetup.physicalDevice        = vkContext.getPhysicalDevice();
+  appSetup.queues                = vkContext.getQueueInfos();
 
   // Setting up the layout of the application. Docking the NVML monitor in the center
-  spec.dockSetup = [](ImGuiID viewportID) { ImGui::DockBuilderDockWindow("NVML Monitor", viewportID); };
+  appSetup.dockSetup = [](ImGuiID viewportID) { ImGui::DockBuilderDockWindow("NVML Monitor", viewportID); };
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(spec);
+  auto app = std::make_unique<nvvkhl::Application>(appSetup);
 
   // The NVML (GPU) monitor
   app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));
