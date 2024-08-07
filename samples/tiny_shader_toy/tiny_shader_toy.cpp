@@ -122,6 +122,15 @@ class TinyShaderToy : public nvvkhl::IAppElement
     eBufA1
   };
 
+  struct ResourceGroup
+  {
+    VkShaderModule vmod;
+    VkShaderModule fmod_i;
+    VkShaderModule fmod_a;
+    VkDevice       device;
+    VkPipeline     gp;
+    VkPipeline     gp_a;
+  };
 
 public:
   TinyShaderToy()           = default;
@@ -488,51 +497,31 @@ private:
     std::string              rasterFilename = nvh::findFile("raster.slang", searchPaths, true);
 
     // Always create a new session before compiling all files
-    m_slangC->newSession();
+    m_slangC->newSession(searchPaths);
     {
       nvh::ScopedTimer st("Vertex");
-
-      auto compiler = m_slangC->createCompileRequest(rasterFilename, "vertexMain", SLANG_STAGE_VERTEX);
-      {
-        nvh::ScopedTimer st("SlangCompile");
-        if(SLANG_FAILED(compiler->compile()))
-          return compiler->getDiagnosticOutput();
-      }
-      m_slangC->getSpirvCode(compiler, vertexSpirvCode);
+      if(!m_slangC->compileModule("raster", "vertexMain", vertexSpirvCode, error_msg))
+        return error_msg;
     }
     {
-      nvh::ScopedTimer st("Frag Main");
-
-      auto compiler = m_slangC->createCompileRequest(rasterFilename, "fragmentMain", SLANG_STAGE_FRAGMENT);
-      compiler->addPreprocessorDefine("INCLUDE_IMAGE", "1");
-      {
-        nvh::ScopedTimer st("SlangCompile");
-        if(SLANG_FAILED(compiler->compile()))
-          return compiler->getDiagnosticOutput();
-      }
-      m_slangC->getSpirvCode(compiler, fragmentSpirvCode);
+      nvh::ScopedTimer st("fragmentMain");
+      if(!m_slangC->compileModule("raster", "fragmentMain", fragmentSpirvCode, error_msg))
+        return error_msg;
     }
     {
-      nvh::ScopedTimer st("Frag Buffer-A");
-
-      auto compiler = m_slangC->createCompileRequest(rasterFilename, "fragmentMain", SLANG_STAGE_FRAGMENT);
-      compiler->addPreprocessorDefine("INCLUDE_BUFFER_A", "1");
-      {
-        nvh::ScopedTimer st("SlangCompile");
-        if(SLANG_FAILED(compiler->compile()))
-          return compiler->getDiagnosticOutput();
-      }
-      m_slangC->getSpirvCode(compiler, fragmentASpirvCode);
+      nvh::ScopedTimer st("Buffer-A");
+      if(!m_slangC->compileModule("raster", "fragmentBuffer", fragmentASpirvCode, error_msg))
+        return error_msg;
     }
 
     // Deleting resources, but not immediately as they are still in used
-    nvvkhl::Application::submitResourceFree([vmod = m_vmodule, fmod_i = m_fmodule, fmod_a = m_fmoduleA,
-                                             device = m_device, gp = m_pipelineImg, gp_a = m_pipelineBufA]() {
-      vkDestroyShaderModule(device, vmod, nullptr);
-      vkDestroyShaderModule(device, fmod_i, nullptr);
-      vkDestroyShaderModule(device, fmod_a, nullptr);
-      vkDestroyPipeline(device, gp, nullptr);
-      vkDestroyPipeline(device, gp_a, nullptr);
+    ResourceGroup resources{m_vmodule, m_fmodule, m_fmoduleA, m_device, m_pipelineImg, m_pipelineBufA};
+    nvvkhl::Application::submitResourceFree([resources = std::move(resources)]() {
+      vkDestroyShaderModule(resources.device, resources.vmod, nullptr);
+      vkDestroyShaderModule(resources.device, resources.fmod_i, nullptr);
+      vkDestroyShaderModule(resources.device, resources.fmod_a, nullptr);
+      vkDestroyPipeline(resources.device, resources.gp, nullptr);
+      vkDestroyPipeline(resources.device, resources.gp_a, nullptr);
     });
 
     {
@@ -636,16 +625,16 @@ private:
   //--------------------------------------------------------------------------------------------------
   nvvkhl::Application* m_app{nullptr};
 
-  std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers;
-  std::unique_ptr<nvvk::DebugUtil>              m_dutil;
-  std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
-  std::unique_ptr<nvvkhl::GlslCompiler>         m_glslC;
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;  // Descriptor set
-  std::unique_ptr<FileCheck>                    m_fileBufferA;
-  std::unique_ptr<FileCheck>                    m_fileImage;
+  std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers{};
+  std::unique_ptr<nvvk::DebugUtil>              m_dutil{};
+  std::unique_ptr<nvvkhl::AllocVma>             m_alloc{};
+  std::unique_ptr<nvvkhl::GlslCompiler>         m_glslC{};
+  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset{};  // Descriptor set
+  std::unique_ptr<FileCheck>                    m_fileBufferA{};
+  std::unique_ptr<FileCheck>                    m_fileImage{};
 
 #if USE_SLANG
-  std::unique_ptr<SlangCompiler> m_slangC;
+  std::unique_ptr<SlangCompiler> m_slangC{};
 #endif
 
 

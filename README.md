@@ -52,6 +52,7 @@ For those new to this repository, the [solid color](samples/solid_color) and [re
 | [gpu_monitor](samples/gpu_monitor) | GPU usage visualization | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] | [x] |
 | [image_ktx](samples/image_ktx) | KTX image display with tonemapping post-processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | [x] | [x] | [x] |
 | [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] | [x] |
+| [line_stipple](samples/line_stipple) | Dashed line rendering with stipple pattern | ![](samples/line_stipple/docs/line_stipple_th.jpg) | [x] | [x] | [x] |
 | [memory_budget](samples/memory_budget) | Dynamic memory allocation within budget constraints | ![](samples/memory_budget/docs/mem_budget_th.jpg) | [x] | [x] | [x] |
 | [mm_displacement](samples/mm_displacement) | Micro-mesh displacement techniques  | ![](samples/mm_displacement/docs/micromesh_th.jpg) | [x] | [x] | [x] |
 | [mm_opacity](samples/mm_opacity) | Micromap opacity implementation  | ![](samples/mm_opacity/docs/opacity_th.jpg) | [x] | [x] | [x] |

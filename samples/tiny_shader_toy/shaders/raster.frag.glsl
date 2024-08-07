@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 450
@@ -53,8 +53,8 @@ layout(set = 0, binding = 0) uniform sampler2D iChannel0;
 #else
 #include "buffer_a.glsl"
 #endif
-//---------------------------------------------
 
+//---------------------------------------------
 void main()
 {
   // Initialization
@@ -65,7 +65,11 @@ void main()
   invFragCoord.y    = iResolution.y - gl_FragCoord.y;
 
   // Calling the main function
+#ifdef INCLUDE_IMAGE
   mainImage(fragColor, invFragCoord.xy);
+#else
+  mainBufferA(fragColor, invFragCoord.xy);
+#endif
 
   // Image is written to the attached G-Buffer
 }
