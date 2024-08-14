@@ -67,8 +67,6 @@ layout(push_constant, scalar) uniform RtxPushConstant_
   PushConstant pushConst;
 };
 
-const float DIRAC = -1.0;  // Used for direct light sampling
-
 struct Ray
 {
   vec3 origin;
