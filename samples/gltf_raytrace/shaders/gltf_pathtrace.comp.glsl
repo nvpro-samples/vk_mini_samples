@@ -79,7 +79,7 @@ struct HitState
   vec3 pos;
   vec3 nrm;
   vec3 geonrm;
-  vec2 uv;
+  vec2 uv[2];
   vec3 tangent;
   vec3 bitangent;
   vec4 color;
@@ -126,14 +126,11 @@ HitState getHitState(RenderPrimitive renderPrim, vec2 barycentricCoords, mat4x3 
   hit.nrm          = worldNormal;
 
   // Color
-  hit.color = vec4(1, 1, 1, 1);
-  if(hasVertexColor(renderPrim))
-    hit.color = getInterpolatedVertexColor(renderPrim, triangleIndex, barycentrics);
+  hit.color = getInterpolatedVertexColor(renderPrim, triangleIndex, barycentrics);
 
   // TexCoord
-  hit.uv = vec2(0, 0);
-  if(hasVertexTexCoord0(renderPrim))
-    hit.uv = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+  hit.uv[0] = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+  hit.uv[1] = getInterpolatedVertexTexCoord1(renderPrim, triangleIndex, barycentrics);
 
   // Tangent - Bitangent
   vec4 tng[3];
@@ -225,7 +222,7 @@ bool hitTest(in rayQueryEXT rayQuery, inout uint seed)
     return true;
 
   float baseColorAlpha = material.pbrBaseColorFactor.a;
-  if(material.pbrBaseColorTexture > -1)
+  if(isTexturePresent(material.pbrBaseColorTexture))
   {
     // Getting the 3 indices of the triangle (local)
     uvec3 triangleIndex = getTriangleIndices(renderPrim, triangleID);  //
@@ -233,12 +230,14 @@ bool hitTest(in rayQueryEXT rayQuery, inout uint seed)
     // Get the texture coordinate
     vec2       bary         = rayQueryGetIntersectionBarycentricsEXT(rayQuery, false);
     const vec3 barycentrics = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    vec2       texcoord0    = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+    vec2[2] tc;
+    tc[0] = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+    tc[1] = getInterpolatedVertexTexCoord1(renderPrim, triangleIndex, barycentrics);
 
-    // Uv Transform
-    texcoord0 = (vec3(texcoord0.xy, 1) * material.uvTransform).xy;
+    GltfTextureInfo tinfo    = material.pbrBaseColorTexture;
+    vec2            texCoord = vec2(vec3(tc[tinfo.texCoord], 1) * tinfo.uvTransform);
 
-    baseColorAlpha *= texture(texturesMap[nonuniformEXT(material.pbrBaseColorTexture)], texcoord0).a;
+    baseColorAlpha *= texture(texturesMap[nonuniformEXT(tinfo.index)], texCoord).a;
   }
 
   float opacity;

@@ -728,7 +728,7 @@ int main(int argc, char** argv)
   vkSetup.queues.push_back(VK_QUEUE_TRANSFER_BIT);  // Used in other thread
 
   // Creating the Vulkan Context
-  VkContext vkContext(vkSetup);
+  VulkanContext vkContext(vkSetup);
   if(!vkContext.isValid())
     std::exit(0);
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers

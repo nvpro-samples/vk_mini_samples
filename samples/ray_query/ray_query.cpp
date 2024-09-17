@@ -694,7 +694,7 @@ auto main(int argc, char** argv) -> int
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 
   // Vulkan context creation
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -99,6 +99,32 @@ float2 getInterpolatedVertexTexCoord0(RenderPrimitive renderPrim, uint3 idx, flo
   uv[1] = texcoords[idx.y];
   uv[2] = texcoords[idx.z];  return uv[0] * barycentrics.x + uv[1] * barycentrics.y + uv[2] * barycentrics.z;
 }
+
+bool hasVertexTexCoord1(RenderPrimitive renderPrim)
+{
+    return renderPrim.vertexBuffer.texCoord1Address != nullptr;
+}
+
+float2 getVertexTexCoord1(RenderPrimitive renderPrim, uint idx)
+{
+    if (!hasVertexTexCoord1(renderPrim))
+        return float2(0.0f, 0.0f);
+
+    return renderPrim.vertexBuffer.texCoord1Address[idx];
+}
+
+float2 getInterpolatedVertexTexCoord1(RenderPrimitive renderPrim, uint3 idx, float3 barycentrics)
+{
+    if (!hasVertexTexCoord1(renderPrim))
+        return float2(0.0f, 0.0f);
+
+    float2 *texcoords = renderPrim.vertexBuffer.texCoord1Address;
+    float2 uv[3];
+    uv[0] = texcoords[idx.x];
+    uv[1] = texcoords[idx.y];
+    uv[2] = texcoords[idx.z]; return uv[0] * barycentrics.x + uv[1] * barycentrics.y + uv[2] * barycentrics.z;
+}
+
 
 bool hasVertexTangent(RenderPrimitive renderPrim)
 {

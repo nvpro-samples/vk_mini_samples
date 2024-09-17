@@ -43,7 +43,7 @@ int main(int argc, char** argv)
   vkSetup.verbose                = false;
 
   // Create the Vulkan context
-  VkContext vkContext(vkSetup);
+  VulkanContext vkContext(vkSetup);
   if(!vkContext.isValid())
     std::exit(0);
 

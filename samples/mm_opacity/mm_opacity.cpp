@@ -839,7 +839,7 @@ int main(int argc, char** argv)
 #endif  // USE_HLSL
 
   // Creating the Vulkan context
-  VkContext vkContext(vkSetup);
+  VulkanContext vkContext(vkSetup);
   if(!vkContext.isValid())
     std::exit(0);
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers

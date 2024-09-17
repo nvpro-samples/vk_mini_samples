@@ -797,7 +797,7 @@ int main(int argc, char** argv)
   vkSetup.ignoreDbgMessages.insert(0xf69d66f5);  // unexpected VkStructureType VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV
 
   // Create Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

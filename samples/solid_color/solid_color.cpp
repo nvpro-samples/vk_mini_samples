@@ -201,7 +201,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
   // Create Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

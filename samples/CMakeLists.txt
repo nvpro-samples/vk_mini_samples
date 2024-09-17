@@ -2,6 +2,7 @@
 
 add_subdirectory(barycentric_wireframe)
 add_subdirectory(compute_only)
+add_subdirectory(compute_multi_threaded)
 add_subdirectory(crash_aftermath) 
 add_subdirectory(gltf_raytrace)
 add_subdirectory(gpu_monitor)

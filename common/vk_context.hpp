@@ -112,12 +112,12 @@ struct VkContextSettings
 
 //--------------------------------------------------------------------------------------------------
 // Simple class to handle the Vulkan context creation
-class VkContext
+class VulkanContext
 {
 public:
-  VkContext() = default;
-  VkContext(const VkContextSettings& settings) { init(settings); }
-  ~VkContext() { deinit(); }
+  VulkanContext() = default;
+  VulkanContext(const VkContextSettings& settings) { init(settings); }
+  ~VulkanContext() { deinit(); }
 
   VkInstance             getInstance() const { return m_instance; }
   VkDevice               getDevice() const { return m_device; }
@@ -494,7 +494,7 @@ private:
       {
         std::string versionInfo;
         if(desiredExtension.specVersion != 0 || desiredExtension.exactSpecVersion)
-          fmt::format(" (v.{} {} v.{})", specVersion, specVersion ? "==" : ">=", desiredExtension.specVersion);
+          versionInfo = fmt::format(" (v.{} {} v.{})", specVersion, specVersion ? "==" : ">=", desiredExtension.specVersion);
         if(desiredExtension.required)
           allFound = false;
         nvprintfLevel(desiredExtension.required ? LOGLEVEL_ERROR : LOGLEVEL_WARNING, "Extension not available: %s %s\n",
@@ -601,11 +601,12 @@ inline std::string getVendorName(uint32_t vendorID)
 
 inline std::string getDeviceType(uint32_t deviceType)
 {
-  static const std::unordered_map<uint32_t, std::string> deviceTypeMap = {{VK_PHYSICAL_DEVICE_TYPE_OTHER, "Other"},
-                                                                          {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Integrated GPU"},
-                                                                          {VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, "Discrete GPU"},
-                                                                          {VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, "Virtual GPU"},
-                                                                          {VK_PHYSICAL_DEVICE_TYPE_CPU, "CPU"}};
+  static const std::unordered_map<uint32_t, std::string> deviceTypeMap = {
+      {VK_PHYSICAL_DEVICE_TYPE_OTHER, "Other"},
+      {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Integrated GPU"},
+      {VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, "Discrete GPU"},
+      {VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, "Virtual GPU"},
+      {VK_PHYSICAL_DEVICE_TYPE_CPU, "CPU"}};
 
   auto it = deviceTypeMap.find(deviceType);
   return it != deviceTypeMap.end() ? it->second : "Unknown";

@@ -586,7 +586,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
   // Create the Vulkan context
-  VkContext vkContext(vkSetup);
+  VulkanContext vkContext(vkSetup);
   if(!vkContext.isValid())
     std::exit(0);
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers

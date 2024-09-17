@@ -86,14 +86,14 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app->getPhysicalDevice(),
-        .device         = app->getDevice(),
-        .instance       = app->getInstance(),
+    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
+              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+              .physicalDevice = app->getPhysicalDevice(),
+              .device         = app->getDevice(),
+              .instance       = app->getInstance(),
     });  // Allocator
-    m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+    m_dset        = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
     createScene();
@@ -465,7 +465,7 @@ int main(int argc, char** argv)
   vkSetup.instanceExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
   // Create Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

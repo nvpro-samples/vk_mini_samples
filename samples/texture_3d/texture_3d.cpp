@@ -152,7 +152,8 @@ public:
     PE::entry("Color", [&] { return ImGui::ColorEdit3("##1", &m_settings.surfaceColor.x); });
     redoTexture |= PE::entry("Filter Mode", [&] { return ImGui::Combo("##6", (int*)&s.magFilter, "Nearest\0Linear\0"); });
     redoTexture |= PE::entry("Address Mode", [&] {
-      return ImGui::Combo("##6", (int*)&s.addressMode, "Repeat\0Mirror Repeat\0Clamp to Edge\0Clamp to Border\0Mirror Clamp to Edge\0");
+      return ImGui::Combo("##6", (int*)&s.addressMode,
+                          "Repeat\0Mirror Repeat\0Clamp to Edge\0Clamp to Border\0Mirror Clamp to Edge\0");
     });
     PE::entry("Head light", [&] { return ImGui::Checkbox("##1", (bool*)&m_settings.headlight); });
     ImGui::BeginDisabled(m_settings.headlight);
@@ -175,7 +176,8 @@ public:
         [&] { return ImGui::SliderFloat("##2", &s.perlin.frequency, 0.1F, 5.F, "%.3f", ImGuiSliderFlags_Logarithmic); },
         "Number of time the noise is sampled in the domain.");
     m_dirty |= PE::entry(
-        "Gpu Creation", [&] { return ImGui::Checkbox("##4", &s.useGpu); }, "Use compute shader to generate the texture data");
+        "Gpu Creation", [&] { return ImGui::Checkbox("##4", &s.useGpu); },
+        "Use compute shader to generate the texture data");
     PE::end();
     /// ----
     ImGui::Text("Ray Marching");
@@ -627,7 +629,7 @@ int main(int argc, char** argv)
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
   // Vulkan context creation
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

@@ -33,7 +33,7 @@ endif()
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.1.33")
+set(Slang_VERSION  "2024.11.1")
 find_package(Slang)
 
 # Adding HLSL compiler function
@@ -57,13 +57,14 @@ if(NOT VULKAN_BUILD_DEPENDENCIES)
 endif()
 
 # Packages shared by all projects
-_add_package_NsightAftermath() 
-_add_package_VulkanSDK()
-_add_package_ZLIB()
-_add_package_ImGUI()
-_add_package_NVML()
-_add_package_ShaderC()
-
+_add_package_VulkanSDK()        # All
+_add_package_ImGUI()            # All
+_add_package_NsightAftermath()  # crash_aftermath
+_add_package_ZLIB()             # image_ktx
+_add_package_KTX()              # image_ktx
+_add_package_NVML()             # gpu_monitor
+_add_package_NVAPI()            # compute_mutil_threaded
+_add_package_ShaderC()          # tiny_shader_toy
 
 # Initialize variables
 set(USE_GLSL OFF )

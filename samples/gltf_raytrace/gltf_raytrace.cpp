@@ -459,7 +459,7 @@ auto main(int argc, char** argv) -> int
   vkSetup.queues.push_back(VK_QUEUE_COMPUTE_BIT);  // Extra queue for building BLAS and TLAS
 
   // Create the Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
   if(!vkContext->isValid())
     std::exit(0);

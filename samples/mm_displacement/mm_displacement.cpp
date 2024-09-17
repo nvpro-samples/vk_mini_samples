@@ -883,7 +883,7 @@ int main(int argc, char** argv)
 
 
   // Vulkan context creation
-  VkContext vkContext(vkSetup);
+  VulkanContext vkContext(vkSetup);
   if(!vkContext.isValid())
     std::exit(0);
 

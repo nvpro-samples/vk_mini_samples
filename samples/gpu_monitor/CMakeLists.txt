@@ -1,8 +1,5 @@
-
-set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
-
+# Simple sample, no shaders
 create_sample(gpu_monitor
-  SOURCES 
-    gpu_monitor.cpp
+  SOURCES gpu_monitor.cpp
 )
 

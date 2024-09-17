@@ -60,7 +60,7 @@ struct HitState
   float3 nrm;
   float4 color;
   float3 geonrm;
-  float2 uv;
+  float2 uv[2];
   float3 tangent;
   float3 bitangent;
 };
@@ -110,7 +110,8 @@ HitState getHitState(RenderPrimitive renderPrim, float2 barycentricCoords, float
   hit.nrm                = worldNormal;
 
   // TexCoord
-  hit.uv = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+  hit.uv[0] = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+  hit.uv[1] = getInterpolatedVertexTexCoord1(renderPrim, triangleIndex, barycentrics);
 
   // Color
   hit.color = getInterpolatedVertexColor(renderPrim, triangleIndex, barycentrics);
@@ -204,7 +205,7 @@ bool hitTest(in RayQuery rayQuery, inout uint seed)
     return true;
 
   float baseColorAlpha = material.pbrBaseColorFactor.a;
-  if(material.pbrBaseColorTexture > -1)
+  if(material.pbrBaseColorTexture.index > -1)
   {
     // Getting the 3 indices of the triangle (local)
     uint3 triangleIndex = getTriangleIndices(renderPrim, triID); // renderPrim.
@@ -217,7 +218,7 @@ bool hitTest(in RayQuery rayQuery, inout uint seed)
     // Uv Transform
     //texcoord0 = (float4(texcoord0.xy, 1, 1) * material.uvTransform).xy;
 
-    baseColorAlpha *= texturesMap[material.pbrBaseColorTexture].SampleLevel(texcoord0, 0).a;
+    baseColorAlpha *= texturesMap[material.pbrBaseColorTexture.index].SampleLevel(texcoord0, 0).a;
   }
 
   float opacity;

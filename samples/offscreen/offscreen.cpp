@@ -274,7 +274,7 @@ int main(int argc, char** argv)
   }
 
   // Creating the Vulkan instance and device, with only defaults, no extension
-  auto vkContext = std::make_unique<VkContext>(VkContextSettings());
+  auto vkContext = std::make_unique<VulkanContext>(VkContextSettings());
 
   // Create the application
   auto app = std::make_unique<nvvkhl::OfflineRender>(vkContext->getInstance(), vkContext->getDevice(),

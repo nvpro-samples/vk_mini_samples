@@ -119,7 +119,7 @@ public:
     });  // Allocator
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
-    m_settings = presets[0];
+    m_settings    = presets[0];
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     createScene();
     createVkBuffers();
@@ -433,7 +433,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, &baryFeature});
 
   // Create the Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
   if(!vkContext->isValid())
     std::exit(0);

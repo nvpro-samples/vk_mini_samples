@@ -16,5 +16,4 @@ create_sample(image_ktx
 )
 
 # KTX needs extra libraries
-_add_package_KTX()
 target_link_libraries(image_ktx PRIVATE basisu)

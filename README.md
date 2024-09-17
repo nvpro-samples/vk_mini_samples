@@ -46,6 +46,7 @@ For those new to this repository, the [solid color](samples/solid_color) and [re
 | Name | Description | Image | GLSL | HLSL | Slang |
 | ------ | ------ | ---- | ---- | ---- | ---- |
 | [barycentric_wireframe](samples/barycentric_wireframe) | Single-pass solid-wireframe rendering using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) | [x] |  [x] | [x] |
+| [compute_multi_threaded](samples/compute_multi_threaded) | Executing a compute shader in a separate thread faster than the main thread.| ![](samples/compute_multi_threaded/docs/multi_threaded_th.jpg) | [x] | [x] | [x] |
 | [compute_only](samples/compute_only) | Basic compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] | [x] |
 | [crash_aftermath](samples/crash_aftermath) | Integration of Nsight Aftermath SDK into an existing application | ![](samples/crash_aftermath/docs/aftermath_th.jpg) | [x] | [x] | [x] |
 | [gltf_raytrace](samples/gltf_raytrace) | glTF scene loading with path-tracing renderer |  ![](samples/gltf_raytrace/docs/gltf_th.jpg) | [x] | [x] | [x] |

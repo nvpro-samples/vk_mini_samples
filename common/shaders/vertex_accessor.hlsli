@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -102,6 +102,39 @@ float2 getInterpolatedVertexTexCoord0(RenderPrimitive renderPrim,uint3 idx,float
   val[2] = vk::RawBufferLoad<float2> (renderPrim.vertexBuffer.texCoord0Address + sizeof(float2) * idx.z);
   return val[0] * barycentrics.x + val[1] * barycentrics.y + val[2] * barycentrics.z;
 }
+
+
+bool hasVertexTexCoord1(RenderPrimitive renderPrim)
+{
+  return renderPrim.vertexBuffer.texCoord1Address != 0;
+}
+
+float2 getVertexTexCoord1(RenderPrimitive renderPrim, uint idx)
+{
+  if (!hasVertexTexCoord1(renderPrim))
+    return float2(0, 0);
+
+  return vk::RawBufferLoad <
+  float2 > (renderPrim.vertexBuffer.texCoord1Address + sizeof(float2) * idx);
+}
+
+
+float2 getInterpolatedVertexTexCoord1(RenderPrimitive renderPrim, uint3 idx, float3 barycentrics)
+{
+  if (!hasVertexTexCoord1(renderPrim))
+    return float2(0, 0);
+  
+  float2 val[3];
+  val[0] = vk::RawBufferLoad <
+  float2 > (renderPrim.vertexBuffer.texCoord1Address + sizeof(float2) * idx.x);
+  val[1] = vk::RawBufferLoad <
+  float2 > (renderPrim.vertexBuffer.texCoord1Address + sizeof(float2) * idx.y);
+  val[2] = vk::RawBufferLoad <
+  float2 > (renderPrim.vertexBuffer.texCoord1Address + sizeof(float2) * idx.z);
+  return val[0] * barycentrics.x + val[1] * barycentrics.y + val[2] * barycentrics.z;
+}
+
+
 
 bool hasVertexTangent(RenderPrimitive renderPrim)
 {

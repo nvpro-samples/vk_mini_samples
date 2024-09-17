@@ -748,7 +748,7 @@ int main(int argc, char** argv)
 #endif
 
   // Create Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

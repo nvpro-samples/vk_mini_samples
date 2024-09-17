@@ -351,7 +351,7 @@ int main(int argc, char** argv)
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
   // Create the Vulkan context with the above settings
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);

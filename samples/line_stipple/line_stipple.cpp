@@ -500,7 +500,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &extendedDynamicStateFeature, false});  // [optional] To enable dynamic line rasterization mode
 
   // Create Vulkan context
-  auto vkContext = std::make_unique<VkContext>(vkSetup);
+  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
   if(!vkContext->isValid())
     std::exit(0);
 

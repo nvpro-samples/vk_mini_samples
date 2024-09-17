@@ -41,7 +41,7 @@ struct MeshState
   float3 T; // Tangent
   float3 B; // Bitangent
   float3 Ng; // Geometric normal
-  float2 tc; // Texture coordinates
+  float2 tc[2]; // Texture coordinates
   bool isInside;
 };
 
@@ -49,6 +49,13 @@ static const float g_min_reflectance = 0.04F;
 
 // If both anisotropic roughness values fall below this threshold, the BSDF switches to specular.
 #define MICROFACET_MIN_ROUGHNESS 0.0014142f
+
+
+#ifdef __SLANG__
+#define TextureType Sampler2D
+#else
+#define TextureType Texture2D
+#endif
 
 
 #ifdef USE_TEXTURES
@@ -61,240 +68,219 @@ static const float g_min_reflectance = 0.04F;
 #define GET_TEXTURE(t, s, i, c) float4(1.0F)
 #endif
 
+float4 getTexture(in GltfTextureInfo tinfo, in MeshState mstate, TextureType texturesMap[], SamplerState samplers)
+{
+  // KHR_texture_transform
+  float3 t = float3(mstate.tc[tinfo.texCoord].x, mstate.tc[tinfo.texCoord].y, 1.0);
+  float3 tt = mul(tinfo.uvTransform, t);
+  float2 texCoord = tt.xy;
+#ifdef __SLANG__
+  return texturesMap[tinfo.index].Sample(texCoord);
+#else
+  return texturesMap[tinfo.index].SampleLevel(samplers, texCoord, 0);
+#endif
+}
+
+bool isTexturePresent(in GltfTextureInfo tinfo)
+{
+  return tinfo.index > -1;
+}
+
 
 //-----------------------------------------------------------------------
 // From the incoming material return the material for evaluating PBR
 //-----------------------------------------------------------------------
-PbrMaterial evaluateMaterial(GltfShadeMaterial material,MeshState mesh
+PbrMaterial evaluateMaterial(GltfShadeMaterial material, MeshState mesh
 #ifdef USE_TEXTURES
-#ifdef __SLANG__
-  ,Sampler2D texturesMap[]
-#else
-  ,Texture2D texturesMap[]
-#endif
-  ,SamplerState samplers
+  , TextureType texturesMap[]
+  , SamplerState samplers
 #endif
 )
 {
    // Material Evaluated
   PbrMaterial pbrMat;
 
-  // KHR_texture_transform
-  float2 texCoord = float2(mul(float3(mesh.tc,1), material.uvTransform).xy);
-
   // Base Color/Albedo may be defined from a base texture or a flat color
   float4 baseColor = material.pbrBaseColorFactor;
-  if(material.pbrBaseColorTexture > -1.0F)
+  if (isTexturePresent(material.pbrBaseColorTexture))
   {
-    baseColor *= GET_TEXTURE(texturesMap, samplers, material.pbrBaseColorTexture,texCoord);
+    baseColor *= getTexture(material.pbrBaseColorTexture, mesh, texturesMap, samplers);
   }
-  pbrMat.baseColor = baseColor.
-rgb;
-  pbrMat.opacity = baseColor.
-a;
+  pbrMat.baseColor = baseColor.rgb;
+  pbrMat.opacity = baseColor.a;
 
 
   // Metallic-Roughness
   float roughness = material.pbrRoughnessFactor;
   float metallic = material.pbrMetallicFactor;
-  if(material.pbrMetallicRoughnessTexture > -1.0F)
+  if (isTexturePresent(material.pbrMetallicRoughnessTexture))
   {
     // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
-    float4 mr_sample = GET_TEXTURE(texturesMap, samplers, material.pbrMetallicRoughnessTexture,texCoord);
-    roughness *= mr_sample.
-g;
-    metallic *= mr_sample.
-b;
+    float4 mr_sample = getTexture(material.pbrMetallicRoughnessTexture, mesh, texturesMap, samplers);
+    roughness *= mr_sample.g;
+    metallic *= mr_sample.b;
   }
   float r2 = roughness * roughness;
   pbrMat.roughness = float2(r2, r2); // Square roughness for the microfacet model
-  pbrMat.metallic = clamp(metallic,0.0F,1.0F);
+  pbrMat.metallic = clamp(metallic, 0.0F, 1.0F);
 
   // Normal Map
   float3 normal = mesh.N;
   float3 tangent = mesh.T;
   float3 bitangent = mesh.B;
-  if(material.normalTexture > -1)
+  if (isTexturePresent(material.normalTexture))
   {
-    float3x3 tbn = float3x3(mesh.T,mesh.B,mesh.N);
-    float3 normal_vector = GET_TEXTURE(texturesMap, samplers, material.normalTexture,texCoord).xyz;
+    float3x3 tbn = float3x3(mesh.T, mesh.B, mesh.N);
+    float3 normal_vector = getTexture(material.normalTexture, mesh, texturesMap, samplers).xyz;
     normal_vector = normal_vector * 2.0F - 1.0F;
-    normal_vector *= float3(material.normalTextureScale,material.normalTextureScale,1.0F);
+    normal_vector *= float3(material.normalTextureScale, material.normalTextureScale, 1.0F);
     normal = normalize(mul(normal_vector, tbn));
   }
   // We should always have B = cross(N, T) * bitangentSign. Orthonormalize,
   // in case the normal was changed or the input wasn't orthonormal:
-  pbrMat.N =
-normal;
-  pbrMat.B = cross(pbrMat.N,tangent);
-  float bitangentSign = sign(dot(bitangent,pbrMat.B));
-  pbrMat.B = normalize(pbrMat.B) *
-bitangentSign;
-  pbrMat.T = normalize(cross(pbrMat.B,pbrMat.N)) *
-bitangentSign;
-  pbrMat.Ng = mesh.
-Ng;
+  pbrMat.N = normal;
+  pbrMat.B = cross(pbrMat.N, tangent);
+  float bitangentSign = sign(dot(bitangent, pbrMat.B));
+  pbrMat.B = normalize(pbrMat.B) * bitangentSign;
+  pbrMat.T = normalize(cross(pbrMat.B, pbrMat.N)) * bitangentSign;
+  pbrMat.Ng = mesh.Ng;
 
   // Emissive term
   float3 emissive = material.emissiveFactor;
-  if(material.emissiveTexture > -1.0F)
+  if (isTexturePresent(material.emissiveTexture))
   {
-    emissive *= float3(GET_TEXTURE(texturesMap, samplers, material.emissiveTexture,texCoord).xyz);
+    emissive *= float3(getTexture(material.emissiveTexture, mesh, texturesMap, samplers).xyz);
   }
-  pbrMat.emissive = max(float3(0.0F,0.0F,0.0F),emissive);
+  pbrMat.emissive = max(float3(0.0F, 0.0F, 0.0F), emissive);
 
   // KHR_materials_specular
   // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_materials_specular
-  pbrMat.specularColor = material.
-specularColorFactor;
-  if(material.specularColorTexture > -1)
+  pbrMat.specularColor = material.specularColorFactor;
+  if (isTexturePresent(material.specularColorTexture))
   {
-    pbrMat.specularColor *= GET_TEXTURE(texturesMap, samplers, material.specularColorTexture,texCoord).
-rgb;
+    pbrMat.specularColor *= getTexture(material.specularColorTexture, mesh, texturesMap, samplers).rgb;
   }
 
-  pbrMat.specular = material.
-specularFactor;
-  if(material.specularTexture > -1)
+  pbrMat.specular = material.specularFactor;
+  if (isTexturePresent(material.specularTexture))
   {
-    pbrMat.specular *= GET_TEXTURE(texturesMap, samplers, material.specularTexture,texCoord).
-a;
+    pbrMat.specular *= getTexture(material.specularTexture, mesh, texturesMap, samplers).a;
   }
 
 
   // Dielectric Specular
   float ior1 = 1.0F; // IOR of the current medium (e.g., air)
   float ior2 = material.ior; // IOR of the material
-  if(mesh.isInside && (material.thicknessFactor > 0))  // If the material is thin-walled, we don't need to consider the inside IOR.
+  if (mesh.isInside && (material.thicknessFactor > 0))  // If the material is thin-walled, we don't need to consider the inside IOR.
   {
-    ior1 = material.
-ior;
+    ior1 = material.ior;
     ior2 = 1.0F;
   }
-  pbrMat.ior1 =
-ior1;
-  pbrMat.ior2 =
-ior2;
+  pbrMat.ior1 = ior1;
+  pbrMat.ior2 = ior2;
 
 
   // KHR_materials_transmission
-  pbrMat.transmission = material.
-transmissionFactor;
-  if(material.transmissionTexture > -1)
+  pbrMat.transmission = material.transmissionFactor;
+  if (isTexturePresent(material.transmissionTexture))
   {
-    pbrMat.transmission *= GET_TEXTURE(texturesMap, samplers, material.transmissionTexture,texCoord).
-r;
+    pbrMat.transmission *= getTexture(material.transmissionTexture, mesh, texturesMap, samplers).r;
   }
 
   // KHR_materials_volume
-  pbrMat.attenuationColor = material.
-attenuationColor;
-  pbrMat.attenuationDistance = material.
-attenuationDistance;
-  pbrMat.thickness = material.
-thicknessFactor;
+  pbrMat.attenuationColor = material.attenuationColor;
+  pbrMat.attenuationDistance = material.attenuationDistance;
+  pbrMat.thickness = material.thicknessFactor;
 
   // KHR_materials_clearcoat
-  pbrMat.clearcoat = material.
-clearcoatFactor;
-  pbrMat.clearcoatRoughness = material.
-clearcoatRoughness;
-  pbrMat.Nc = pbrMat.
-N;
-  if(material.clearcoatTexture > -1)
+  pbrMat.clearcoat = material.clearcoatFactor;
+  pbrMat.clearcoatRoughness = material.clearcoatRoughness;
+  pbrMat.Nc = pbrMat.N;
+  
+  if (isTexturePresent(material.clearcoatTexture))
   {
-    pbrMat.clearcoat *= GET_TEXTURE(texturesMap, samplers, material.clearcoatTexture,texCoord).
-r;
+    pbrMat.clearcoat *= getTexture(material.clearcoatTexture, mesh, texturesMap, samplers).r;
   }
 
-  if(material.clearcoatRoughnessTexture > -1)
+  if (isTexturePresent(material.clearcoatRoughnessTexture))
   {
-    pbrMat.clearcoatRoughness *= GET_TEXTURE(texturesMap, samplers, material.clearcoatRoughnessTexture,texCoord).
-g;
+    pbrMat.clearcoatRoughness *= getTexture(material.clearcoatRoughnessTexture, mesh, texturesMap, samplers).g;
   }
-  pbrMat.clearcoatRoughness = max(pbrMat.clearcoatRoughness,0.001F);
+  pbrMat.clearcoatRoughness = max(pbrMat.clearcoatRoughness, 0.001F);
 
-  if(material.clearcoatNormalTexture > -1)
+  if (isTexturePresent(material.clearcoatNormalTexture))
   {
-    float3x3 tbn = float3x3(pbrMat.T,pbrMat.B,pbrMat.Nc);
-    float3 normal_vector = GET_TEXTURE(texturesMap, samplers, material.clearcoatNormalTexture,texCoord).xyz;
+    float3x3 tbn = float3x3(pbrMat.T, pbrMat.B, pbrMat.Nc);
+    float3 normal_vector = getTexture(material.clearcoatNormalTexture, mesh, texturesMap, samplers).xyz;
     normal_vector = normal_vector * 2.0F - 1.0F;
-    pbrMat.Nc = normalize(mul(normal_vector,tbn));
+    pbrMat.Nc = normalize(mul(normal_vector, tbn));
   }
 
   // Iridescence
   float iridescence = material.iridescenceFactor;
-  if(material.iridescenceTexture > -1)
+  if (isTexturePresent(material.iridescenceTexture))
   {
-    iridescence *= GET_TEXTURE(texturesMap, samplers, material.iridescenceTexture,texCoord).
-x;
+    iridescence *= getTexture(material.iridescenceTexture, mesh, texturesMap, samplers).x;
   }
   float iridescenceThickness = material.iridescenceThicknessMaximum;
-  if(material.iridescenceThicknessTexture > -1)
+  if (isTexturePresent(material.iridescenceThicknessTexture))
   {
-    const float t = GET_TEXTURE(texturesMap, samplers, material.iridescenceThicknessTexture,texCoord).y;
-    iridescenceThickness = lerp(material.iridescenceThicknessMinimum,material.iridescenceThicknessMaximum,t);
+    const float t = getTexture(material.iridescenceThicknessTexture, mesh, texturesMap, samplers).y;
+    iridescenceThickness = lerp(material.iridescenceThicknessMinimum, material.iridescenceThicknessMaximum, t);
   }
   pbrMat.iridescence = (iridescenceThickness > 0.0f) ? iridescence : 0.0f; // No iridescence when the thickness is zero.
-  pbrMat.iridescenceIor = material.
-iridescenceIor;
-  pbrMat.iridescenceThickness =
-iridescenceThickness;
+  pbrMat.iridescenceIor = material.iridescenceIor;
+  pbrMat.iridescenceThickness = iridescenceThickness;
 
   // KHR_materials_anisotropy
   float anisotropyStrength = material.anisotropyStrength;
-  float2 anisotropyDirection = float2(1.0f,0.0f); // By default the anisotropy strength is along the tangent.
-  if(material.anisotropyTexture > -1)
+  float2 anisotropyDirection = float2(1.0f, 0.0f); // By default the anisotropy strength is along the tangent.
+  if (isTexturePresent(material.anisotropyTexture))
   {
-    const float4 anisotropyTex = GET_TEXTURE(texturesMap, samplers, material.anisotropyTexture,texCoord);
+    const float4 anisotropyTex = getTexture(material.anisotropyTexture, mesh, texturesMap, samplers);
 
     // .xy encodes the direction in (tangent, bitangent) space. Remap from [0, 1] to [-1, 1].
     anisotropyDirection = normalize(float2(anisotropyTex.xy) * 2.0f - 1.0f);
     // .z encodes the strength in range [0, 1].
-    anisotropyStrength *= anisotropyTex.
-z;
+    anisotropyStrength *= anisotropyTex.z;
   }
 
   // If the anisotropyStrength == 0.0f (default), the roughness is isotropic.
   // No need to rotate the anisotropyDirection or tangent space.
-  if(anisotropyStrength > 0.0F)
+  if (anisotropyStrength > 0.0F)
   {
-    pbrMat.roughness.x = lerp(pbrMat.roughness.y,1.0f,anisotropyStrength * anisotropyStrength);
+    pbrMat.roughness.x = lerp(pbrMat.roughness.y, 1.0f, anisotropyStrength * anisotropyStrength);
 
-    const float s = sin(material.anisotropyRotation); // FIXME PERF Precalculate sin, cos on host.
-    const float c = cos(material.anisotropyRotation);
+    const float s = material.anisotropyRotation.x;
+    const float c = material.anisotropyRotation.y;
 
     anisotropyDirection =
-        float2(c * anisotropyDirection.x + s * anisotropyDirection.y,c * anisotropyDirection.y - s * anisotropyDirection.x);
+        float2(c * anisotropyDirection.x + s * anisotropyDirection.y, c * anisotropyDirection.y - s * anisotropyDirection.x);
 
     const float3 T_aniso = pbrMat.T * anisotropyDirection.x + pbrMat.B * anisotropyDirection.y;
 
-    pbrMat.B = normalize(cross(pbrMat.N,T_aniso));
-    pbrMat.T = cross(pbrMat.B,pbrMat.N);
+    pbrMat.B = normalize(cross(pbrMat.N, T_aniso));
+    pbrMat.T = cross(pbrMat.B, pbrMat.N);
   }
 
 
   // KHR_materials_sheen
   float3 sheenColor = material.sheenColorFactor;
-  if(material.sheenColorTexture > -1)
+  if (isTexturePresent(material.sheenColorTexture))
   {
-    sheenColor *= float3(GET_TEXTURE(texturesMap, samplers, material.sheenColorTexture,texCoord).xyz); // sRGB
+    sheenColor *= float3(getTexture(material.sheenColorTexture, mesh, texturesMap, samplers).xyz); // sRGB
   }
-  pbrMat.sheenColor =
-sheenColor; // No sheen if this is black.
+  pbrMat.sheenColor = sheenColor; // No sheen if this is black.
 
   float sheenRoughness = material.sheenRoughnessFactor;
-  if(material.sheenRoughnessTexture > -1)
+  if (isTexturePresent(material.sheenRoughnessTexture))
   {
-    sheenRoughness *= GET_TEXTURE(texturesMap, samplers, material.sheenRoughnessTexture,texCoord).
-w;
+    sheenRoughness *= getTexture(material.sheenRoughnessTexture, mesh, texturesMap, samplers).w;
   }
-  sheenRoughness = max(MICROFACET_MIN_ROUGHNESS,sheenRoughness);
-  pbrMat.sheenRoughness =
-sheenRoughness;
+  sheenRoughness = max(MICROFACET_MIN_ROUGHNESS, sheenRoughness);
+  pbrMat.sheenRoughness = sheenRoughness;
 
-  return
-pbrMat;
+  return pbrMat;
 }
 
 

@@ -58,7 +58,7 @@ struct HitState
   float3 pos;
   float3 nrm;
   float3 geonrm;
-  float2 uv;
+  float2 uv[2];
   float3 tangent;
   float3 bitangent;
   float4 color;
@@ -94,6 +94,7 @@ RenderPrimitive getRenderPrimitive(uint64_t primAddress,uint64_t offset)
     loader.loadValue < uint64_t > (rprim.vertexBuffer.colorAddress);
     loader.loadValue < uint64_t > (rprim.vertexBuffer.tangentAddress);
     loader.loadValue < uint64_t > (rprim.vertexBuffer.texCoord0Address);
+    loader.loadValue < uint64_t > (rprim.vertexBuffer.texCoord1Address);
   }
   return rprim;
 }
@@ -105,168 +106,184 @@ RenderNode getRenderNode(uint64_t nodeAddress,uint64_t offset)
     LoaderHelper loader;
     loader.init(nodeAddress,offset);
     
-    loader.loadValue <
-    float4x4 > (rnode.objectToWorld);
-    loader.loadValue <
-    float4x4 > (rnode.worldToObject);
-    loader.loadValue <
-    int > (rnode.materialID);
-    loader.loadValue <
-    int > (rnode.renderPrimID);
+    loader.loadValue <float4x4 > (rnode.objectToWorld);
+    loader.loadValue <float4x4 > (rnode.worldToObject);
+    loader.loadValue <int > (rnode.materialID);
+    loader.loadValue <int > (rnode.renderPrimID);
   }
   return rnode;
 }
 
-// Return the material structure, from a buffer address and an offset
-GltfShadeMaterial getMaterial(uint64_t materialAddress,uint64_t offset)
+void getTexture(in LoaderHelper loader, inout GltfTextureInfo tinfo)
 {
-  LoaderHelper loader;
-  loader.init(materialAddress,offset);
+  loader.loadValue <float3x3> (tinfo.uvTransform);
+  loader.loadValue <int > (tinfo.index);
+  loader.loadValue <int > (tinfo.texCoord);
+}
+
+// Return the material structure, from a buffer address and an offset
+  GltfShadeMaterial getMaterial(uint64_t materialAddress, uint64_t offset)
+{
+    LoaderHelper loader;
+    loader.init(materialAddress, offset);
   
-  GltfShadeMaterial m;
+    GltfShadeMaterial m;
   
     // Core
-  loader.loadValue<float4>( m.pbrBaseColorFactor);
-  loader.loadValue<float3>( m.emissiveFactor);
-  loader.loadValue<int> (m.pbrBaseColorTexture);
-  loader.loadValue<int> (m.normalTexture);
-  loader.loadValue<float> (m.normalTextureScale);
-  loader.loadValue<int> (m._pad0);
-  loader.loadValue<float> (m.pbrRoughnessFactor);
-  loader.loadValue<float> (m.pbrMetallicFactor);
-  loader.loadValue<int> (m.pbrMetallicRoughnessTexture);
-  loader.loadValue<int> (m.emissiveTexture);
-  loader.loadValue<int> (m.alphaMode);
-  loader.loadValue<float> (m.alphaCutoff);
-
-  // KHR_materials_transmission
-  loader.loadValue < float > (m.transmissionFactor);
-  loader.loadValue < int > (m.transmissionTexture);
-
-  // KHR_materials_ior
-  loader.loadValue <float> (m.ior);
-  
-  // KHR_materials_volume
-  loader.loadValue <float3> (m.attenuationColor);
-  loader.loadValue <float> (m.thicknessFactor);
-  loader.loadValue <int> (m.thicknessTexture);
-  loader.loadValue <float> (m.attenuationDistance);
-  
-  // KHR_materials_clearcoat
-  loader.loadValue <float> (m.clearcoatFactor);
-  loader.loadValue <float> (m.clearcoatRoughness);
-  loader.loadValue <int> (m.clearcoatTexture);
-  loader.loadValue <int> (m.clearcoatRoughnessTexture);
-  loader.loadValue <int> (m.clearcoatNormalTexture);
-
+    loader.loadValue <
+    float4 > (m.pbrBaseColorFactor);
+    loader.loadValue <
+    float3 > (m.emissiveFactor);
+    loader.loadValue <
+    float > (m.normalTextureScale);
+    loader.loadValue <
+    float > (m.pbrRoughnessFactor);
+    loader.loadValue <
+    float > (m.pbrMetallicFactor);
+    loader.loadValue <
+    int > (m.alphaMode);
+    loader.loadValue <
+    float > (m.alphaCutoff);
+    loader.loadValue < 
+    float > (m.transmissionFactor);
+    loader.loadValue <
+    float > (m.ior);
+    loader.loadValue <
+    float3 > (m.attenuationColor);
+    loader.loadValue <
+    float > (m.thicknessFactor);
+    loader.loadValue <
+    float > (m.attenuationDistance);
+    loader.loadValue <
+    float > (m.clearcoatFactor);
+    loader.loadValue <
+    float > (m.clearcoatRoughness);
   // KHR_materials_specular
-  loader.loadValue <float3> (m.specularColorFactor);
-  loader.loadValue <float> (m.specularFactor);
-  loader.loadValue <int> (m.specularTexture);
-  loader.loadValue <int> (m.specularColorTexture);
-
+    loader.loadValue <
+    float3 > (m.specularColorFactor);
+    loader.loadValue <
+    float > (m.specularFactor);
   // KHR_materials_unlit
-  loader.loadValue <int> (m.unlit);
-  
+    loader.loadValue <
+    int > (m.unlit);
   // KHR_materials_iridescence
-  loader.loadValue <float> (m.iridescenceFactor);
-  loader.loadValue <int> (m.iridescenceTexture);
-  loader.loadValue <float> (m.iridescenceThicknessMaximum);
-  loader.loadValue <float> (m.iridescenceThicknessMinimum);
-  loader.loadValue <int> (m.iridescenceThicknessTexture);
-  loader.loadValue <float> (m.iridescenceIor);
-
+    loader.loadValue <
+    float > (m.iridescenceFactor);
+    loader.loadValue <
+    float > (m.iridescenceThicknessMaximum);
+    loader.loadValue <
+    float > (m.iridescenceThicknessMinimum);
+    loader.loadValue <
+    float > (m.iridescenceIor);
   // KHR_materials_anisotropy
-  loader.loadValue <float> (m.anisotropyStrength);
-  loader.loadValue <int> (m.anisotropyTexture);
-  loader.loadValue <float> (m.anisotropyRotation);
-
-  // KHR_texture_transform
-  loader.loadValue <float3x3 > (m.uvTransform);
-  loader.loadValue <float4> (m._pad3);
-
+    loader.loadValue <
+    float > (m.anisotropyStrength);
+    loader.loadValue <
+    float2 > (m.anisotropyRotation);
   // KHR_materials_sheen
-  loader.loadValue <int> (m.sheenColorTexture);
-  loader.loadValue <float> (m.sheenRoughnessFactor);
-  loader.loadValue <int> (m.sheenRoughnessTexture);
-  loader.loadValue <float3> (m.sheenColorFactor);
-  loader.loadValue <int> (m._pad2);
+    loader.loadValue <
+    float > (m.sheenRoughnessFactor);
+    loader.loadValue <
+    float3 > (m.sheenColorFactor);
+
+
+  getTexture(loader, m.pbrBaseColorTexture);
+  getTexture(loader, m.normalTexture);
+  getTexture(loader, m.pbrMetallicRoughnessTexture);
+  getTexture(loader, m.emissiveTexture);
+  getTexture(loader, m.transmissionTexture);
+  getTexture(loader, m.thicknessTexture);
+  getTexture(loader, m.clearcoatTexture);
+  getTexture(loader, m.clearcoatRoughnessTexture);
+  getTexture(loader, m.clearcoatNormalTexture);
+  getTexture(loader, m.specularTexture);
+  getTexture(loader, m.specularColorTexture);
+  getTexture(loader, m.iridescenceTexture);
+  getTexture(loader, m.iridescenceThicknessTexture);
+  getTexture(loader, m.anisotropyTexture);
+  getTexture(loader, m.sheenColorTexture);
+  getTexture(loader, m.sheenRoughnessTexture);
   
-  return m;
-}
+
+    return m;
+  }
 
 
 //-----------------------------------------------------------------------
 // Return hit information: position, normal, geonormal, uv, tangent, bitangent
-HitState getHitState(RenderPrimitive renderPrim,float2 barycentricCoords,float3x4 worldToObject,float3x4 objectToWorld,int primitiveID,float3 worldRayDirection)
+  HitState getHitState
+  (RenderPrimitive
+  renderPrim,
+  float2 barycentricCoords, float3x4 worldToObject, float3x4 objectToWorld, int primitiveID, float3 worldRayDirection)
 {
-  HitState hit;
+    HitState hit;
   
   // Barycentric coordinate on the triangle
-  const float3 barycentrics = float3(1.0 - barycentricCoords.x - barycentricCoords.y,barycentricCoords.x,barycentricCoords.y);
+    const float3 barycentrics = float3(1.0 - barycentricCoords.x - barycentricCoords.y, barycentricCoords.x, barycentricCoords.y);
 
   // Getting the 3 indices of the triangle (local)
-  uint3 triangleIndex = getTriangleIndices(renderPrim,primitiveID);
+    uint3 triangleIndex = getTriangleIndices(renderPrim, primitiveID);
   
   // Position
-  const float3 pos0 = getVertexPosition(renderPrim,triangleIndex.x);
-  const float3 pos1 = getVertexPosition(renderPrim,triangleIndex.y);
-  const float3 pos2 = getVertexPosition(renderPrim,triangleIndex.z);
-  const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
-  hit.pos = float3(mul(objectToWorld,float4(position,1.0)));
+    const float3 pos0 = getVertexPosition(renderPrim, triangleIndex.x);
+    const float3 pos1 = getVertexPosition(renderPrim, triangleIndex.y);
+    const float3 pos2 = getVertexPosition(renderPrim, triangleIndex.z);
+    const float3 position = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
+    hit.pos = float3(mul(objectToWorld, float4(position, 1.0)));
 
   // Normal
-  const float3 geoNormal = normalize(cross(pos1 - pos0,pos2 - pos0));
-  float3 worldGeoNormal = normalize(float3(mul(geoNormal,worldToObject).xyz));
-  hit.geonrm = worldGeoNormal;
-  hit.nrm = worldGeoNormal;
-  if(hasVertexNormal(renderPrim))
-  {
-    float3 normal = getInterpolatedVertexNormal(renderPrim,triangleIndex,barycentrics);
-    float3 worldNormal = normalize(float3(mul(normal,worldToObject).xyz));
-    hit.nrm = worldNormal;
-  }
+    const float3 geoNormal = normalize(cross(pos1 - pos0, pos2 - pos0));
+    float3 worldGeoNormal = normalize(float3(mul(geoNormal, worldToObject).xyz));
+    hit.geonrm = worldGeoNormal;
+    hit.nrm = worldGeoNormal;
+    if (hasVertexNormal(renderPrim))
+    {
+      float3 normal = getInterpolatedVertexNormal(renderPrim, triangleIndex, barycentrics);
+      float3 worldNormal = normalize(float3(mul(normal, worldToObject).xyz));
+      hit.nrm = worldNormal;
+    }
 
   // Color
-  hit.color = getInterpolatedVertexColor(renderPrim,triangleIndex,barycentrics);
+    hit.color = getInterpolatedVertexColor(renderPrim, triangleIndex, barycentrics);
   
   // TexCoord
-  hit.uv = getInterpolatedVertexTexCoord0(renderPrim,triangleIndex,barycentrics);
+  hit.uv[0] = getInterpolatedVertexTexCoord0(renderPrim, triangleIndex, barycentrics);
+  hit.uv[1] = getInterpolatedVertexTexCoord1(renderPrim, triangleIndex, barycentrics);
 
   // Tangent - Bitangent
-  const float4 tng0 = getVertexTangent(renderPrim,triangleIndex.x);
-  const float4 tng1 = getVertexTangent(renderPrim,triangleIndex.y);
-  const float4 tng2 = getVertexTangent(renderPrim,triangleIndex.z);
-  hit.tangent = normalize(mixBary(tng0.xyz,tng1.xyz,tng2.xyz,barycentrics));
-  hit.tangent = float3(mul(objectToWorld,float4(hit.tangent,0.0)));
-  hit.tangent = normalize(hit.tangent - hit.nrm * dot(hit.nrm,hit.tangent));
-  hit.bitangent = cross(hit.nrm,hit.tangent) * tng0.w;
+    const float4 tng0 = getVertexTangent(renderPrim, triangleIndex.x);
+    const float4 tng1 = getVertexTangent(renderPrim, triangleIndex.y);
+    const float4 tng2 = getVertexTangent(renderPrim, triangleIndex.z);
+    hit.tangent = normalize(mixBary(tng0.xyz, tng1.xyz, tng2.xyz, barycentrics));
+    hit.tangent = float3(mul(objectToWorld, float4(hit.tangent, 0.0)));
+    hit.tangent = normalize(hit.tangent - hit.nrm * dot(hit.nrm, hit.tangent));
+    hit.bitangent = cross(hit.nrm, hit.tangent) * tng0.w;
 
   // Adjusting normal
-  const float3 V = (-worldRayDirection);
-  if(dot(hit.geonrm,V) < 0)  // Flip if back facing
-    hit.geonrm = -hit.geonrm;
+    const float3 V = (-worldRayDirection);
+    if (dot(hit.geonrm, V) < 0)  // Flip if back facing
+      hit.geonrm = -hit.geonrm;
 
   // If backface
-  if(dot(hit.geonrm,hit.nrm) < 0)  // Make Normal and GeoNormal on the same side
-  {
-    hit.nrm = -hit.nrm;
-    hit.tangent = -hit.tangent;
-    hit.bitangent = -hit.bitangent;
-  }
+    if (dot(hit.geonrm, hit.nrm) < 0)  // Make Normal and GeoNormal on the same side
+    {
+      hit.nrm = -hit.nrm;
+      hit.tangent = -hit.tangent;
+      hit.bitangent = -hit.bitangent;
+    }
 
   // handle low tessellated meshes with smooth normals
-  float3 k2 = reflect(-V,hit.nrm);
-  if(dot(hit.geonrm,k2) < 0.0F)
-    hit.nrm = hit.geonrm;
+    float3 k2 = reflect(-V, hit.nrm);
+    if (dot(hit.geonrm, k2) < 0.0F)
+      hit.nrm = hit.geonrm;
 
   // For low tessalated, avoid internal reflection
-  float3 r = reflect(normalize(worldRayDirection),hit.nrm);
-  if(dot(r,hit.geonrm) < 0)
-    hit.nrm = hit.geonrm;
+    float3 r = reflect(normalize(worldRayDirection), hit.nrm);
+    if (dot(r, hit.geonrm) < 0)
+      hit.nrm = hit.geonrm;
 
-  return hit;
-}
+    return hit;
+  }
 
 struct DirectLight
 {
@@ -311,7 +328,7 @@ bool hitTest(in RayQuery< RAY_FLAG_NONE> rayQuery,inout uint seed)
     return true;
 
   float baseColorAlpha = material.pbrBaseColorFactor.a;
-  if(material.pbrBaseColorTexture > -1)
+  if (isTexturePresent(material.pbrBaseColorTexture))
   {
     uint3 triangleIndex = getTriangleIndices(renderPrim,primitiveID);
 
@@ -323,7 +340,7 @@ bool hitTest(in RayQuery< RAY_FLAG_NONE> rayQuery,inout uint seed)
     // Uv Transform
     //texcoord0 = (float4(texcoord0.xy, 1, 1) * material.uvTransform).xy;
 
-    baseColorAlpha *= texturesMap[material.pbrBaseColorTexture].SampleLevel(samplers,texcoord0.xy,0).a;
+    baseColorAlpha *= texturesMap[material.pbrBaseColorTexture.index].SampleLevel(samplers,texcoord0.xy,0).a;
   }
 
   float opacity;
