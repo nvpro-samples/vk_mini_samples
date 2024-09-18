@@ -122,7 +122,7 @@ void getTexture(in LoaderHelper loader, inout GltfTextureInfo tinfo)
 }
 
 // Return the material structure, from a buffer address and an offset
-  GltfShadeMaterial getMaterial(uint64_t materialAddress, uint64_t offset)
+GltfShadeMaterial getMaterial(uint64_t materialAddress, uint64_t offset)
 {
     LoaderHelper loader;
     loader.init(materialAddress, offset);
@@ -130,63 +130,37 @@ void getTexture(in LoaderHelper loader, inout GltfTextureInfo tinfo)
     GltfShadeMaterial m;
   
     // Core
-    loader.loadValue <
-    float4 > (m.pbrBaseColorFactor);
-    loader.loadValue <
-    float3 > (m.emissiveFactor);
-    loader.loadValue <
-    float > (m.normalTextureScale);
-    loader.loadValue <
-    float > (m.pbrRoughnessFactor);
-    loader.loadValue <
-    float > (m.pbrMetallicFactor);
-    loader.loadValue <
-    int > (m.alphaMode);
-    loader.loadValue <
-    float > (m.alphaCutoff);
-    loader.loadValue < 
-    float > (m.transmissionFactor);
-    loader.loadValue <
-    float > (m.ior);
-    loader.loadValue <
-    float3 > (m.attenuationColor);
-    loader.loadValue <
-    float > (m.thicknessFactor);
-    loader.loadValue <
-    float > (m.attenuationDistance);
-    loader.loadValue <
-    float > (m.clearcoatFactor);
-    loader.loadValue <
-    float > (m.clearcoatRoughness);
+    loader.loadValue <float4 > (m.pbrBaseColorFactor);
+    loader.loadValue <float3 > (m.emissiveFactor);
+    loader.loadValue <float > (m.normalTextureScale);
+    loader.loadValue <float > (m.pbrRoughnessFactor);
+    loader.loadValue <float > (m.pbrMetallicFactor);
+    loader.loadValue <int > (m.alphaMode);
+    loader.loadValue <float > (m.alphaCutoff);
+    loader.loadValue <float > (m.transmissionFactor);
+    loader.loadValue <float > (m.ior);
+    loader.loadValue <float3 > (m.attenuationColor);
+    loader.loadValue <float > (m.thicknessFactor);
+    loader.loadValue <float > (m.attenuationDistance);
+    loader.loadValue <float > (m.clearcoatFactor);
+    loader.loadValue <float > (m.clearcoatRoughness);
   // KHR_materials_specular
-    loader.loadValue <
-    float3 > (m.specularColorFactor);
-    loader.loadValue <
-    float > (m.specularFactor);
+    loader.loadValue <float3 > (m.specularColorFactor);
+    loader.loadValue <float > (m.specularFactor);
   // KHR_materials_unlit
-    loader.loadValue <
-    int > (m.unlit);
+    loader.loadValue <int > (m.unlit);
   // KHR_materials_iridescence
-    loader.loadValue <
-    float > (m.iridescenceFactor);
-    loader.loadValue <
-    float > (m.iridescenceThicknessMaximum);
-    loader.loadValue <
-    float > (m.iridescenceThicknessMinimum);
-    loader.loadValue <
-    float > (m.iridescenceIor);
+    loader.loadValue <float > (m.iridescenceFactor);
+    loader.loadValue <float > (m.iridescenceThicknessMaximum);
+    loader.loadValue <float > (m.iridescenceThicknessMinimum);
+    loader.loadValue <float > (m.iridescenceIor);
   // KHR_materials_anisotropy
-    loader.loadValue <
-    float > (m.anisotropyStrength);
-    loader.loadValue <
-    float2 > (m.anisotropyRotation);
+    loader.loadValue <float > (m.anisotropyStrength);
+    loader.loadValue <float2 > (m.anisotropyRotation);
   // KHR_materials_sheen
-    loader.loadValue <
-    float > (m.sheenRoughnessFactor);
-    loader.loadValue <
-    float3 > (m.sheenColorFactor);
-
-
+    loader.loadValue <float > (m.sheenRoughnessFactor);
+    loader.loadValue <float3 > (m.sheenColorFactor);
+  
   getTexture(loader, m.pbrBaseColorTexture);
   getTexture(loader, m.normalTexture);
   getTexture(loader, m.pbrMetallicRoughnessTexture);
@@ -204,7 +178,9 @@ void getTexture(in LoaderHelper loader, inout GltfTextureInfo tinfo)
   getTexture(loader, m.sheenColorTexture);
   getTexture(loader, m.sheenRoughnessTexture);
   
-
+  int padding;
+  loader.loadValue <int > (padding);
+  
     return m;
   }
 

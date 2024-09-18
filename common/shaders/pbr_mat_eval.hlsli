@@ -58,17 +58,7 @@ static const float g_min_reflectance = 0.04F;
 #endif
 
 
-#ifdef USE_TEXTURES
-#ifdef __SLANG__
-#define GET_TEXTURE(t, s, i, c) t[i].Sample(c)
-#else
-#define GET_TEXTURE(t, s, i, c) t[i].SampleLevel(s, c, 0)
-#endif
-#else
-#define GET_TEXTURE(t, s, i, c) float4(1.0F)
-#endif
-
-float4 getTexture(in GltfTextureInfo tinfo, in MeshState mstate, TextureType texturesMap[], SamplerState samplers)
+float4 getTexture(in GltfTextureInfo tinfo, in MeshState mstate, in TextureType texturesMap[], in SamplerState samplers)
 {
   // KHR_texture_transform
   float3 t = float3(mstate.tc[tinfo.texCoord].x, mstate.tc[tinfo.texCoord].y, 1.0);

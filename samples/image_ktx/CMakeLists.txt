@@ -14,6 +14,3 @@ create_sample(image_ktx
   SHADER_SLANG
     ${SHD_DIR}/raster.slang
 )
-
-# KTX needs extra libraries
-target_link_libraries(image_ktx PRIVATE basisu)

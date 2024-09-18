@@ -151,7 +151,6 @@ function(create_sample  PROJECT_NAME)
         debug ${LIBRARIES_DEBUG}
         ${PLATFORM_LIBRARIES}
         ${UNIXLINKLIBS}
-        nvtx
     )
 
     # Compile definitions
