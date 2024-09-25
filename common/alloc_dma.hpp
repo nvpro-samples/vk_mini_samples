@@ -34,20 +34,16 @@ public:
 private:
   void init(VkDevice device, VkPhysicalDevice physicalDevice)
   {
-    m_deviceMemoryAllocator = std::make_unique<nvvk::DeviceMemoryAllocator>();
-    m_deviceMemoryAllocator->init(device, physicalDevice, NVVK_DEFAULT_MEMORY_BLOCKSIZE, 0);
-    m_dma = std::make_unique<nvvk::DMAMemoryAllocator>(m_deviceMemoryAllocator.get());
+    m_dma = std::make_unique<nvvk::DeviceMemoryAllocator>();
+    m_dma->init(device, physicalDevice, NVVK_DEFAULT_MEMORY_BLOCKSIZE);
     nvvk::ResourceAllocator::init(device, physicalDevice, m_dma.get());
   }
-
   void deinit()
   {
     releaseStaging();
-    m_deviceMemoryAllocator->deinit();
     m_dma->deinit();
     nvvk::ResourceAllocator::deinit();
   }
 
-  std::unique_ptr<nvvk::DMAMemoryAllocator>    m_dma;  // The memory allocator
-  std::unique_ptr<nvvk::DeviceMemoryAllocator> m_deviceMemoryAllocator;
+  std::unique_ptr<nvvk::DeviceMemoryAllocator> m_dma{};
 };

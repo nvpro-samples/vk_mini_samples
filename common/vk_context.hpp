@@ -20,6 +20,8 @@
 #include <csignal>
 
 #include <vulkan/vulkan_core.h>
+#include <vulkan/vk_enum_string_helper.h>
+
 #include <stdexcept>
 #include <vector>
 #include <cstring>
@@ -44,6 +46,12 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
     if(ignoredMsg->find(callbackData->messageIdNumber) != ignoredMsg->end())
       return VK_FALSE;
     LOGE("%s\n", callbackData->pMessage);
+    for(uint32_t count = 0; count < callbackData->objectCount; count++)
+    {
+      LOGE("Object[%d] \n\t- Type %s\n\t- Value %p\n\t- Name %s\n", count,
+           string_VkObjectType(callbackData->pObjects[count].objectType), callbackData->pObjects[count].objectHandle,
+           callbackData->pObjects[count].pObjectName);
+    }
 #if defined(_MSVC_LANG)
     __debugbreak();  // If you break here, there is a Vulkan error that needs to be fixed
                      // To ignore specific message, insert it to settings.ignoreDbgMessages
@@ -228,16 +236,23 @@ private:
     {
       auto vkCreateDebugUtilsMessengerEXT =
           (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkCreateDebugUtilsMessengerEXT");
-      assert(vkCreateDebugUtilsMessengerEXT != nullptr);
-      VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
-      dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT       // For debug printf
-                                                  | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT  // GPU info, bug
-                                                  | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;   // Invalid usage
-      dbg_messenger_create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT      // Violation of spec
-                                              | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;  // Non-optimal use
-      dbg_messenger_create_info.pfnUserCallback = VkContextDebugReport;
-      dbg_messenger_create_info.pUserData       = &m_settings.ignoreDbgMessages;
-      NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(m_instance, &dbg_messenger_create_info, nullptr, &m_dbgMessenger));
+      if(vkCreateDebugUtilsMessengerEXT)
+      {
+        assert(vkCreateDebugUtilsMessengerEXT != nullptr);
+        VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+        dbg_messenger_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT  // For debug printf
+                                                    | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT  // GPU info, bug
+                                                    | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;   // Invalid usage
+        dbg_messenger_create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT      // Violation of spec
+                                                | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;  // Non-optimal use
+        dbg_messenger_create_info.pfnUserCallback = VkContextDebugReport;
+        dbg_messenger_create_info.pUserData       = &m_settings.ignoreDbgMessages;
+        NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(m_instance, &dbg_messenger_create_info, nullptr, &m_dbgMessenger));
+      }
+      else
+      {
+        LOGW("\nMissing VK_EXT_DEBUG_UTILS extension, cannot use vkCreateDebugUtilsMessengerEXT for validation layers.\n");
+      }
     }
   }
 
@@ -248,7 +263,7 @@ private:
 
     // nvh::ScopedTimer st(std::string(__FUNCTION__) + "\n");
     uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
+    NVVK_CHECK(vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr));
     if(deviceCount == 0)
       assert(!"Failed to find GPUs with Vulkan support!");
     std::vector<VkPhysicalDevice> gpus(deviceCount);
@@ -601,12 +616,11 @@ inline std::string getVendorName(uint32_t vendorID)
 
 inline std::string getDeviceType(uint32_t deviceType)
 {
-  static const std::unordered_map<uint32_t, std::string> deviceTypeMap = {
-      {VK_PHYSICAL_DEVICE_TYPE_OTHER, "Other"},
-      {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Integrated GPU"},
-      {VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, "Discrete GPU"},
-      {VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, "Virtual GPU"},
-      {VK_PHYSICAL_DEVICE_TYPE_CPU, "CPU"}};
+  static const std::unordered_map<uint32_t, std::string> deviceTypeMap = {{VK_PHYSICAL_DEVICE_TYPE_OTHER, "Other"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Integrated GPU"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, "Discrete GPU"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, "Virtual GPU"},
+                                                                          {VK_PHYSICAL_DEVICE_TYPE_CPU, "CPU"}};
 
   auto it = deviceTypeMap.find(deviceType);
   return it != deviceTypeMap.end() ? it->second : "Unknown";
