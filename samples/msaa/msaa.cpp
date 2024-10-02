@@ -32,7 +32,6 @@
 #include <imgui.h>
 
 #include "common/vk_context.hpp"
-#include "common/alloc_dma.hpp"
 #include "imgui/imgui_camera_widget.h"
 #include "nvh/primitives.hpp"
 #include "nvvk/commands_vk.hpp"
@@ -86,7 +85,7 @@ public:
     m_device = m_app->getDevice();
 
     m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc       = std::make_unique<AllocDma>(m_device, app->getPhysicalDevice());
+    m_alloc       = std::make_unique<nvvk::ResourceAllocatorDma>(m_device, app->getPhysicalDevice());
     m_dset        = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
@@ -469,7 +468,7 @@ private:
   //
   nvvkhl::Application*             m_app{nullptr};
   std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocDma>        m_alloc;
+  std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
 
   // #MSAA
   nvvk::Image           m_msaaColor;

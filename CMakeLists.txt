@@ -146,7 +146,7 @@ function(create_sample  PROJECT_NAME)
     # Linking with other libraries
     target_link_libraries(${PROJECT_NAME} PRIVATE
         nvpro_core
-        common
+        vk_mini_samples_common
         optimized ${LIBRARIES_OPTIMIZED}
         debug ${LIBRARIES_DEBUG}
         ${PLATFORM_LIBRARIES}
@@ -165,7 +165,7 @@ function(create_sample  PROJECT_NAME)
     target_compile_definitions(${PROJECT_NAME} PRIVATE TINYGLTF_NO_EXTERNAL_IMAGE)
 
     # other properties
-    set_property(TARGET ${PROJECT_NAME} PROPERTY FOLDER "Samples")
+    set_property(TARGET ${PROJECT_NAME} PROPERTY FOLDER "vk_mini_samples")
 
     # Using GLSL (by default)
     if(USE_GLSL) 

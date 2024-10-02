@@ -41,8 +41,6 @@
 #include "nvvkhl/element_benchmark_parameters.hpp"
 #include "nvvkhl/gbuffer.hpp"
 
-#include "common/alloc_dma.hpp"
-
 namespace DH {
 using namespace glm;
 #include "shaders/device_host.h"  // Shared between host and device
@@ -87,8 +85,8 @@ public:
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);                                 // Debug utility
-    m_alloc  = std::make_unique<AllocDma>(m_app->getDevice(), m_app->getPhysicalDevice());  // Allocator
+    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc = std::make_unique<nvvk::ResourceAllocatorDma>(m_app->getDevice(), m_app->getPhysicalDevice());  // Allocator
     //m_alloc  = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
     //     .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
     //     .physicalDevice = app->getPhysicalDevice(),
@@ -510,9 +508,9 @@ private:
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocDma>        m_alloc;
+  nvvkhl::Application*                        m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>            m_dutil;
+  std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
   //std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image

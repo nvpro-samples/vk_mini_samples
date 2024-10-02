@@ -54,7 +54,6 @@
 #include "nvvkhl/element_nvml.hpp"
 #include "nvvkhl/gbuffer.hpp"
 
-#include "common/alloc_dma.hpp"
 #include "common/vk_context.hpp"
 
 namespace DH {
@@ -677,7 +676,7 @@ private:
   nvvkhl::Application*              m_app{nullptr};
   std::unique_ptr<nvvk::DebugUtil>  m_dutil;
   std::shared_ptr<nvvkhl::AllocVma> m_alloc;
-  //std::shared_ptr<AllocDma> m_alloc;
+  //std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
 
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer

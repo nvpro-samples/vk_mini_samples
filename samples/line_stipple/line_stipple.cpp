@@ -27,7 +27,6 @@
 
 #include <glm/gtc/type_ptr.hpp>  // value_ptr
 
-#include "common/alloc_dma.hpp"                     // For the memory allocation
 #include "common/vk_context.hpp"                    // For the Vulkan context
 #include "imgui/imgui_helper.h"                     // Helper for UI, PropertyEditor
 #include "nvvk/debug_util_vk.hpp"                   // Utility to name objects
@@ -91,8 +90,8 @@ public:
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);                            // Debug utility
-    m_alloc = std::make_unique<AllocDma>(app->getDevice(), app->getPhysicalDevice());  // Allocator for buffer, images, acceleration structures
+    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
+    m_alloc = std::make_unique<nvvk::ResourceAllocatorDma>(app->getDevice(), app->getPhysicalDevice());  // Allocator for buffer, images, acceleration structures
 
     // Check which features are supported
     VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -468,10 +467,10 @@ private:
   nvvkhl::Application* m_app{nullptr};
   VkDevice             m_device = VK_NULL_HANDLE;  // Convenient
 
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;
-  std::unique_ptr<nvvkhl::GBuffer> m_msaaGBuffers;
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-  std::shared_ptr<AllocDma>        m_alloc;
+  std::unique_ptr<nvvkhl::GBuffer>            m_gBuffers;
+  std::unique_ptr<nvvkhl::GBuffer>            m_msaaGBuffers;
+  std::unique_ptr<nvvk::DebugUtil>            m_dutil;
+  std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
 
   VkFormat         m_colorFormat      = VK_FORMAT_B8G8R8A8_UNORM;  // Color format of the image
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;            // The description of the pipeline

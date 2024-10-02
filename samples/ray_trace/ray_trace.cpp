@@ -37,7 +37,6 @@
 #define IMGUI_DEFINE_MATH_OPERATORS  // ImGUI ImVec maths
 
 #include "common/vk_context.hpp"                    // Vulkan context creation
-#include "common/alloc_dma.hpp"                     // Memory allocator
 #include "imgui/imgui_axis.hpp"                     // Display of axis
 #include "imgui/imgui_camera_widget.h"              // Camera UI
 #include "imgui/imgui_helper.h"                     // Property editor
@@ -100,7 +99,7 @@ public:
     m_device = m_app->getDevice();
 
     m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc = std::make_unique<AllocDma>(m_device, m_app->getPhysicalDevice());
+    m_alloc = std::make_unique<nvvk::ResourceAllocatorDma>(m_device, m_app->getPhysicalDevice());
     m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
 
     // Requesting ray tracing properties
@@ -676,7 +675,7 @@ private:
   //
   nvvkhl::Application*                          m_app = nullptr;
   std::unique_ptr<nvvk::DebugUtil>              m_dutil;
-  std::unique_ptr<AllocDma>                     m_alloc;
+  std::unique_ptr<nvvk::ResourceAllocatorDma>   m_alloc;
   std::unique_ptr<nvvk::DescriptorSetContainer> m_rtSet;  // Descriptor set
 
   VkFormat                            m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image

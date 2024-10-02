@@ -54,7 +54,6 @@
 #include "shaders/dh_bindings.h"
 #include "common/utils.hpp"
 #include "common/vk_context.hpp"
-#include "common/alloc_dma.hpp"
 
 // The defines must be done here, to avoid having multiple definitions
 #define TINYGLTF_IMPLEMENTATION
@@ -108,7 +107,7 @@ public:
     const uint32_t c_queue_index = app->getQueue(1).familyIndex;
 
     m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc      = std::make_unique<AllocDma>(device, physicalDevice);
+    m_alloc      = std::make_unique<nvvk::ResourceAllocatorDma>(device, physicalDevice);
     m_rtSet      = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
     m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(device, m_alloc.get());
     m_scene      = std::make_unique<nvh::gltf::Scene>();                                      // GLTF scene
@@ -403,7 +402,7 @@ private:
   //
   nvvkhl::Application*                           m_app{nullptr};
   std::unique_ptr<nvvk::DebugUtil>               m_dutil{};
-  std::unique_ptr<AllocDma>                      m_alloc{};
+  std::unique_ptr<nvvk::ResourceAllocatorDma>    m_alloc{};
   std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet{};  // Descriptor set
   std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper{};
   std::unique_ptr<nvvkhl::GBuffer>               m_gBuffers{};  // G-Buffers: color + depth

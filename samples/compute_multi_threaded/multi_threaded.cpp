@@ -32,7 +32,6 @@ Note: The amount of compute frame it can do per display iteration depends on the
 #include <thread>
 #include <condition_variable>
 
-#include "common/alloc_dma.hpp"                     // Our allocator
 #include "common/vk_context.hpp"                    // Our Vulkan context
 #include "nvvk/descriptorsets_vk.hpp"               // Descriptor set helper
 #include "nvvkhl/application.hpp"                   // For Application and IAppElememt
@@ -86,7 +85,7 @@ public:
   void onAttach(nvvkhl::Application* app) override
   {
     m_app   = app;
-    m_alloc = std::make_unique<AllocDma>(app->getDevice(), app->getPhysicalDevice());
+    m_alloc = std::make_unique<nvvk::ResourceAllocatorDma>(app->getDevice(), app->getPhysicalDevice());
     m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_app->getDevice());
     createShaderObjectAndLayout();
 
@@ -297,7 +296,7 @@ public:
 
 private:
   nvvkhl::Application*                          m_app = {nullptr};
-  std::unique_ptr<AllocDma>                     m_alloc{};
+  std::unique_ptr<nvvk::ResourceAllocatorDma>   m_alloc{};
   std::unique_ptr<nvvk::DescriptorSetContainer> m_dset{};
   std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers{};
   std::unique_ptr<nvvkhl::GBuffer>              m_gCompBuffers{};

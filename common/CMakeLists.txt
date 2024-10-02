@@ -1,5 +1,5 @@
 
-set(LIB_NAME common)
+set(LIB_NAME vk_mini_samples_common)
 
 file(GLOB LIB_SOURCES *.cpp *.hpp)
 file(GLOB SHADERS_SOURCES shaders/*.*)
@@ -13,3 +13,5 @@ add_library(${LIB_NAME} ${LIB_SOURCES} ${SHADERS_SOURCES})
 target_include_directories(${LIB_NAME} PRIVATE ${NVPRO_CORE_DIR}/third_party/glm)
 
 source_group("Shaders" FILES ${SHADERS_SOURCES}) # Group shaders in IDE
+
+set_property(TARGET ${LIB_NAME} PROPERTY FOLDER "vk_mini_samples")
