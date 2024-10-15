@@ -416,7 +416,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
       else
       {
         // Continue path
-        bool isSpecular     = (sampleData.event_type & BSDF_EVENT_SPECULAR) != 0;
+        bool isSpecular     = (sampleData.event_type & BSDF_EVENT_IMPULSE) != 0;
         bool isTransmission = (sampleData.event_type & BSDF_EVENT_TRANSMISSION) != 0;
 
         vec3 offsetDir = dot(ray.direction, hit.geonrm) > 0 ? hit.geonrm : -hit.geonrm;

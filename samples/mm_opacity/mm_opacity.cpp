@@ -838,6 +838,15 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 #endif  // USE_HLSL
 
+#if(VK_HEADER_VERSION >= 283)
+  // To enable ray tracing validation, set the NV_ALLOW_RAYTRACING_VALIDATION=1 environment variable
+  // https://developer.nvidia.com/blog/ray-tracing-validation-at-the-driver-level/
+  // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_NV_ray_tracing_validation.html
+  VkPhysicalDeviceRayTracingValidationFeaturesNV validationFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV};
+  vkSetup.deviceExtensions.push_back({VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, &validationFeatures, false});
+#endif
+
+
   // Creating the Vulkan context
   VulkanContext vkContext(vkSetup);
   if(!vkContext.isValid())
