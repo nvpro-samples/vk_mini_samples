@@ -816,15 +816,20 @@ private:
 ///
 int main(int argc, char** argv)
 {
+  // #MICROMAP
+  ValidationSettings vvl{
+      .unique_handles = false,  // This is required for the validation layers to work properly
+  };
+
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   // #MICROMAP
   VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
 
   // Setting how we want Vulkan context to be created
-  VkContextSettings vkSetup;  // #MICROMESH cannot have validation layers (crash)
+  VkContextSettings vkSetup;
+  vkSetup.instanceCreateInfoExt = vvl.buildPNextChain();
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.enableValidationLayers = false;
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});

@@ -322,31 +322,16 @@ int main(int argc, char** argv)
 
   // #debug_printf
   // Adding the GPU debug information to the KHRONOS validation layer
-  // See: https://vulkan.lunarg.com/doc/sdk/1.3.275.0/linux/khronos_validation_layer.html
-  const char*    layer_name           = "VK_LAYER_KHRONOS_validation";
-  const char*    validate_gpu_based[] = {"GPU_BASED_DEBUG_PRINTF"};
-  const VkBool32 printf_verbose       = VK_FALSE;
-  const VkBool32 printf_to_stdout     = VK_FALSE;
-  const int32_t  printf_buffer_size   = 1024;
-
-  const VkLayerSettingEXT settings[] = {
-      {layer_name, "validate_gpu_based", VK_LAYER_SETTING_TYPE_STRING_EXT,
-       static_cast<uint32_t>(std::size(validate_gpu_based)), &validate_gpu_based},
-      {layer_name, "printf_verbose", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &printf_verbose},
-      {layer_name, "printf_to_stdout", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &printf_to_stdout},
-      {layer_name, "printf_buffer_size", VK_LAYER_SETTING_TYPE_INT32_EXT, 1, &printf_buffer_size},
-  };
-
-  VkLayerSettingsCreateInfoEXT layerSettingsCreateInfo = {
-      .sType        = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT,
-      .settingCount = static_cast<uint32_t>(std::size(settings)),
-      .pSettings    = settings,
+  ValidationSettings validationLayer{
+      .validate_gpu_based = {"GPU_BASED_DEBUG_PRINTF"},
+      .printf_to_stdout   = VK_FALSE,
+      .printf_buffer_size = 1024,
   };
 
   VkContextSettings vkSetup{
       .instanceExtensions    = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
       .deviceExtensions      = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
-      .instanceCreateInfoExt = &layerSettingsCreateInfo,
+      .instanceCreateInfoExt = validationLayer.buildPNextChain(),
   };
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
 
@@ -383,7 +368,10 @@ int main(int argc, char** argv)
                                  const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
     // Get rid of all the extra message we don't need
     std::string cleanMsg = callbackData->pMessage;
-    cleanMsg             = cleanMsg.substr(cleanMsg.find('\n') + 1);
+    std::string delimiter = " | ";
+    size_t      pos       = cleanMsg.rfind(delimiter);  // Remove everything before the last " | "
+    if(pos != std::string::npos)
+      cleanMsg = cleanMsg.substr(pos + delimiter.length());
     nvprintfLevel(LOGLEVEL_DEBUG, "%s", cleanMsg.c_str());  // <- This will end up in the Logger (only if DEBUG is on)
     return VK_FALSE;                                        // to continue
   };

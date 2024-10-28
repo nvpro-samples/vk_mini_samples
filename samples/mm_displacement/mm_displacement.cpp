@@ -861,7 +861,6 @@ int main(int argc, char** argv)
 
   VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.enableValidationLayers = false;  // #MICROMESH cannot have validation layers (crash)
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
@@ -873,14 +872,19 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
   vkSetup.deviceExtensions.push_back({VK_NV_DISPLACEMENT_MICROMAP_EXTENSION_NAME, &mm_displacement_features});
 
-  // Disable error messages introduced by micromesh
-  vkSetup.ignoreDbgMessages.insert(0x901f59ec);  // Unknown extension
-  vkSetup.ignoreDbgMessages.insert(0xdd73dbcf);  // Unknown structure
-  vkSetup.ignoreDbgMessages.insert(0xba164058);  // Unknown flag  vkGetAccelerationStructureBuildSizesKHR:
-  vkSetup.ignoreDbgMessages.insert(0x22d5bbdc);  // Unknown flag  vkCreateRayTracingPipelinesKHR
-  vkSetup.ignoreDbgMessages.insert(0x27112e51);  // Unknown flag  vkCreateBuffer
-  vkSetup.ignoreDbgMessages.insert(0x79de34d4);  // Unknown VK_NV_displacement_micromesh, VK_NV_opacity_micromesh
-
+  ValidationSettings vvl{
+      .unique_handles = false,  // This is required for the validation layers to work properly
+      .message_id_filter =
+          {
+              0x901f59ec,  // Unknown extension
+              0xdd73dbcf,  // Unknown structure
+              0xba164058,  // Unknown flag  vkGetAccelerationStructureBuildSizesKHR:
+              0x22d5bbdc,  // Unknown flag  vkCreateRayTracingPipelinesKHR
+              0x27112e51,  // Unknown flag  vkCreateBuffer
+              0x79de34d4,  // Unknown VK_NV_displacement_micromesh, VK_NV_opacity_micromesh
+          },
+  };
+  vkSetup.instanceCreateInfoExt = vvl.buildPNextChain();
 
   // Vulkan context creation
   VulkanContext vkContext(vkSetup);

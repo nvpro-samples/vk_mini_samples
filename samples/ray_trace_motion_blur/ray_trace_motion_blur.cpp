@@ -772,6 +772,10 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+  // #NV_Motion_blur
+  // Validation Layer, filtering message: unexpected VkStructureType VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV
+  ValidationSettings validationLayer{.message_id_filter = {0xf69d66f5}};
+
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   // #NV_Motion_blur
@@ -779,6 +783,7 @@ int main(int argc, char** argv)
 
   // Configure Vulkan context creation
   VkContextSettings vkSetup;
+  vkSetup.instanceCreateInfoExt = validationLayer.buildPNextChain();
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
@@ -792,9 +797,6 @@ int main(int argc, char** argv)
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 #endif  // USE_HLSL
-
-  // #NV_Motion_blur
-  vkSetup.ignoreDbgMessages.insert(0xf69d66f5);  // unexpected VkStructureType VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MOTION_TRIANGLES_DATA_NV
 
   // Create Vulkan context
   auto vkContext = std::make_unique<VulkanContext>(vkSetup);
