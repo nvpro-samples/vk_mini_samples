@@ -363,7 +363,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
     radiance += pbrMat.emissive * throughput;
 
     // Apply volume attenuation
-    bool thin_walled = pbrMat.thickness == 0;
+    bool thin_walled = pbrMat.isThinWalled;
     if(isInside && !thin_walled)
     {
       const vec3 abs_coeff = absorptionCoefficient(pbrMat);

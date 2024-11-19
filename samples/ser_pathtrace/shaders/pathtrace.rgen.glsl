@@ -34,7 +34,7 @@
 #include "device_host.h"
 #include "dh_bindings.h"
 #include "payload.h"
-#include "temperature.glsl"
+#include "temperature.h"
 #include "nvvkhl/shaders/random.h"
 #include "nvvkhl/shaders/constants.h"
 #include "nvvkhl/shaders/dh_sky.h"

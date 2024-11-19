@@ -109,24 +109,25 @@ function(create_sample  PROJECT_NAME)
     #get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
     message(STATUS "-------------------------------")
     message(STATUS "Processing Project ${PROJECT_NAME}")
-    add_executable(${PROJECT_NAME})
+    set(EXECUTABLE_NAME "vk_mini_${PROJECT_NAME}")
+    add_executable(${EXECUTABLE_NAME})
     
     # Force good level of warnings
-    target_compile_options(${PROJECT_NAME} PRIVATE
+    target_compile_options(${EXECUTABLE_NAME} PRIVATE
       $<$<CXX_COMPILER_ID:MSVC>:/W3>
       $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall>
     )
 
-    set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
-    set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+    set_property(TARGET ${EXECUTABLE_NAME} PROPERTY CXX_STANDARD 20)
+    set_property(TARGET ${EXECUTABLE_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 
     SET(SAMPLE_FOLDER ${CMAKE_CURRENT_SOURCE_DIR})
 
     # Sources for the project
-    target_sources(${PROJECT_NAME} PRIVATE ${ARGS_SOURCES})
-    target_sources(${PROJECT_NAME} PRIVATE ${COMMON_SOURCE_FILES})  # Extra source from nvpro-core based on options
-    target_sources(${PROJECT_NAME} PRIVATE ${PACKAGE_SOURCE_FILES}) # Extra source from nvpro-core based on options
-    target_sources(${PROJECT_NAME} PRIVATE ${ARGS_SHADER_HEADERS})
+    target_sources(${EXECUTABLE_NAME} PRIVATE ${ARGS_SOURCES})
+    target_sources(${EXECUTABLE_NAME} PRIVATE ${COMMON_SOURCE_FILES})  # Extra source from nvpro-core based on options
+    target_sources(${EXECUTABLE_NAME} PRIVATE ${PACKAGE_SOURCE_FILES}) # Extra source from nvpro-core based on options
+    target_sources(${EXECUTABLE_NAME} PRIVATE ${ARGS_SHADER_HEADERS})
 
     # Folders for Visual Studio
     source_group("Other" FILES ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES})
@@ -138,13 +139,13 @@ function(create_sample  PROJECT_NAME)
     )
 
     # Readme 
-    target_sources(${PROJECT_NAME} PRIVATE ${SAMPLE_FOLDER}/README.md)
+    target_sources(${EXECUTABLE_NAME} PRIVATE ${SAMPLE_FOLDER}/README.md)
 
     # Include paths
-    target_include_directories(${PROJECT_NAME} PRIVATE ${SAMPLES_ROOT_DIR} ${SAMPLE_FOLDER})
+    target_include_directories(${EXECUTABLE_NAME} PRIVATE ${SAMPLES_ROOT_DIR} ${SAMPLE_FOLDER})
 
     # Linking with other libraries
-    target_link_libraries(${PROJECT_NAME} PRIVATE
+    target_link_libraries(${EXECUTABLE_NAME} PRIVATE
         nvpro_core
         vk_mini_samples_common
         optimized ${LIBRARIES_OPTIMIZED}
@@ -157,15 +158,15 @@ function(create_sample  PROJECT_NAME)
     # the "config" directory doesn't really exist but serves as place holder
     makeRelative("${OUTPUT_PATH}/config" "${SAMPLE_FOLDER}" TO_CURRENT_SOURCE_DIR)
     makeRelative("${OUTPUT_PATH}/config" "${DOWNLOAD_TARGET_DIR}" TO_DOWNLOAD_TARGET_DIR)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_NAME="${PROJECT_NAME}")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_RELDIRECTORY="${TO_CURRENT_SOURCE_DIR}/")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE PROJECT_DOWNLOAD_RELDIRECTORY="${TO_DOWNLOAD_TARGET_DIR}/")
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE PROJECT_NAME="${EXECUTABLE_NAME}")
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE PROJECT_RELDIRECTORY="${TO_CURRENT_SOURCE_DIR}/")
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE PROJECT_DOWNLOAD_RELDIRECTORY="${TO_DOWNLOAD_TARGET_DIR}/")
 
     # TinyGLTF
-    target_compile_definitions(${PROJECT_NAME} PRIVATE TINYGLTF_NO_EXTERNAL_IMAGE)
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE TINYGLTF_NO_EXTERNAL_IMAGE)
 
     # other properties
-    set_property(TARGET ${PROJECT_NAME} PROPERTY FOLDER "vk_mini_samples")
+    set_property(TARGET ${EXECUTABLE_NAME} PROPERTY FOLDER "vk_mini_samples")
 
     # Using GLSL (by default)
     if(USE_GLSL) 
@@ -188,7 +189,7 @@ function(create_sample  PROJECT_NAME)
             FLAGS ${_GLSL_FLAGS}
             )
 
-        target_sources(${PROJECT_NAME} PRIVATE ${GLSL_SOURCES} ${GLSL_HEADERS})
+        target_sources(${EXECUTABLE_NAME} PRIVATE ${GLSL_SOURCES} ${GLSL_HEADERS})
     endif()
 
     if(USE_HLSL AND ARGS_SHADER_HLSL) 
@@ -197,21 +198,21 @@ function(create_sample  PROJECT_NAME)
             SOURCE_FILE ${HLSL_FILE}
             FLAGS -I${SAMPLES_ROOT_DIR} ${ARGS_FLAGS}
             )
-          target_sources(${PROJECT_NAME} PRIVATE ${HLSL_OUTPUT_FILES})
+          target_sources(${EXECUTABLE_NAME} PRIVATE ${HLSL_OUTPUT_FILES})
           source_group("Shaders" FILES ${SLANG_OUTPUT_FILES})
         endforeach()
     endif()
 
     if(USE_SLANG)
-      target_include_directories(${PROJECT_NAME} PRIVATE ${Slang_SDK}/include)
-      target_link_libraries(${PROJECT_NAME} PRIVATE ${Slang_LIBRARY})
+      target_include_directories(${EXECUTABLE_NAME} PRIVATE ${Slang_SDK}/include)
+      target_link_libraries(${EXECUTABLE_NAME} PRIVATE ${Slang_LIBRARY})
       if(ARGS_SHADER_SLANG) 
           foreach(SLANG_FILE ${ARGS_SHADER_SLANG})
               compile_slang_file(
                 SOURCE_FILE ${SLANG_FILE}
                 FLAGS -I${SAMPLES_ROOT_DIR} -I${NVPRO_CORE_DIR} ${ARGS_FLAGS}
                 )
-              target_sources(${PROJECT_NAME} PRIVATE ${SLANG_FILE})
+              target_sources(${EXECUTABLE_NAME} PRIVATE ${SLANG_FILE})
               source_group("Shaders" FILES ${SLANG_FILE})
           endforeach()
       endif()
@@ -219,20 +220,21 @@ function(create_sample  PROJECT_NAME)
 
     # target definitions for GLSL, HLSL and SLANG
     if(USE_GLSL)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=1 USE_HLSL=0 USE_SLANG=0)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="GLSL")
+      target_compile_definitions(${EXECUTABLE_NAME} PRIVATE USE_GLSL=1 USE_HLSL=0 USE_SLANG=0)
+      target_compile_definitions(${EXECUTABLE_NAME} PRIVATE SHADER_LANGUAGE_STR="GLSL")
     elseif(USE_HLSL)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=0 USE_HLSL=1 USE_SLANG=0)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="HLSL")
+      target_compile_definitions(${EXECUTABLE_NAME} PRIVATE USE_GLSL=0 USE_HLSL=1 USE_SLANG=0)
+      target_compile_definitions(${EXECUTABLE_NAME} PRIVATE SHADER_LANGUAGE_STR="HLSL")
     elseif(USE_SLANG)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLSL=0 USE_HLSL=0 USE_SLANG=1)
-      target_compile_definitions(${PROJECT_NAME} PRIVATE SHADER_LANGUAGE_STR="Slang")
+      target_compile_definitions(${EXECUTABLE_NAME} PRIVATE USE_GLSL=0 USE_HLSL=0 USE_SLANG=1)
+      target_compile_definitions(${EXECUTABLE_NAME} PRIVATE SHADER_LANGUAGE_STR="Slang")
     endif()
 
     # Copy binary
-    _finalize_target( ${PROJECT_NAME} )
+    _finalize_target( ${EXECUTABLE_NAME} )
 
 endfunction()
+
 
 
 # Sub examples

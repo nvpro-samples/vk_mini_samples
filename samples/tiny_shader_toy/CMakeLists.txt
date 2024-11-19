@@ -1,9 +1,9 @@
 
 set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 
-set(Project_Name tiny_shader_toy)
+set(PROJECT_NAME tiny_shader_toy)
 
-create_sample(${Project_Name}
+create_sample(${PROJECT_NAME}
   SOURCES 
     tiny_shader_toy.cpp 
   SHADER_SOURCES 
@@ -29,8 +29,9 @@ install(DIRECTORY "shaders"
         # On Windows, linking release shaderc with a debug app produces linker errors.
 # So we use release shaderc_shared on Windows and release shaderc_combined on Linux.
 if(WIN32 AND USE_SLANG)
-  add_custom_command(TARGET ${Project_Name} POST_BUILD 
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${Slang_DLL} ${Slang_glslang_DLL} $<TARGET_FILE_DIR:${Project_Name}> VERBATIM
+    set(EXECUTABLE_NAME "vk_mini_${PROJECT_NAME}")
+  add_custom_command(TARGET ${EXECUTABLE_NAME} POST_BUILD 
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${Slang_DLL} ${Slang_glslang_DLL} $<TARGET_FILE_DIR:${EXECUTABLE_NAME}> VERBATIM
       )
   install(FILES ${Slang_DLL} ${Slang_glslang_DLL} DESTINATION bin_${ARCH}$<IF:$<CONFIG:Debug>,_debug,>)
 endif()

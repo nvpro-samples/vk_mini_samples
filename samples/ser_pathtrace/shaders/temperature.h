@@ -17,8 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef TEMPERATURE_GLSL
-#define TEMPERATURE_GLSL
+#ifndef TEMPERATURE_H
+#define TEMPERATURE_H
 
 // Utility for temperature and landscapeColor:
 // Smoothly transforms the range [low, high] to [0, 1], with 0 derivative at
@@ -48,4 +48,4 @@ vec3 temperature(float intensity)
   return color;
 }
 
-#endif  // !TEMPERATURE_GLSL
+#endif  // !TEMPERATURE_H
