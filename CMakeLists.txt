@@ -262,7 +262,7 @@ set(EXTRAFILES
   cmake/FindSlang.cmake
   samples/CMakeLists.txt
 )
-add_custom_target(Settings SOURCES ${EXTRAFILES})
-set_property(TARGET Settings PROPERTY FOLDER "_cmake")
+add_custom_target(vk_mini_samples_settings SOURCES ${EXTRAFILES})
+set_property(TARGET vk_mini_samples_settings PROPERTY FOLDER "_cmake")
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${EXTRAFILES})
 
