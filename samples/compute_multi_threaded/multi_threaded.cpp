@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,6 +31,8 @@ Note: The amount of compute frame it can do per display iteration depends on the
 
 #include <thread>
 #include <condition_variable>
+#include <iostream>
+
 
 #include "common/vk_context.hpp"                    // Our Vulkan context
 #include "nvvk/descriptorsets_vk.hpp"               // Descriptor set helper
@@ -64,7 +66,6 @@ const auto& comp_shd = std::vector<uint32_t>{std::begin(shaderSlang), std::end(s
 #else
 #include "_autogen/shader.comp.glsl.h"  // Generated compiled shader
 const auto& comp_shd = std::vector<uint32_t>{std::begin(shader_comp_glsl), std::end(shader_comp_glsl)};
-
 #endif
 
 template <typename T>  // Return memory usage size
