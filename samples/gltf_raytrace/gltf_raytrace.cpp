@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -219,7 +219,7 @@ public:
     m_pushConst.frame = m_frame;
 
     // Make sure buffer is ready to be used
-    memoryBarrier(cmd);
+    nvvk::memoryBarrier(cmd);
 
     // Ray trace
     const VkExtent2D& size = m_app->getViewportSize();
@@ -229,15 +229,21 @@ public:
     vkCmdDispatch(cmd, (size.width + (GROUP_SIZE - 1)) / GROUP_SIZE, (size.height + (GROUP_SIZE - 1)) / GROUP_SIZE, 1);
 
     // Making sure the rendered image is ready to be used by tonemapper
-    memoryBarrier(cmd);
+    nvvk::memoryBarrier(cmd);
 
     m_tonemapper->runCompute(cmd, size);
+  }
+
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
   }
 
 private:
   void createScene()
   {
-    std::string filename = getFilePath(g_sceneFilename, getMediaDirs());
+    std::string filename = nvvk::getFilePath(g_sceneFilename, nvvk::getMediaDirs());
     if(!m_scene->load(filename))  // Loading the scene
     {
       LOGE("Error loading scene: %s\n", filename.c_str());
@@ -435,16 +441,28 @@ private:
 ///
 auto main(int argc, char** argv) -> int
 {
+  VkContextSettings             vkSetup;
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addFilename(".gltf", &g_sceneFilename, "Input filename with extension");
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  cli.parse(argc, argv);
+
+
   // Extension feature needed.
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
 
   // Setting up how Vulkan context must be created
-  VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // required with VK_KHR_acceleration_structure
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature});
@@ -463,7 +481,7 @@ auto main(int argc, char** argv) -> int
   if(!vkContext->isValid())
     std::exit(0);
 
-  nvvkhl::ApplicationCreateInfo appInfo;
+  // Application information
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = false;
   appInfo.instance       = vkContext->getInstance();
@@ -471,16 +489,16 @@ auto main(int argc, char** argv) -> int
   appInfo.physicalDevice = vkContext->getPhysicalDevice();
   appInfo.queues         = vkContext->getQueueInfos();
 
+
   // Create the application
   auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  test->parameterLists().addFilename(".gltf|Scene to render", &g_sceneFilename);
+  // auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
+  // test->parameterLists().addFilename(".gltf|Scene to render", &g_sceneFilename);
 
 
   // Add all application elements
-  app->addElement(test);
   app->addElement(std::make_shared<nvvkhl::ElementCamera>());
   app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());  // Menu / Quit
   app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
@@ -489,5 +507,4 @@ auto main(int argc, char** argv) -> int
   app->run();
   app.reset();
   vkContext.reset();
-  return test->errorCode();
 }

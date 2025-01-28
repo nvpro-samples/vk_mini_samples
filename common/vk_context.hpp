@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,6 +31,7 @@
 #include "nvh/timesampler.hpp"
 #include "nvvk/error_vk.hpp"
 #include "nvvkhl/application.hpp"  // For QueueInfo
+#include "nvvkhl/app_utils.hpp"
 
 //--------------------------------------------------------------------------------------------------
 // CATCHING VULKAN ERRORS
@@ -46,7 +47,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
   nvprintfLevel(level, "%s\n", callbackData->pMessage);
   for(uint32_t count = 0; count < callbackData->objectCount; count++)
   {
-    LOGI("Object[%d] \n\t- Type %s\n\t- Value %p\n\t- Name %s\n", count,
+    LOGI("Object[%d] \n\t- Type %s\n\t- Value %lu\n\t- Name %s\n", count,
          string_VkObjectType(callbackData->pObjects[count].objectType), callbackData->pObjects[count].objectHandle,
          callbackData->pObjects[count].pObjectName);
   }
@@ -71,7 +72,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VkContextDebugReport(VkDebugUtilsMessageSe
 //  uint32_t queueIndex  = ~0U;
 //  VkQueue  queue       = VK_NULL_HANDLE;
 //};
-using QueueInfo = nvvkhl::ApplicationQueue;
+using QueueInfo = nvvkhl::QueueInfo;
 
 // Struct to hold an extension and its corresponding feature
 struct ExtensionFeaturePair

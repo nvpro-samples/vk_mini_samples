@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //////////////////////////////////////////////////////////////////////////
@@ -59,6 +59,8 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 #endif  // USE_HLSL
+
+#include "common/utils.hpp"
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
@@ -199,6 +201,10 @@ public:
     finfo.proj[1][1] *= -1;
     finfo.camPos = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+
+    // Barrier to make sure the information is transferred
+    nvvk::memoryBarrier(cmd);
+
 
     // Drawing the primitives in G-Buffer 0
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(0)},
@@ -504,6 +510,12 @@ private:
     m_gBuffers.reset();
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
+
 
   //--------------------------------------------------------------------------------------------------
   //
@@ -551,13 +563,22 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
   // #SHADER_OBJECT
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-
+  // Context setup
   VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
 
   // Create Vulkan context
@@ -568,16 +589,16 @@ int main(int argc, char** argv)
   // Loading the Vulkan extension pointers
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
 
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = true;
-  appSetup.instance       = vkContext->getInstance();
-  appSetup.device         = vkContext->getDevice();
-  appSetup.physicalDevice = vkContext->getPhysicalDevice();
-  appSetup.queues         = vkContext->getQueueInfos();
+  // Application information
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   if(shaderObjFeature.shaderObject == VK_FALSE)
   {

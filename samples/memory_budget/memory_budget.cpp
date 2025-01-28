@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -55,6 +55,7 @@
 #include "nvvkhl/gbuffer.hpp"
 
 #include "common/vk_context.hpp"
+#include "common/utils.hpp"
 
 namespace DH {
 using namespace glm;
@@ -354,6 +355,8 @@ public:
     finfo.proj[1][1] *= -1;
     finfo.camPos = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    nvvk::memoryBarrier(cmd);
+
 
     // Drawing the primitives in G-Buffer 0
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(0)},
@@ -413,7 +416,7 @@ private:
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = getMemoryBudget();
     int numObj = static_cast<int>(budget.heapBudget[0] / SIZE_OF_MESH);  // Number of possible objects
     numObj     = (numObj * 65) / 100;                                    // 65% of the budget
-    if(g_benchmark->config().testEnabled)
+    if(m_app->isHeadless())
       numObj = 2;  // Only 2 objects for when test are enabled
     numObj = std::min(numObj, static_cast<int>(m_nodes.size()));
 
@@ -669,6 +672,11 @@ private:
     m_gBuffers.reset();
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
 
   //--------------------------------------------------------------------------------------------------
   //
@@ -713,13 +721,23 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  cli.parse(argc, argv);
+
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
 
   // Vulkan creation context information
   VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   // #MEMORY_BUDGET
   vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
   vkSetup.deviceExtensions.push_back({VK_EXT_MEMORY_BUDGET_EXTENSION_NAME});
@@ -733,16 +751,15 @@ int main(int argc, char** argv)
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
   // Application setup information
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = true;
-  appSetup.instance       = vkContext.getInstance();
-  appSetup.device         = vkContext.getDevice();
-  appSetup.physicalDevice = vkContext.getPhysicalDevice();
-  appSetup.queues         = vkContext.getQueueInfos();
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   if(shaderObjFeature.shaderObject == VK_FALSE)
   {

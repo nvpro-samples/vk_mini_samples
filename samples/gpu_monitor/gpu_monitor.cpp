@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,12 +52,12 @@ int main(int argc, char** argv)
   appSetup.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appSetup.vSync                 = true;
   appSetup.hasUndockableViewport = false;
-  appSetup.width                 = 750;
-  appSetup.height                = 400;
+  appSetup.windowSize            = {750, 400};
   appSetup.instance              = vkContext.getInstance();
   appSetup.device                = vkContext.getDevice();
   appSetup.physicalDevice        = vkContext.getPhysicalDevice();
   appSetup.queues                = vkContext.getQueueInfos();
+  //appSetup.imguiConfigFlags      = ;
 
   // Setting up the layout of the application. Docking the NVML monitor in the center
   appSetup.dockSetup = [](ImGuiID viewportID) { ImGui::DockBuilderDockWindow("NVML Monitor", viewportID); };

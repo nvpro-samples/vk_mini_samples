@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -64,6 +64,7 @@
 #include "nvvk/renderpasses_vk.hpp"
 
 #include "common/vk_context.hpp"
+#include "common/utils.hpp"
 #include "nvvk/extensions_vk.hpp"
 
 #if USE_HLSL
@@ -122,10 +123,7 @@ struct TextureKtx
 
   ~TextureKtx()
   {  // Destroying in next frame, avoid deleting while using
-    nvvkhl::Application::submitResourceFree([tex = m_texture, a = m_alloc]() {
-      auto t = tex;
-      a->destroy(t);
-    });
+    m_alloc->destroy(m_texture);
   }
 
   // Create the image, the sampler and the image view + generate the mipmap level for all
@@ -335,6 +333,9 @@ public:
     finfo.proj[1][1] *= -1;
     finfo.camPos = CameraManip.getEye();
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    // Barrier to make sure the information is transfered
+    nvvk::memoryBarrier(cmd);
+
 
     renderScene(cmd);  // Render to GBuffer-1
     renderPost(cmd);   // Use GBuffer-1 and render to GBuffer-0
@@ -527,6 +528,12 @@ private:
     m_tonemapper.reset();
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
+
   //--------------------------------------------------------------------------------------------------
   //
   //
@@ -578,11 +585,21 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
+
   // Setting up what's needed for the Vulkan context creation
   VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
   // Create the Vulkan context
@@ -592,16 +609,15 @@ int main(int argc, char** argv)
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
   // How we want the application
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = true;
-  appSetup.instance       = vkContext.getInstance();
-  appSetup.device         = vkContext.getDevice();
-  appSetup.physicalDevice = vkContext.getPhysicalDevice();
-  appSetup.queues         = vkContext.getQueueInfos();
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);

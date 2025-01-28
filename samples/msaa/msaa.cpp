@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -69,6 +69,7 @@ const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::
 #endif  // USE_HLSL
 
 #include <GLFW/glfw3.h>
+#include "common/utils.hpp"
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -218,6 +219,8 @@ public:
     finfo.proj[1][1] *= -1;
     finfo.camPos = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    nvvk::memoryBarrier(cmd);
+
 
     // #MSAA
     if((m_msaaSamples & VK_SAMPLE_COUNT_1_BIT) == VK_SAMPLE_COUNT_1_BIT)
@@ -463,11 +466,17 @@ private:
     vkDestroyImageView(m_device, m_msaaDepthIView, nullptr);
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
+
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*             m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
+  nvvkhl::Application*                        m_app{nullptr};
+  std::unique_ptr<nvvk::DebugUtil>            m_dutil;
   std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
 
   // #MSAA
@@ -515,6 +524,12 @@ private:
 ///
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
   VkContextSettings vkSetup;
   nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -528,16 +543,15 @@ int main(int argc, char** argv)
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
   // Application setup
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = true;
-  appSetup.instance       = vkContext.getInstance();
-  appSetup.device         = vkContext.getDevice();
-  appSetup.physicalDevice = vkContext.getPhysicalDevice();
-  appSetup.queues         = vkContext.getQueueInfos();
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   // Create the test framework
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);

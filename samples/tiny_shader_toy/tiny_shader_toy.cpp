@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -445,8 +445,8 @@ private:
     if(vert_result.GetNumErrors() == 0 && frag_result.GetNumErrors() == 0 && frag_result_a.GetNumErrors() == 0)
     {
       // Deleting resources, but not immediately as they are still in used
-      nvvkhl::Application::submitResourceFree([vmod = m_vmodule, fmod_i = m_fmodule, fmod_a = m_fmoduleA,
-                                               device = m_device, gp = m_pipelineImg, gp_a = m_pipelineBufA]() {
+      m_app->submitResourceFree([vmod = m_vmodule, fmod_i = m_fmodule, fmod_a = m_fmoduleA, device = m_device,
+                                 gp = m_pipelineImg, gp_a = m_pipelineBufA]() {
         vkDestroyShaderModule(device, vmod, nullptr);
         vkDestroyShaderModule(device, fmod_i, nullptr);
         vkDestroyShaderModule(device, fmod_a, nullptr);
@@ -622,6 +622,12 @@ private:
     vkDestroyShaderModule(m_device, m_fmoduleA, nullptr);
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
+
   //--------------------------------------------------------------------------------------------------
   nvvkhl::Application* m_app{nullptr};
 
@@ -658,10 +664,20 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  cli.parse(argc, argv);
+
   VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
   // Vulkan context creation
@@ -673,16 +689,15 @@ int main(int argc, char** argv)
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
 
 
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = true;
-  appSetup.instance       = vkContext->getInstance();
-  appSetup.device         = vkContext->getDevice();
-  appSetup.physicalDevice = vkContext->getPhysicalDevice();
-  appSetup.queues         = vkContext->getQueueInfos();
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
   app->addElement(test);

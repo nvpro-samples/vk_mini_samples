@@ -20,10 +20,10 @@ create_sample(${PROJECT_NAME}
 # Install - copying the media directory
 install(DIRECTORY "shaders" 
         CONFIGURATIONS Release 
-        DESTINATION "bin_${ARCH}/tiny_shader_toy")
+        DESTINATION "bin_${ARCH}/vk_mini_${PROJECT_NAME}")
 install(DIRECTORY "shaders" 
         CONFIGURATIONS Debug 
-        DESTINATION "bin_${ARCH}_debug/tiny_shader_toy")
+        DESTINATION "bin_${ARCH}_debug/vk_mini_${PROJECT_NAME}")
 
 
         # On Windows, linking release shaderc with a debug app produces linker errors.

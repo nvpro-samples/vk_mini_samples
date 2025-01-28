@@ -8,6 +8,7 @@ from typing import List, Tuple, Optional
 from enum import Enum, auto
 import logging
 
+
 class ShaderLanguage(Enum):
     GLSL = "GLSL"
     HLSL = "HLSL"
@@ -16,11 +17,13 @@ class ShaderLanguage(Enum):
     def __str__(self):
         return self.value
 
+
 class ReturnCode(Enum):
     SUCCESS = 0
     BUILD_ERROR = 1
     TEST_ERROR = 2
     ENVIRONMENT_ERROR = 3
+
 
 # Constants
 BUILD_DIR = Path("build")
@@ -29,9 +32,40 @@ BUILD_COMMANDS = ["cmake", "--build", ".", "--config", "Release", "--parallel"]
 TEST_ARGUMENTS = ["-test-frames", "10"]
 NAMES_TO_AVOID = ["gpu_monitor", "offscreen"]
 
+
+# Define the executables and their arguments explicitly
+EXECUTABLES_WITH_ARGS = [
+    ("vk_mini_barycentric_wireframe", ["--headless"]),
+    ("vk_mini_compute_multi_threaded", ["--headless"]),
+    ("vk_mini_compute_only", ["--headless"]),
+    ("vk_mini_gltf_raytrace", ["--headless", "--frames", "100"]),
+    ("vk_mini_image_ktx", ["--headless"]),
+    ("vk_mini_image_viewer", ["--headless"]),
+    ("vk_mini_line_stipple", ["--headless"]),
+    ("vk_mini_memory_budget", ["--headless", "--frames", "1000"]),
+    ("vk_mini_mm_opacity", ["--headless"]),
+    ("vk_mini_msaa", ["--headless"]),
+    ("vk_mini_offscreen", ["--size", "480", "360"]),
+    ("vk_mini_ray_query", ["--headless", "--frames", "100"]),
+    ("vk_mini_ray_query_position_fetch", ["--headless"]),
+    ("vk_mini_realtime_analysis",["--headless", "--frames", "100", "--winSize", "800", "600"],),
+    ("vk_mini_rectangle", ["--headless"]),
+    ("vk_mini_ser_pathtrace", ["--headless", "--frames", "100"]),
+    ("vk_mini_shader_object", ["--headless"]),
+    ("vk_mini_shader_printf", ["--headless"]),
+    ("vk_mini_simple_polygons", ["--headless"]),
+    ("vk_mini_solid_color", ["--headless"]),
+    ("vk_mini_texture_3d", ["--headless"]),
+    ("vk_mini_tiny_shader_toy", ["--headless"]),
+]
+
+
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
 
 def header(name: str) -> None:
     """Print a header with a given name."""
@@ -39,19 +73,23 @@ def header(name: str) -> None:
     logger.info(f"  {name}")
     logger.info("*" * 75)
 
+
 def create_directory_if_not_exists(directory: Path) -> None:
     """Create a directory if it does not exist."""
     directory.mkdir(parents=True, exist_ok=True)
 
-def run_command(commands: List[str]) -> None:
+
+def run_command(commands: List[str]) -> int:
     """Run a command and handle potential errors."""
     logger.info(f"Running command: {' '.join(commands)}")
     try:
-        subprocess.run(commands, check=True, text=True, capture_output=True)
+        result = subprocess.run(commands, check=True, text=True, capture_output=True)
+        return result.returncode
     except subprocess.CalledProcessError as e:
         logger.error(f"Error occurred while running command: {e}")
         logger.error(f"Command output:\n{e.stdout}\n{e.stderr}")
-        raise
+        return e.returncode
+
 
 def simple_progress(iterable, desc: str):
     """A simple progress indicator using only standard libraries."""
@@ -62,6 +100,7 @@ def simple_progress(iterable, desc: str):
         sys.stdout.flush()
     sys.stdout.write("\n")
     sys.stdout.flush()
+
 
 def build(shader_language: ShaderLanguage) -> ReturnCode:
     """Build the project with the specified shader language."""
@@ -96,16 +135,26 @@ def build(shader_language: ShaderLanguage) -> ReturnCode:
         logger.error(f"Build failed: {e}")
         return ReturnCode.BUILD_ERROR
 
+
 def extract_testing_time(log_file: Path) -> str:
-    """Extract testing time from the log file."""
+    """Extract testing time from the last line of the log file."""
     if log_file.exists():
         content = log_file.read_text()
-        for line in content.splitlines():
-            if "Testing Time" in line:
-                return line.split(":")[1].strip()
+        lines = content.splitlines()
+        if lines:
+            last_line = lines[-1].strip()
+            if "ms" in last_line:
+                try:
+                    # Extract the value before 'ms'
+                    return last_line.split()[1] + " ms"
+                except IndexError:
+                    pass
     return "N/A"
 
-def test(shader_language: ShaderLanguage) -> Tuple[List[Tuple[str, int, str]], ReturnCode]:
+
+def test(
+    shader_language: ShaderLanguage,
+) -> Tuple[List[Tuple[str, int, str]], ReturnCode]:
     """Run tests on the built executables."""
     logger.info(f"Executing test function with shader language: {shader_language.name}")
     test_dir = INSTALL_DIR / "bin_x64"
@@ -118,58 +167,67 @@ def test(shader_language: ShaderLanguage) -> Tuple[List[Tuple[str, int, str]], R
     os.chdir(test_dir)
 
     try:
-        executables = [f for f in Path('.').iterdir() if f.is_file() and (f.suffix == ".exe" or f.name.endswith("_app"))]
         test_results = []
         overall_result = ReturnCode.SUCCESS
 
-        for executable in simple_progress(executables, "Running tests"):
-            if not any(name in executable.name for name in NAMES_TO_AVOID):
-                log_file = f"log_{executable.stem}_{shader_language.name}.txt"
-                image_file = f"snap_{executable.stem}_{shader_language.name}.jpg"
+        for executable, args in EXECUTABLES_WITH_ARGS:
+            try:
+                header(
+                    f"Testing '{executable}' with shader language: {shader_language.name}"
+                )
+                return_code = run_command([executable] + args)
+                log_file = f"log_{executable}.txt"
+                testing_time = extract_testing_time(Path(log_file))
 
-                args = [
-                    str(executable),
-                    "-test",
-                    *TEST_ARGUMENTS,
-                    "-screenshot", image_file,
-                    "-logfile", log_file,
-                ]
-
-                try:
-                    header(f"Testing '{executable.name}' with shader language: {shader_language.name}")
-                    run_command(args)
-                    testing_time = extract_testing_time(Path(log_file))
-                    test_results.append((executable.name, ReturnCode.SUCCESS.value, testing_time))
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"Error occurred while testing: {e}")
-                    returncode = ReturnCode.TEST_ERROR.value
-                    test_results.append((executable.name, returncode, "N/A"))
+                result = ReturnCode.SUCCESS
+                if return_code != 0:
+                    result = ReturnCode.TEST_ERROR
                     overall_result = ReturnCode.TEST_ERROR
 
-                    # Ignore errors from ray_query_position_fetch in CI
-                    if (
-                        ("CI" in os.environ)
-                        and ("ray_query_position_fetch" in executable.name)
-                        and datetime.datetime.now().date() < datetime.date(year=2024, month=2, day=1)
-                    ):
-                        logger.warning("Ignored error for ray_query_position_fetch in CI environment")
-                        test_results[-1] = (executable.name, ReturnCode.SUCCESS.value, "N/A")
+                test_results.append((executable, result.value, testing_time))
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error occurred while testing: {e}")
+                returncode = ReturnCode.TEST_ERROR.value
+                test_results.append((executable, returncode, "N/A"))
+                overall_result = ReturnCode.TEST_ERROR
+
+                # Ignore errors from ray_query_position_fetch in CI
+                if (
+                    ("CI" in os.environ)
+                    and ("ray_query_position_fetch" in executable)
+                    and datetime.datetime.now().date()
+                    < datetime.date(year=2024, month=2, day=1)
+                ):
+                    logger.warning(
+                        "Ignored error for ray_query_position_fetch in CI environment"
+                    )
+                    test_results[-1] = (executable, ReturnCode.SUCCESS.value, "N/A")
 
         return test_results, overall_result
     finally:
         os.chdir(current_dir)
 
-def final_report(shader_language: ShaderLanguage, test_results: List[Tuple[str, int, str]]) -> None:
+
+def final_report(
+    shader_language: ShaderLanguage, test_results: List[Tuple[str, int, str]]
+) -> None:
     logger.info(f"\nFinal Report for {shader_language.name}:")
-    logger.info("-" * 60)
-    logger.info("{:<30} | {:<12} | {:<8}".format("Executable", "Return Code", "Time"))
-    logger.info("-" * 60)
+    logger.info("-" * 80)
+    logger.info("{:<35} | {:<12} | {:<8}".format("Executable", "Return Code", "Time"))
+    logger.info("-" * 80)
     for executable, return_code, testing_time in test_results:
-        logger.info("{:<30} | {:<12} | {:<8}".format(executable, ReturnCode(return_code).name, testing_time))
-    logger.info("-" * 60)
+        logger.info(
+            "{:<35} | {:<12} | {:<8}".format(
+                executable, ReturnCode(return_code).name, testing_time
+            )
+        )
+    logger.info("-" * 80)
+
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build and test the project with different shader languages.")
+    parser = argparse.ArgumentParser(
+        description="Build and test the project with different shader languages."
+    )
     parser.add_argument("--test", action="store_true", help="Execute test function")
     parser.add_argument(
         "--build",
@@ -179,11 +237,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     args = parser.parse_args()
-    
+
     if args.build is None and not args.test:
         parser.error("At least one of --build or --test must be specified")
-    
+
     return args
+
 
 def main() -> ReturnCode:
     args = parse_args()
@@ -206,6 +265,7 @@ def main() -> ReturnCode:
 
     return overall_result
 
+
 if __name__ == "__main__":
     try:
         result = main()
@@ -213,4 +273,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")
         sys.exit(ReturnCode.ENVIRONMENT_ERROR.value)
-        

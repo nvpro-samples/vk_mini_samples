@@ -295,6 +295,12 @@ public:
     NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), 1, shaderCreateInfos.data(), NULL, m_shaders.data()));
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
+
 private:
   nvvkhl::Application*                          m_app = {nullptr};
   std::unique_ptr<nvvk::ResourceAllocatorDma>   m_alloc{};
@@ -314,6 +320,14 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  cli.parse(argc, argv);
+
+
 #ifdef NVP_SUPPORTS_NVAPI
   NVAPIManager nvapiManager;
   nvapiManager.init();
@@ -328,9 +342,12 @@ int main(int argc, char** argv)
   // Required extra extensions
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
   VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
   vkSetup.queues.push_back(VK_QUEUE_COMPUTE_BIT);  // Adding an extra compute queue
@@ -342,23 +359,22 @@ int main(int argc, char** argv)
   // Loading the Vulkan extension pointers
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
 
+  // Application settup
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.useMenu        = SHOW_MENU ? true : false;
+  appInfo.windowSize     = {g_defaultWindowSize.width, g_defaultWindowSize.height};
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.useMenu        = SHOW_MENU ? true : false;
-  appSetup.width          = g_defaultWindowSize.width;
-  appSetup.height         = g_defaultWindowSize.height;
-  appSetup.instance       = vkContext->getInstance();
-  appSetup.device         = vkContext->getDevice();
-  appSetup.physicalDevice = vkContext->getPhysicalDevice();
-  appSetup.queues         = vkContext->getQueueInfos();
-
-  auto app  = std::make_unique<nvvkhl::Application>(appSetup);                   // Create the application
+  auto app  = std::make_unique<nvvkhl::Application>(appInfo);                    // Create the application
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);  // Create the test framework
   app->addElement(test);                                                         // Add the test element (--test ...)
   app->addElement(std::make_shared<MultiThreadedSample>());                      // Add our sample to the application
 
-  glfwSetWindowAttrib(app->getWindowHandle(), GLFW_RESIZABLE, GLFW_FALSE);
+  if(!appInfo.headless)
+    glfwSetWindowAttrib(app->getWindowHandle(), GLFW_RESIZABLE, GLFW_FALSE);
 
 
   app->run();  // Loop infinitely, and call IAppElement virtual functions at each frame

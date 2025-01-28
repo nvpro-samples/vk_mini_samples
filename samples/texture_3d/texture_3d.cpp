@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -75,6 +75,7 @@ const auto& comp_shd = std::vector<uint32_t>{std::begin(perlin_comp_glsl), std::
 
 #include "imgui/imgui_helper.h"
 #include "imgui/imgui_camera_widget.h"
+#include "common/utils.hpp"
 
 
 class Texture3dSample : public nvvkhl::IAppElement
@@ -152,8 +153,7 @@ public:
     PE::entry("Color", [&] { return ImGui::ColorEdit3("##1", &m_settings.surfaceColor.x); });
     redoTexture |= PE::entry("Filter Mode", [&] { return ImGui::Combo("##6", (int*)&s.magFilter, "Nearest\0Linear\0"); });
     redoTexture |= PE::entry("Address Mode", [&] {
-      return ImGui::Combo("##6", (int*)&s.addressMode,
-                          "Repeat\0Mirror Repeat\0Clamp to Edge\0Clamp to Border\0Mirror Clamp to Edge\0");
+      return ImGui::Combo("##6", (int*)&s.addressMode, "Repeat\0Mirror Repeat\0Clamp to Edge\0Clamp to Border\0Mirror Clamp to Edge\0");
     });
     PE::entry("Head light", [&] { return ImGui::Checkbox("##1", (bool*)&m_settings.headlight); });
     ImGui::BeginDisabled(m_settings.headlight);
@@ -176,8 +176,7 @@ public:
         [&] { return ImGui::SliderFloat("##2", &s.perlin.frequency, 0.1F, 5.F, "%.3f", ImGuiSliderFlags_Logarithmic); },
         "Number of time the noise is sampled in the domain.");
     m_dirty |= PE::entry(
-        "Gpu Creation", [&] { return ImGui::Checkbox("##4", &s.useGpu); },
-        "Use compute shader to generate the texture data");
+        "Gpu Creation", [&] { return ImGui::Checkbox("##4", &s.useGpu); }, "Use compute shader to generate the texture data");
     PE::end();
     /// ----
     ImGui::Text("Ray Marching");
@@ -304,6 +303,7 @@ public:
     finfo.headlight = m_settings.headlight;
     finfo.toLight   = m_settings.toLight;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    nvvk::memoryBarrier(cmd);
 
     // Drawing the primitives in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -587,6 +587,11 @@ private:
 #endif
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
 
 private:
   // Local data
@@ -621,12 +626,22 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
   VkContextSettings vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-      .deviceExtensions   = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
       .queues             = {VK_QUEUE_GRAPHICS_BIT},
   };
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  }
 
   // Vulkan context creation
   auto vkContext = std::make_unique<VulkanContext>(vkSetup);
@@ -636,16 +651,15 @@ int main(int argc, char** argv)
   // Loading function pointers
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
 
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = true;
-  appSetup.instance       = vkContext->getInstance();
-  appSetup.device         = vkContext->getDevice();
-  appSetup.physicalDevice = vkContext->getPhysicalDevice();
-  appSetup.queues         = vkContext->getQueueInfos();
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = true;
+  appInfo.instance       = vkContext->getInstance();
+  appInfo.device         = vkContext->getDevice();
+  appInfo.physicalDevice = vkContext->getPhysicalDevice();
+  appInfo.queues         = vkContext->getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   // Create this example
   auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);

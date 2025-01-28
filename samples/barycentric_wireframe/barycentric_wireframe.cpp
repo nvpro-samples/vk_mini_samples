@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //////////////////////////////////////////////////////////////////////////
@@ -59,6 +59,7 @@
 #include "nvvkhl/gbuffer.hpp"
 #include "nvvkhl/pipeline_container.hpp"
 
+#include "common/utils.hpp"
 
 namespace DH {
 using namespace glm;
@@ -132,7 +133,7 @@ public:
     destroyResources();
   }
 
-  void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize) override { createGbuffers(viewportSize); }
 
   void onUIRender() override
   {
@@ -207,7 +208,12 @@ public:
     finfo.camPos = eye;
     vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
 
+    // Update the sample settings
     vkCmdUpdateBuffer(cmd, m_bSettings.buffer, 0, sizeof(DH::WireframeSettings), &m_settings);
+
+    // Making sure the information is transfered
+    nvvk::memoryBarrier(cmd);
+
 
     // Drawing the primitives in a G-Buffer
     nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
@@ -373,6 +379,11 @@ private:
     m_gBuffers.reset();
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
 
   //--------------------------------------------------------------------------------------------------
   //
@@ -422,14 +433,23 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
   // Extension feature needed.
   VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
 
   // Setting up how Vulkan context must be created
   VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, &baryFeature});
 
   // Create the Vulkan context
@@ -438,7 +458,6 @@ int main(int argc, char** argv)
   if(!vkContext->isValid())
     std::exit(0);
 
-  nvvkhl::ApplicationCreateInfo appInfo;
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
   appInfo.instance       = vkContext->getInstance();

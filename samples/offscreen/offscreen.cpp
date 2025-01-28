@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -61,6 +61,7 @@ const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std
 #include "_autogen/raster.frag.glsl.h"
 #include "_autogen/raster.vert.glsl.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
+#include "nvh/fileoperations.hpp"
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 #endif  // USE_HLSL
 
@@ -259,13 +260,12 @@ int main(int argc, char** argv)
   nvprintSetLogFileName(logfile.c_str());
 
   float       anim_time{0.0F};
-  VkExtent2D  render_size{800, 600};
-  std::string output_file{"result.jpg"};
+  glm::uvec2  render_size{800, 600};
+  std::string output_file = nvh::getExecutablePath().replace_extension("jpg").string();
 
   nvh::CommandLineParser parser("Offline Render");
   parser.addArgument({"-t", "--time"}, &anim_time, "Animation time");
-  parser.addArgument({"-w", "--width"}, &render_size.width, "Render size width");
-  parser.addArgument({"-h", "--height"}, &render_size.height, "Render size height");
+  parser.addArgument({"-s", "--size"}, &render_size, "Render size width");
   parser.addArgument({"-o", "--output"}, &output_file, "Output filename (must end with .jpg)");
   if(!parser.parse(argc, argv))
   {
@@ -280,9 +280,9 @@ int main(int argc, char** argv)
   auto app = std::make_unique<nvvkhl::OfflineRender>(vkContext->getInstance(), vkContext->getDevice(),
                                                      vkContext->getPhysicalDevice(), vkContext->getQueueInfo(0).familyIndex);
 
-  app->createFramebuffer(render_size);  // Framebuffer where it will render
-  app->createPipeline();                // How the quad will be rendered: shaders and more
-  app->offlineRender(anim_time);        // Rendering
+  app->createFramebuffer({render_size.x, render_size.y});  // Framebuffer where it will render
+  app->createPipeline();                                   // How the quad will be rendered: shaders and more
+  app->offlineRender(anim_time);                           // Rendering
 
   app->saveImage(output_file);  // Saving rendered image
 

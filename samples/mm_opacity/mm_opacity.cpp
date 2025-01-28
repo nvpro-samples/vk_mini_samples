@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -74,6 +74,7 @@ using namespace glm;
 
 #include "mm_process.hpp"
 #include "common/bird_curve_helper.hpp"
+#include "common/utils.hpp"
 
 //#undef USE_HLSL
 
@@ -258,7 +259,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer image
-      ImGui::Image(m_gBuffer->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -285,6 +286,9 @@ public:
 
     // Update the sky
     vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(nvvkhl_shaders::SimpleSkyParameters), &m_skyParams);
+
+    nvvk::memoryBarrier(cmd);
+
 
     // Ray trace
     std::vector<VkDescriptorSet> desc_sets{m_rtSet->getSet()};
@@ -330,9 +334,9 @@ private:
   {
     // Rendering image targets
     m_viewSize = size;
-    m_gBuffer  = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
-                                                  VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
-                                                  m_colorFormat, m_depthFormat);
+    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
+                                                   VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
+                                                   m_colorFormat, m_depthFormat);
   }
 
   // Create all Vulkan buffer data
@@ -682,7 +686,7 @@ private:
     VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     desc_as_info.accelerationStructureCount = 1;
     desc_as_info.pAccelerationStructures    = &tlas;
-    const VkDescriptorImageInfo  image_info{{}, m_gBuffer->getColorImageView(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo  image_info{{}, m_gBuffers->getColorImageView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo mat_desc{m_bMaterials.buffer, 0, VK_WHOLE_SIZE};
@@ -746,7 +750,7 @@ private:
     m_alloc->destroy(m_bSkyParams);
 
     m_rtSet->deinit();
-    m_gBuffer.reset();
+    m_gBuffers.reset();
 
     m_rtPipe.destroy(m_device);
 
@@ -754,6 +758,11 @@ private:
     destroyAccelerationStructures();
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
 
   //--------------------------------------------------------------------------------------------------
   //
@@ -769,7 +778,8 @@ private:
   VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
   VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffer;                                      // G-Buffers: color + depth
+  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
+
   nvvkhl_shaders::SimpleSkyParameters m_skyParams{};
 
   // Resources
@@ -816,6 +826,12 @@ private:
 ///
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
   // #MICROMAP
   ValidationSettings vvl{
       .unique_handles = false,  // This is required for the validation layers to work properly
@@ -829,9 +845,12 @@ int main(int argc, char** argv)
   // Setting how we want Vulkan context to be created
   VkContextSettings vkSetup;
   vkSetup.instanceCreateInfoExt = vvl.buildPNextChain();
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accel_feature});  // To build acceleration structures
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rt_pipeline_feature});  // To use vkCmdTraceRaysKHR
@@ -858,16 +877,16 @@ int main(int argc, char** argv)
     std::exit(0);
   load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
 
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appSetup.vSync          = false;
-  appSetup.instance       = vkContext.getInstance();
-  appSetup.device         = vkContext.getDevice();
-  appSetup.physicalDevice = vkContext.getPhysicalDevice();
-  appSetup.queues         = vkContext.getQueueInfos();
+  // Setting up the application
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync          = false;
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  auto app = std::make_unique<nvvkhl::Application>(appInfo);
 
   // #MICROMAP
   if(mm_opacity_features.micromap == VK_FALSE)

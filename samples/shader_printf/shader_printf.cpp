@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -290,6 +290,12 @@ private:
     m_gBuffers.reset();
   }
 
+  void onLastHeadlessFrame() override
+  {
+    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+                           nvh::getExecutablePath().replace_extension(".jpg").string());
+  }
+
   nvvkhl::Application* m_app{nullptr};
 
   std::unique_ptr<nvvkhl::GBuffer>  m_gBuffers;
@@ -315,6 +321,12 @@ private:
 
 int main(int argc, char** argv)
 {
+  nvvkhl::ApplicationCreateInfo appInfo;
+
+  nvh::CommandLineParser cli(PROJECT_NAME);
+  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  cli.parse(argc, argv);
+
   // #debug_printf : reroute the log to our nvvkhl::SampleAppLog class. The ElememtLogger will display it.
   nvprintSetCallback([](int level, const char* fmt) { g_logger.addLog(level, "%s", fmt); });
   g_logger.setLogLevel(LOGBITS_ALL);
@@ -330,10 +342,15 @@ int main(int argc, char** argv)
 
   VkContextSettings vkSetup{
       .instanceExtensions    = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-      .deviceExtensions      = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+      .deviceExtensions      = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
       .instanceCreateInfoExt = validationLayer.buildPNextChain(),
   };
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+  if(!appInfo.headless)
+  {
+    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
+  vkSetup.enableValidationLayers = true;  // Required for the debug_printf
 
   // Create the Vulkan context with the above settings
   auto vkContext = std::make_unique<VulkanContext>(vkSetup);
@@ -342,7 +359,6 @@ int main(int argc, char** argv)
   load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
 
   // Setting how we want the application
-  nvvkhl::ApplicationCreateInfo appInfo;
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
   appInfo.instance       = vkContext->getInstance();
@@ -367,7 +383,7 @@ int main(int argc, char** argv)
   auto dbgMessengerCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
                                  const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
     // Get rid of all the extra message we don't need
-    std::string cleanMsg = callbackData->pMessage;
+    std::string cleanMsg  = callbackData->pMessage;
     std::string delimiter = " | ";
     size_t      pos       = cleanMsg.rfind(delimiter);  // Remove everything before the last " | "
     if(pos != std::string::npos)

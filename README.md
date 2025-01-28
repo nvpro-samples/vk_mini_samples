@@ -192,6 +192,8 @@ This multi-language support strategy offers developers flexibility in shader aut
 - [User Guide](http://shader-slang.com/slang/user-guide/index.html)
 - [Documentation](https://github.com/shader-slang/slang/tree/master/docs)
 - [GLSL and SPIR-V Interoperability](https://shader-slang.com/slang/user-guide/a1-04-interop.html)
+- [Standard Library Reference](https://shader-slang.com/stdlib-reference/index.html)
+- [Language Specification](https://htmlpreview.github.io/?https://github.com/shader-slang/spec/blob/main/index.html#intro)
 
 #### SPIR-V Intrinsics
 - [GL_EXT_spirv_intrinsics](https://github.com/microsoft/DirectXShaderCompiler/wiki/GL_EXT_spirv_intrinsics-for-SPIR-V-code-gen)
@@ -202,5 +204,5 @@ This multi-language support strategy offers developers flexibility in shader aut
 
 ## LICENSE
 
-Copyright 2024 NVIDIA CORPORATION. Released under Apache License,
+Copyright 2024-2025 NVIDIA CORPORATION. Released under Apache License,
 Version 2.0. See "LICENSE" file for details.
