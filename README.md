@@ -55,7 +55,6 @@ For those new to this repository, the [solid color](samples/solid_color) and [re
 | [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] | [x] |
 | [line_stipple](samples/line_stipple) | Dashed line rendering with stipple pattern | ![](samples/line_stipple/docs/line_stipple_th.jpg) | [x] | [x] | [x] |
 | [memory_budget](samples/memory_budget) | Dynamic memory allocation within budget constraints | ![](samples/memory_budget/docs/mem_budget_th.jpg) | [x] | [x] | [x] |
-| [mm_displacement](samples/mm_displacement) | Micro-mesh displacement techniques  | ![](samples/mm_displacement/docs/micromesh_th.jpg) | [x] | [x] | [x] |
 | [mm_opacity](samples/mm_opacity) | Micromap opacity implementation  | ![](samples/mm_opacity/docs/opacity_th.jpg) | [x] | [x] | [x] |
 | [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing demonstration  | ![](samples/msaa/docs/msaa_th.jpg) | [x] | [x] | [x] |
 | [offscreen](samples/offscreen) | Windowless rendering with image save functionality.  | ![](samples/offscreen/docs/offline_th.jpg) | [x] | [x] | [x] |
