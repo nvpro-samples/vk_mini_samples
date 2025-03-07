@@ -516,7 +516,7 @@ private:
 
     // Deleting resources, but not immediately as they are still in used
     ResourceGroup resources{m_vmodule, m_fmodule, m_fmoduleA, m_device, m_pipelineImg, m_pipelineBufA};
-    nvvkhl::Application::submitResourceFree([resources = std::move(resources)]() {
+    m_app->submitResourceFree([resources = std::move(resources)]() {
       vkDestroyShaderModule(resources.device, resources.vmod, nullptr);
       vkDestroyShaderModule(resources.device, resources.fmod_i, nullptr);
       vkDestroyShaderModule(resources.device, resources.fmod_a, nullptr);

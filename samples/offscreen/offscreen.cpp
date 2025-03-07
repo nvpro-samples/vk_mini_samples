@@ -24,6 +24,7 @@
 
 #include <array>
 #include <memory>
+#include "nvh/fileoperations.hpp"
 
 #define VMA_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
