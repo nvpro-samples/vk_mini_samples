@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -197,6 +197,7 @@ bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micro
   VkMicromapBuildSizesInfoEXT size_info{VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT};
   VkMicromapBuildInfoEXT      build_info{VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT};
   build_info.mode             = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+  build_info.flags            = VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT;
   build_info.usageCountsCount = static_cast<uint32_t>(m_usages.size());
   build_info.pUsageCounts     = m_usages.data();
   build_info.type             = micromapType;  // Opacity

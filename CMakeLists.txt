@@ -33,7 +33,7 @@ endif()
 
 # Adding Slang
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-set(Slang_VERSION  "2024.11.1")
+set(Slang_VERSION  "2025.6.1")
 find_package(Slang)
 
 # Adding HLSL compiler function
