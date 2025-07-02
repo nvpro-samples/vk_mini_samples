@@ -25,60 +25,65 @@
 */
 //////////////////////////////////////////////////////////////////////////
 
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
+#define VMA_IMPLEMENTATION
+#define VMA_LEAK_LOG_FORMAT(format, ...)                                                                               \
+  {                                                                                                                    \
+    printf((format), __VA_ARGS__);                                                                                     \
+    printf("\n");                                                                                                      \
+  }
+
+
 #include <array>
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
 
-#include "imgui/imgui_camera_widget.h"
-#include "imgui/imgui_helper.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/sbtwrapper_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-#include "nvvkhl/tonemap_postprocess.hpp"
-#include "nvvkhl/shaders/dh_sky.h"
-#include "common/vk_context.hpp"
 
-#include "nvtx3/nvtx3.hpp"
-
-#include "shaders/dh_bindings.h"
-
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "shaders/dh_bindings.h"
+#include "shaders/shaderio.h"  // Shared between host and device
+}  // namespace shaderio
 
-#if USE_HLSL
-#include "_autogen/ray_query_computeMain.spirv.h"
-const auto& comp_shd = std::vector<char>{std::begin(ray_query_computeMain), std::end(ray_query_computeMain)};
-#elif USE_SLANG
-#include "_autogen/ray_query_slang.h"
-const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_querySlang), std::end(ray_querySlang)};
-#else
+
 #include "_autogen/ray_query.comp.glsl.h"
-const auto& comp_shd = std::vector<uint32_t>{std::begin(ray_query_comp_glsl), std::end(ray_query_comp_glsl)};
-#endif
+#include "_autogen/ray_query.slang.h"
+#include "_autogen/tonemapper.slang.h"
 
-#include "nvvk/specialization.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvk/acceleration_structures.hpp"
+#include <nvapp/application.hpp>
+#include <nvapp/elem_camera.hpp>
+#include <nvapp/elem_default_menu.hpp>
+#include <nvapp/elem_default_title.hpp>
+#include <nvgui/camera.hpp>
+#include <nvgui/property_editor.hpp>
+#include <nvgui/tonemapper.hpp>
+#include <nvshaders_host/tonemapper.hpp>
+#include <nvutils/camera_manipulator.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvutils/primitives.hpp>
+#include <nvvk/acceleration_structures.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/sbt_generator.hpp>
+#include <nvvk/specialization.hpp>
+#include <nvvk/staging.hpp>
+#include "common/utils.hpp"
 
-#define GROUP_SIZE 16  // Same group size as in compute shader
+
+std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
 
 
 /// </summary> Ray trace multiple primitives using Ray Query
-class RayQuery : public nvvkhl::IAppElement
+class RayQuery : public nvapp::IAppElement
 {
   enum
   {
@@ -90,38 +95,51 @@ public:
   RayQuery()           = default;
   ~RayQuery() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc      = std::make_unique<nvvk::ResourceAllocatorDma>(m_device, m_app->getPhysicalDevice());
-    m_rtSet      = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
-    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_device, m_alloc.get());
+    // Create the Vulkan allocator (VMA)
+    m_allocator.init({
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
+    });  // Allocator
+
+
+    // The texture sampler to use
+    m_samplerPool.init(m_device);
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer for the ray tracing and tonemapping
+    m_gBuffers.init({.allocator      = &m_allocator,
+                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT},
+                     .imageSampler   = linearSampler,
+                     .descriptorPool = m_app->getTextureDescriptorPool()});
+
+    // Tonemapper
+    {
+      auto code = std::span<const uint32_t>(tonemapper_slang);
+      m_tonemapper.init(&m_allocator, code);
+    }
 
     // Requesting ray tracing properties
     VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-    prop2.pNext = &m_rtProperties;
+    m_rtProperties.pNext = &m_asProperties;
+    prop2.pNext          = &m_rtProperties;
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
-
-    // Create utilities to create BLAS/TLAS and the Shading Binding Table (SBT)
-    int32_t gctQueueIndex = m_app->getQueue(0).familyIndex;
-    //m_rtBuilder.setup(m_device, m_alloc.get(), gctQueueIndex);
-    m_sbt.setup(m_device, gctQueueIndex, m_alloc.get(), m_rtProperties);
 
     // Create resources
     createScene();
     createVkBuffers();
     createBottomLevelAS();
     createTopLevelAS();
-#if USE_RTX
-    createRtxPipeline();
-#else
     createCompPipelines();
-#endif
-
-    m_tonemapper->createComputePipeline();
   }
 
   void onDetach() override
@@ -130,15 +148,9 @@ public:
     destroyResources();
   }
 
-  void onResize(uint32_t width, uint32_t height) override
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    // Create two G-Buffers: the tonemapped image and the original rendered image
-    std::vector<VkFormat> color_buffers = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT};  // tonemapped, original
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), VkExtent2D{width, height}, color_buffers);
-
-    // Update the tonemapper with the information of the new G-Buffers
-    m_tonemapper->updateComputeDescriptorSets(m_gBuffers->getDescriptorImageInfo(eImgRendered),
-                                              m_gBuffers->getDescriptorImageInfo(eImgTonemapped));
+    m_gBuffers.update(cmd, size);
     resetFrame();  // Reset frame to restart the rendering
   }
 
@@ -147,37 +159,32 @@ public:
     {  // Setting menu
       ImGui::Begin("Settings");
 
-      ImGuiH::CameraWidget();
+      nvgui::CameraWidget(g_cameraManip);
 
-      using namespace ImGuiH;
+      namespace PE = nvgui::PropertyEditor;
       bool changed{false};
       if(ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen))
       {
-        PropertyEditor::begin();
-        if(PropertyEditor::treeNode("Light"))
+        PE::begin();
+        if(PE::treeNode("Light"))
         {
-          changed |= PropertyEditor::entry("Position", [&] { return ImGui::DragFloat3("#1", &m_light.position.x); });
-
-          changed |= PropertyEditor::entry("Intensity", [&] {
-            return ImGui::SliderFloat("#1", &m_light.intensity, 0.0F, 1000.0F, "%.3f", ImGuiSliderFlags_Logarithmic);
-          });
-          changed |=
-              PropertyEditor::entry("Radius", [&] { return ImGui::SliderFloat("#1", &m_light.radius, 0.0F, 1.0F); });
-          PropertyEditor::treePop();
+          changed |= PE::DragFloat3("Position", &m_light.position.x);
+          changed |= PE::SliderFloat("Intensity", &m_light.intensity, 0.0F, 1000.0F, "%.3f", ImGuiSliderFlags_Logarithmic);
+          changed |= PE::SliderFloat("Radius", &m_light.radius, 0.0F, 1.0F);
+          PE::treePop();
         }
-        if(PropertyEditor::treeNode("Ray Tracer"))
+        if(PE::treeNode("Ray Tracer"))
         {
-          changed |= PropertyEditor::entry("Depth", [&] { return ImGui::SliderInt("#1", &m_pushConst.maxDepth, 0, 20); });
-          changed |=
-              PropertyEditor::entry("Samples", [&] { return ImGui::SliderInt("#1", &m_pushConst.maxSamples, 1, 10); });
-          PropertyEditor::treePop();
+          changed |= PE::SliderInt("Depth", &m_pushConst.maxDepth, 0, 20);
+          changed |= PE::SliderInt("Samples", &m_pushConst.maxSamples, 1, 10);
+          PE::treePop();
         }
-        PropertyEditor::end();
+        PE::end();
       }
 
       if(ImGui::CollapsingHeader("Tonemapper"))
       {
-        changed |= m_tonemapper->onUI();
+        nvgui::tonemapperWidget(m_tonemapperData);
       }
 
       ImGui::End();
@@ -190,27 +197,17 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer tonemapped image
-      ImGui::Image(m_gBuffers->getDescriptorSet(eImgTonemapped), ImGui::GetContentRegionAvail());
+      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(eImgTonemapped), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
     }
   }
 
-  void memoryBarrier(VkCommandBuffer cmd)
-  {
-    VkMemoryBarrier mb{
-        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
-    };
-    VkPipelineStageFlags srcDstStage{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-    vkCmdPipelineBarrier(cmd, srcDstStage, srcDstStage, 0, 1, &mb, 0, nullptr, 0, nullptr);
-  }
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto sdbg = m_dutil->DBG_SCOPE(cmd);
+    NVVK_DBG_SCOPE(cmd);
 
     if(!updateFrame())
     {
@@ -218,29 +215,30 @@ public:
     }
 
     // Update Camera uniform buffer
-    const auto& clip = CameraManip.getClipPlanes();
-    glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), CameraManip.getAspectRatio(), clip.x, clip.y);
-    proj[1][1] *= -1;
-    DH::CameraInfo finfo{.projInv = glm::inverse(proj), .viewInv = glm::inverse(CameraManip.getMatrix())};
-    vkCmdUpdateBuffer(cmd, m_bCameraInfo.buffer, 0, sizeof(DH::CameraInfo), &finfo);
+    shaderio::CameraInfo cameraInfo{.projInv = glm::inverse(g_cameraManip->getPerspectiveMatrix()),
+                                    .viewInv = glm::inverse(g_cameraManip->getViewMatrix())};
+    vkCmdUpdateBuffer(cmd, m_bCameraInfo.buffer, 0, sizeof(shaderio::CameraInfo), &cameraInfo);
 
     m_pushConst.frame = m_frame;
     m_pushConst.light = m_light;
 
     // Make sure buffer is ready to be used
-    memoryBarrier(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
 
     // Ray trace
     const VkExtent2D& size = m_app->getViewportSize();
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_rtPipe.plines[0]);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
     pushDescriptorSet(cmd);
-    vkCmdPushConstants(cmd, m_rtPipe.layout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
-    vkCmdDispatch(cmd, (size.width + (GROUP_SIZE - 1)) / GROUP_SIZE, (size.height + (GROUP_SIZE - 1)) / GROUP_SIZE, 1);
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant), &m_pushConst);
+    vkCmdDispatch(cmd, (size.width + (WORKGROUP_SIZE - 1)) / WORKGROUP_SIZE,
+                  (size.height + (WORKGROUP_SIZE - 1)) / WORKGROUP_SIZE, 1);
 
     // Making sure the rendered image is ready to be used by tonemapper
-    memoryBarrier(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
 
-    m_tonemapper->runCompute(cmd, size);
+    // Tonemap
+    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData, m_gBuffers.getDescriptorImageInfo(eImgRendered),
+                            m_gBuffers.getDescriptorImageInfo(eImgTonemapped));
   }
 
 private:
@@ -250,41 +248,42 @@ private:
     m_materials.push_back({{0.9622f, 0.928f, 0.9728f}, 0.0f, 0.09f, 1.0f});
     m_materials.push_back({{.7F, .7F, .7F}, 0.3f, 0.0f});
 
-    m_meshes.emplace_back(nvh::createCube(1, 1, 1));
-    m_meshes.emplace_back(nvh::createSphereUv(0.5f, 100, 100));
-    m_meshes.emplace_back(nvh::createPlane(10, 100, 100));
+    m_meshes.emplace_back(nvutils::createCube(1, 1, 1));
+    m_meshes.emplace_back(nvutils::createSphereUv(0.5f, 100, 100));
+    m_meshes.emplace_back(nvutils::createPlane(10, 100, 100));
 
     // Instance Cube
     {
-      auto& n       = m_nodes.emplace_back();
-      n.mesh        = 0;
-      n.material    = 0;
-      n.translation = {0.0f, 0.5f, 0.0F};
+      auto& node       = m_nodes.emplace_back();
+      node.mesh        = 0;
+      node.material    = 0;
+      node.translation = {0.0f, 0.5f, 0.0F};
     }
 
     // Instance Sphere
     {
-      auto& n       = m_nodes.emplace_back();
-      n.mesh        = 1;
-      n.material    = 1;
-      n.translation = {1.0f, 1.5f, 1.0F};
+      auto& node       = m_nodes.emplace_back();
+      node.mesh        = 1;
+      node.material    = 1;
+      node.translation = {1.0f, 1.5f, 1.0F};
     }
 
     // Adding a plane & material
     {
-      auto& n       = m_nodes.emplace_back();
-      n.mesh        = 2;
-      n.material    = 2;
-      n.translation = {0.0f, 0.0f, 0.0f};
+      auto& node       = m_nodes.emplace_back();
+      node.mesh        = 2;
+      node.material    = 2;
+      node.translation = {0.0f, 0.0f, 0.0f};
     }
 
+    // Adding a light
     m_light.intensity = 100.0f;
     m_light.position  = {2.0f, 7.0f, 2.0f};
     m_light.radius    = 0.2f;
 
     // Setting camera to see the scene
-    CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({-2.0F, 2.5F, 3.0f}, {0.4F, 0.3F, 0.2F}, {0.0F, 1.0F, 0.0F});
+    g_cameraManip->setClipPlanes({0.1F, 100.0F});
+    g_cameraManip->setLookat({-2.0F, 2.5F, 3.0f}, {0.4F, 0.3F, 0.2F}, {0.0F, 1.0F, 0.0F});
 
     // Default parameters for overall material
     m_pushConst.maxDepth              = 5;
@@ -297,26 +296,32 @@ private:
   // Create all Vulkan buffer data
   void createVkBuffers()
   {
-    NVTX3_FUNC_RANGE();
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    //    NVTX3_FUNC_RANGE();
+    VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_allocator, true);
+
     m_bMeshes.resize(m_meshes.size());
 
-    VkBufferUsageFlags rtUsageFlag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    VkBufferUsageFlags rtUsageFlag = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                     | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
 
     // Create a buffer of Vertex and Index per mesh
-    std::vector<DH::PrimMeshInfo> primInfo;
+    std::vector<shaderio::PrimMeshInfo> primInfo;
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
-      auto& m    = m_bMeshes[i];
-      m.vertices = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rtUsageFlag);
-      m.indices  = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rtUsageFlag);
-      m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
-      m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
+      auto& m = m_bMeshes[i];
+
+      NVVK_CHECK(m_allocator.createBuffer(m.vertices, std::span(m_meshes[i].vertices).size_bytes(), rtUsageFlag));
+      NVVK_CHECK(m_allocator.createBuffer(m.indices, std::span(m_meshes[i].triangles).size_bytes(), rtUsageFlag));
+      NVVK_CHECK(uploader.appendBuffer(m.vertices, 0, std::span(m_meshes[i].vertices)));
+      NVVK_CHECK(uploader.appendBuffer(m.indices, 0, std::span(m_meshes[i].triangles)));
+      NVVK_DBG_NAME(m.vertices.buffer);
+      NVVK_DBG_NAME(m.indices.buffer);
 
       // To find the buffers of the mesh (buffer reference)
-      DH::PrimMeshInfo info{
+      shaderio::PrimMeshInfo info{
           .vertexAddress = m.vertices.address,
           .indexAddress  = m.indices.address,
       };
@@ -324,51 +329,60 @@ private:
     }
 
     // Creating the buffer of all primitive/mesh information
-    m_bPrimInfo = m_alloc->createBuffer(cmd, primInfo, rtUsageFlag);
-    m_dutil->DBG_NAME(m_bPrimInfo.buffer);
+    NVVK_CHECK(m_allocator.createBuffer(m_bPrimInfo, std::span(primInfo).size_bytes(), rtUsageFlag));
+    NVVK_CHECK(uploader.appendBuffer(m_bPrimInfo, 0, std::span(primInfo)));
+    NVVK_DBG_NAME(m_bPrimInfo.buffer);
 
     // Create the buffer of the current camera transformation, changing at each frame
-    m_bCameraInfo = m_alloc->createBuffer(sizeof(DH::CameraInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_bCameraInfo.buffer);
+    NVVK_CHECK(m_allocator.createBuffer(m_bCameraInfo, sizeof(shaderio::CameraInfo),
+                                        VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
+    NVVK_DBG_NAME(m_bCameraInfo.buffer);
 
     // Primitive instance information
-    std::vector<DH::InstanceInfo> instInfo;
+    std::vector<shaderio::InstanceInfo> instInfo;
     for(auto& node : m_nodes)
     {
-      DH::InstanceInfo info{
+      shaderio::InstanceInfo info{
           .transform  = node.localMatrix(),
           .materialID = node.material,
       };
       instInfo.emplace_back(info);
     }
-    m_bInstInfoBuffer =
-        m_alloc->createBuffer(cmd, instInfo, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    m_dutil->DBG_NAME(m_bInstInfoBuffer.buffer);
+    NVVK_CHECK(m_allocator.createBuffer(m_bInstInfoBuffer, std::span(instInfo).size_bytes(),
+                                        VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+    NVVK_CHECK(uploader.appendBuffer(m_bInstInfoBuffer, 0, std::span(instInfo)));
+    NVVK_DBG_NAME(m_bInstInfoBuffer.buffer);
 
-    m_bMaterials = m_alloc->createBuffer(cmd, m_materials, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    m_dutil->DBG_NAME(m_bMaterials.buffer);
+    NVVK_CHECK(m_allocator.createBuffer(m_bMaterials, std::span(m_materials).size_bytes(),
+                                        VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+    NVVK_CHECK(uploader.appendBuffer(m_bMaterials, 0, std::span(m_materials)));
+    NVVK_DBG_NAME(m_bMaterials.buffer);
 
     // Buffer references of all scene elements
-    DH::SceneInfo sceneDesc{
+    shaderio::SceneInfo sceneDesc{
         .materialAddress = m_bMaterials.address,
         .instInfoAddress = m_bInstInfoBuffer.address,
         .primInfoAddress = m_bPrimInfo.address,
         .light           = m_light,
     };
 
-    m_bSceneDesc = m_alloc->createBuffer(cmd, sizeof(DH::SceneInfo), &sceneDesc,
-                                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    m_dutil->DBG_NAME(m_bSceneDesc.buffer);
+    NVVK_CHECK(m_allocator.createBuffer(m_bSceneDesc, sizeof(shaderio::SceneInfo),
+                                        VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+    NVVK_CHECK(uploader.appendBuffer(m_bSceneDesc, 0, std::span(&sceneDesc, 1)));
+    NVVK_DBG_NAME(m_bSceneDesc.buffer);
 
+    uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
+    uploader.deinit();
   }
 
 
   //--------------------------------------------------------------------------------------------------
   // Converting a PrimitiveMesh as input for BLAS
   //
-  nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const nvh::PrimitiveMesh& prim, VkDeviceAddress vertexAddress, VkDeviceAddress indexAddress)
+  nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const nvutils::PrimitiveMesh& prim,
+                                                              VkDeviceAddress               vertexAddress,
+                                                              VkDeviceAddress               indexAddress)
   {
     nvvk::AccelerationStructureGeometryInfo result;
 
@@ -379,7 +393,7 @@ private:
         .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
         .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,  // vec3 vertex position data
         .vertexData   = {.deviceAddress = vertexAddress},
-        .vertexStride = sizeof(nvh::PrimitiveVertex),
+        .vertexStride = sizeof(nvutils::PrimitiveVertex),
         .maxVertex    = static_cast<uint32_t>(prim.vertices.size()) - 1,
         .indexType    = VK_INDEX_TYPE_UINT32,
         .indexData    = {.deviceAddress = indexAddress},
@@ -403,10 +417,10 @@ private:
   //
   void createBottomLevelAS()
   {
-    NVTX3_FUNC_RANGE();
+    // NVTX3_FUNC_RANGE();
     std::vector<nvvk::AccelerationStructureBuildData> blasData;
-    blasData.resize(m_meshes.size());  // Build Information for each BLAS
-    m_blas.resize(m_meshes.size());    // The actual BLAS
+    blasData.resize(m_meshes.size());    // Build Information for each BLAS
+    m_bottomAs.resize(m_meshes.size());  // The actual BLAS
 
     // Convert all primitives to acceleration structures geometry
     VkDeviceSize maxScratchSize{0};
@@ -423,26 +437,28 @@ private:
     }
 
     // Scratch buffer for all BLAS
-    nvvk::Buffer scratchBuffer =
-        m_alloc->createBuffer(maxScratchSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    VkDeviceAddress scratchAddress = scratchBuffer.address;
+    nvvk::Buffer scratchBuffer;
+    NVVK_CHECK(m_allocator.createBuffer(scratchBuffer, maxScratchSize,
+                                        VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
+                                        VMA_MEMORY_USAGE_AUTO, {}, m_asProperties.minAccelerationStructureScratchOffsetAlignment));
+    NVVK_DBG_NAME(scratchBuffer.buffer);
 
     // Create and build all BLAS
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-    for(size_t i = 0; i < m_blas.size(); i++)
+    for(size_t i = 0; i < m_bottomAs.size(); i++)
     {
       VkAccelerationStructureCreateInfoKHR createInfo = blasData[i].makeCreateInfo();
-      m_blas[i]                                       = m_alloc->createAcceleration(createInfo);
-      m_dutil->DBG_NAME(m_blas[i].accel);
-      blasData[i].cmdBuildAccelerationStructure(cmd, m_blas[i].accel, scratchAddress);
+      NVVK_CHECK(m_allocator.createAcceleration(m_bottomAs[i], createInfo));
+      NVVK_DBG_NAME(m_bottomAs[i].accel);
+
+      blasData[i].cmdBuildAccelerationStructure(cmd, m_bottomAs[i].accel, scratchBuffer.address);
       // Because we will be reusing the scratch buffer, we need a barrier to ensure the BLAS is finished before next build
       nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
                                          VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
     }
     m_app->submitAndWaitTempCmdBuffer(cmd);
 
-    m_alloc->finalizeAndReleaseStaging();
-    m_alloc->destroy(scratchBuffer);
+    m_allocator.destroyBuffer(scratchBuffer);
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -450,7 +466,7 @@ private:
   //
   void createTopLevelAS()
   {
-    NVTX3_FUNC_RANGE();
+    // NVTX3_FUNC_RANGE();
 
     nvvk::AccelerationStructureBuildData tlasData;
     tlasData.asType = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
@@ -464,15 +480,23 @@ private:
                                                  .instanceCustomIndex = static_cast<uint32_t>(node.mesh),  // gl_InstanceCustomIndexEX
                                                  .mask  = 0xFF,
                                                  .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV,
-                                                 .accelerationStructureReference = m_blas[node.mesh].address};
+                                                 .accelerationStructureReference = m_bottomAs[node.mesh].address};
       instances.emplace_back(rayInst);
     }
 
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_allocator);
 
     // Create a buffer holding the actual instance data (matrices++) for use by the AS builder
-    nvvk::Buffer instancesBuffer = m_alloc->createBuffer(
-        cmd, instances, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+    nvvk::Buffer instancesBuffer;
+    NVVK_CHECK(m_allocator.createBuffer(instancesBuffer, std::span(instances).size_bytes(),
+                                        VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                            | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+    NVVK_CHECK(uploader.appendBuffer(instancesBuffer, 0, std::span(instances)));
+    NVVK_DBG_NAME(instancesBuffer.buffer);
+
+    uploader.cmdUploadAppended(cmd);
     nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 
     auto instGeo = tlasData.makeInstanceGeometry(instances.size(), instancesBuffer.address);
@@ -481,20 +505,24 @@ private:
     // Create the TLAS
     auto sizeInfo = tlasData.finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
 
-    nvvk::Buffer scratchBuffer =
-        m_alloc->createBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    VkDeviceAddress scratchAddress = scratchBuffer.address;
-
+    nvvk::Buffer scratchBuffer;
+    NVVK_CHECK(m_allocator.createBuffer(scratchBuffer, sizeInfo.buildScratchSize,
+                                        VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
+                                        VMA_MEMORY_USAGE_AUTO, {}, m_asProperties.minAccelerationStructureScratchOffsetAlignment));
+    NVVK_DBG_NAME(scratchBuffer.buffer);
     VkAccelerationStructureCreateInfoKHR createInfo = tlasData.makeCreateInfo();
-    m_tlas                                          = m_alloc->createAcceleration(createInfo);
-    m_dutil->DBG_NAME(m_tlas.accel);
-    tlasData.cmdBuildAccelerationStructure(cmd, m_tlas.accel, scratchAddress);
+    NVVK_CHECK(m_allocator.createAcceleration(m_topAs, createInfo));
+    NVVK_DBG_NAME(m_topAs.accel);
+
+    tlasData.cmdBuildAccelerationStructure(cmd, m_topAs.accel, scratchBuffer.address);
+    uploader.cmdUploadAppended(cmd);
     nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
+    uploader.deinit();
 
-    m_alloc->destroy(instancesBuffer);
-    m_alloc->destroy(scratchBuffer);
+    m_allocator.destroyBuffer(instancesBuffer);
+    m_allocator.destroyBuffer(scratchBuffer);
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -502,61 +530,55 @@ private:
   //
   void createCompPipelines()
   {
-    m_rtPipe.destroy(m_device);
-    m_rtSet->deinit();
-    m_rtSet = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
-    m_rtPipe.plines.resize(1);
-
     // This descriptor set, holds the top level acceleration structure and the output image
-    m_rtSet->addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(B_cameraInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_rtSet->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
+    m_descriptorBinding.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
+    m_descriptorBinding.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    m_descriptorBinding.addBinding(B_cameraInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    m_descriptorBinding.addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+
+    NVVK_CHECK(m_descriptorBinding.createDescriptorSetLayout(m_device, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                                             &m_descriptorSetLayout));
+    NVVK_DBG_NAME(m_descriptorSetLayout);
+
 
     // pushing time
-    VkPushConstantRange        pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant)};
-    VkPipelineLayoutCreateInfo plCreateInfo{
-        .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount         = 1U,
-        .pSetLayouts            = &m_rtSet->getLayout(),
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &pushConstant,
+    const VkPushConstantRange pushConstant{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(shaderio::PushConstant)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorSetLayout}, {pushConstant}));
+
+#if USE_SLANG
+    VkShaderModuleCreateInfo moduleInfo = nvsamples::getShaderModuleCreateInfo(ray_query_slang);
+#else
+    VkShaderModuleCreateInfo moduleInfo = nvsamples::getShaderModuleCreateInfo(ray_query_comp_glsl);
+#endif
+
+    VkPipelineShaderStageCreateInfo shaderStage{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = &moduleInfo,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .pName = "main",
     };
-    vkCreatePipelineLayout(m_device, &plCreateInfo, nullptr, &m_rtPipe.layout);
 
     VkComputePipelineCreateInfo cpCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .stage = nvvk::createShaderStageInfo(m_device, comp_shd, VK_SHADER_STAGE_COMPUTE_BIT, USE_GLSL ? "main" : "computeMain"),
-        .layout = m_rtPipe.layout,
+        .sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage  = shaderStage,
+        .layout = m_pipelineLayout,
     };
 
-    vkCreateComputePipelines(m_device, {}, 1, &cpCreateInfo, nullptr, &m_rtPipe.plines[0]);
-
-    vkDestroyShaderModule(m_device, cpCreateInfo.stage.module, nullptr);
+    NVVK_CHECK(vkCreateComputePipelines(m_device, {}, 1, &cpCreateInfo, nullptr, &m_pipeline));
+    NVVK_DBG_NAME(m_pipeline);
   }
 
 
   void pushDescriptorSet(VkCommandBuffer cmd)
   {
     // Write to descriptors
-    VkAccelerationStructureKHR                   tlas = m_tlas.accel;
-    VkWriteDescriptorSetAccelerationStructureKHR descASInfo{
-        .sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
-        .accelerationStructureCount = 1,
-        .pAccelerationStructures    = &tlas,
-    };
-    VkDescriptorImageInfo  imageInfo{{}, m_gBuffers->getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL};
-    VkDescriptorBufferInfo dbi_unif{m_bCameraInfo.buffer, 0, VK_WHOLE_SIZE};
-    VkDescriptorBufferInfo sceneDesc{m_bSceneDesc.buffer, 0, VK_WHOLE_SIZE};
+    nvvk::WriteSetContainer writes{};
+    writes.append(m_descriptorBinding.getWriteSet(B_tlas), m_topAs);
+    writes.append(m_descriptorBinding.getWriteSet(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
+    writes.append(m_descriptorBinding.getWriteSet(B_cameraInfo), m_bCameraInfo);
+    writes.append(m_descriptorBinding.getWriteSet(B_sceneDesc), m_bSceneDesc);
 
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &descASInfo));
-    writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &imageInfo));
-    writes.emplace_back(m_rtSet->makeWrite(0, B_cameraInfo, &dbi_unif));
-    writes.emplace_back(m_rtSet->makeWrite(0, B_sceneDesc, &sceneDesc));
-
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_rtPipe.layout, 0,
+    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0,
                               static_cast<uint32_t>(writes.size()), writes.data());
   }
 
@@ -575,8 +597,8 @@ private:
     static float     ref_fov{0};
     static glm::mat4 ref_cam_matrix;
 
-    const auto& m   = CameraManip.getMatrix();
-    const auto  fov = CameraManip.getFov();
+    const auto& m   = g_cameraManip->getViewMatrix();
+    const auto  fov = g_cameraManip->getFov();
 
     if(ref_cam_matrix != m || ref_fov != fov)
     {
@@ -598,49 +620,51 @@ private:
   {
     for(auto& m : m_bMeshes)
     {
-      m_alloc->destroy(m.vertices);
-      m_alloc->destroy(m.indices);
+      m_allocator.destroyBuffer(m.vertices);
+      m_allocator.destroyBuffer(m.indices);
     }
-    m_alloc->destroy(m_bCameraInfo);
-    m_alloc->destroy(m_bPrimInfo);
-    m_alloc->destroy(m_bSceneDesc);
-    m_alloc->destroy(m_bInstInfoBuffer);
-    m_alloc->destroy(m_bMaterials);
+    m_allocator.destroyBuffer(m_bCameraInfo);
+    m_allocator.destroyBuffer(m_bPrimInfo);
+    m_allocator.destroyBuffer(m_bSceneDesc);
+    m_allocator.destroyBuffer(m_bInstInfoBuffer);
+    m_allocator.destroyBuffer(m_bMaterials);
 
-    m_rtSet->deinit();
-    m_gBuffers.reset();
+    m_gBuffers.deinit();
 
-    m_rtPipe.destroy(m_device);
-
-    m_sbt.destroy();
-    //m_rtBuilder.destroy();
-    for(auto& b : m_blas)
+    for(auto& b : m_bottomAs)
     {
-      m_alloc->destroy(b);
+      m_allocator.destroyAcceleration(b);
     }
-    m_alloc->destroy(m_tlas);
+    m_allocator.destroyAcceleration(m_topAs);
 
 
-    m_tonemapper.reset();
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    vkDestroyPipeline(m_device, m_pipeline, nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+
+
+    m_samplerPool.deinit();
+    m_tonemapper.deinit();
+    m_allocator.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*                           m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil>               m_dutil;
-  std::unique_ptr<nvvk::ResourceAllocatorDma>    m_alloc;
-  std::unique_ptr<nvvk::DescriptorSetContainer>  m_rtSet;  // Descriptor set
-  std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
-  std::unique_ptr<nvvkhl::GBuffer>               m_gBuffers;  // G-Buffers: color + depth
+  nvapp::Application*      m_app{};
+  nvvk::ResourceAllocator  m_allocator;
+  nvshaders::Tonemapper    m_tonemapper{};
+  shaderio::TonemapperData m_tonemapperData;
+  nvvk::GBuffer            m_gBuffers;  // G-Buffers: color + depth
+  nvvk::SamplerPool        m_samplerPool{};
 
-  VkDevice m_device = VK_NULL_HANDLE;  // Convenient
+  VkDevice m_device{};  // Vulkan device
 
   // Resources
   struct PrimitiveMeshVk
@@ -656,23 +680,28 @@ private:
   nvvk::Buffer                 m_bMaterials;       // All materials
 
   // Data and setting
-  std::vector<nvh::PrimitiveMesh> m_meshes;
-  std::vector<nvh::Node>          m_nodes;
-  std::vector<DH::Material>       m_materials;
-  DH::Light                       m_light = {};
+  std::vector<nvutils::PrimitiveMesh> m_meshes;
+  std::vector<nvutils::Node>          m_nodes;
+  std::vector<shaderio::Material>     m_materials;
+  shaderio::Light                     m_light = {};
 
   // Pipeline
-  DH::PushConstant m_pushConst{};  // Information sent to the shader
-  int              m_frame{0};
-  int              m_maxFrames{10000};
+  shaderio::PushConstant m_pushConst{};  // Information sent to the shader
+  int                    m_frame{0};
+  int                    m_maxFrames{10000};
+
+  // Pipeline
+  nvvk::DescriptorBindings m_descriptorBinding{};
+  VkDescriptorSetLayout    m_descriptorSetLayout{};
+  VkPipeline               m_pipeline{};
+  VkPipelineLayout         m_pipelineLayout{};
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  nvvk::SBTWrapper m_sbt;  // Shading binding table wrapper
+  VkPhysicalDeviceAccelerationStructurePropertiesKHR m_asProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
 
-  std::vector<nvvk::AccelKHR> m_blas;
-  nvvk::AccelKHR              m_tlas;
-
-  nvvkhl::PipelineContainer m_rtPipe;
+  // Acceleration Structures
+  std::vector<nvvk::AccelerationStructure> m_bottomAs;
+  nvvk::AccelerationStructure              m_topAs;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -681,67 +710,72 @@ private:
 ///
 auto main(int argc, char** argv) -> int
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
-  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless"}, &appInfo.headless, true);
+  reg.add({"frames", "Number of frames to run in headless mode"}, &appInfo.headlessFrameCount);
+  cli.add(reg);
   cli.parse(argc, argv);
 
 
   // #VKRay: Activate the ray tracing extension
+  // Extension feature needed.
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
-
-  // Config for Vulkan context creation
-  VkContextSettings vkSetup;
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+                             {VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME},
+                             {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+                             {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature},
+                             {VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature},
+                             {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature},
+                             {VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature}},
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
-  vkSetup.deviceExtensions.push_back({VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature});  // To build acceleration structures
-  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature});  // To use vkCmdTraceRaysKHR
-  vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
-  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
-  vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
 
-  // Vulkan context creation
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
-
-  // Loading the Vulkan extension pointers
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+  // Create the Vulkan context
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Application settings
-  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.name           = fmt::format("{} ({})", nvutils::getExecutablePath().stem().string(), SHADER_LANGUAGE_STR);
   appInfo.vSync          = false;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
-
-  // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
+  nvapp::Application app;
+  app.init(appInfo);
 
   // Add all application elements
-  app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());  // Menu / Quit
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
-  app->addElement(std::make_shared<RayQuery>());
+  auto elemCamera = std::make_shared<nvapp::ElementCamera>();
+  g_cameraManip   = std::make_shared<nvutils::CameraManipulator>();
+  elemCamera->setCameraManipulator(g_cameraManip);
+  app.addElement(elemCamera);
+  app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());                         // Menu / Quit
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", appInfo.name));  // Window title info
+  app.addElement(std::make_shared<RayQuery>());
 
-  app->run();
-  app.reset();
-  vkContext.reset();
 
-  return test->errorCode();
+  app.run();
+  app.deinit();
+  vkContext.deinit();
+
+  return 0;
 }

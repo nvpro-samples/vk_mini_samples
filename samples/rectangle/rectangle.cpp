@@ -25,58 +25,73 @@
 */
 
 
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
 #include <array>
 #include <vulkan/vulkan_core.h>
 #include <imgui.h>
 
-#define VMA_IMPLEMENTATION
-#include "common/vk_context.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/renderpasses_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
 
 #include <GLFW/glfw3.h>
+#undef APIENTRY
 
-class RectangleSample : public nvvkhl::IAppElement
+#define VMA_IMPLEMENTATION
+
+
+#include "_autogen/rectangle.slang.h"
+#include "_autogen/rectangle.frag.glsl.h"
+#include "_autogen/rectangle.vert.glsl.h"
+
+
+#include <nvapp/application.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/formats.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
+
+
+class RectangleSample : public nvapp::IAppElement
 {
 public:
   RectangleSample()           = default;
   ~RectangleSample() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
-    m_app         = app;
-    m_device      = m_app->getDevice();
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-              .physicalDevice = app->getPhysicalDevice(),
-              .device         = app->getDevice(),
-              .instance       = app->getInstance(),
-    });                                                           // Allocator
-    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());  // Not all depth are supported
+    m_app    = app;
+    m_device = m_app->getDevice();
+    m_alloc.init({.flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+                  .physicalDevice   = app->getPhysicalDevice(),
+                  .device           = app->getDevice(),
+                  .instance         = app->getInstance(),
+                  .vulkanApiVersion = VK_API_VERSION_1_4});  // Allocator
+
+    // Acquiring the sampler which will be used for displaying the GBuffer
+    m_samplerPool.init(app->getDevice());
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    m_gBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFormat,
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
+
     createPipeline();
     createGeometryBuffers();
   }
@@ -111,16 +126,10 @@ public:
     }
   }
 
-  void onResize(uint32_t width, uint32_t height) override
-  {
-    m_viewSize = {width, height};
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), m_viewSize, m_colorFormat, m_depthFormat);
-  }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   void onUIRender() override
   {
-    if(!m_gBuffers)
-      return;
 
     {  // Setting panel
       ImGui::Begin("Settings");
@@ -135,8 +144,7 @@ public:
       {
         std::array<char, 256> buf{};
 
-        const int ret = snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME,
-                                 static_cast<int>(m_viewSize.width), static_cast<int>(m_viewSize.height),
+        const int ret = snprintf(buf.data(), buf.size(), "%s | %d FPS / %.3fms", PROJECT_NAME,
                                  static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         assert(ret > 0);
         glfwSetWindowTitle(m_app->getWindowHandle(), buf.data());
@@ -147,7 +155,7 @@ public:
     {  // Display the G-Buffer image
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -155,15 +163,11 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if(!m_gBuffers)
-      return;
-
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
+    NVVK_DBG_SCOPE(cmd);
 
     VkRenderingAttachmentInfoKHR colorAttachment{
         .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-        .imageView   = m_gBuffers->getColorImageView(),
+        .imageView   = m_gBuffers.getColorImageView(),
         .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
         .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
@@ -172,7 +176,7 @@ public:
 
     VkRenderingAttachmentInfoKHR depthStencilAttachment{
         .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-        .imageView   = m_gBuffers->getDepthImageView(),
+        .imageView   = m_gBuffers.getDepthImageView(),
         .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
         .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
@@ -181,7 +185,7 @@ public:
 
     VkRenderingInfoKHR rInfo{
         .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
-        .renderArea           = {{0, 0}, m_viewSize},
+        .renderArea           = {{0, 0}, m_gBuffers.getSize()},
         .layerCount           = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments    = &colorAttachment,
@@ -189,18 +193,18 @@ public:
     };
 
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
     vkCmdBeginRendering(cmd, &rInfo);
     {
       const VkDeviceSize offsets{0};
-      m_app->setViewport(cmd);
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
       vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   }
 
 private:
@@ -222,29 +226,36 @@ private:
         .depthAttachmentFormat   = m_depthFormat,
     };
 
-    nvvk::GraphicsPipelineState pstate;
-    pstate.addBindingDescriptions({{0, sizeof(Vertex)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, pos))},       // Position
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, color))},  // Color
-    });
+    // Creating the Pipeline
+    nvvk::GraphicsPipelineState m_graphicState;  // State of the graphic pipeline
+    m_graphicState.vertexBindings = {
+        {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, .stride = sizeof(Vertex), .divisor = 1}};
+    m_graphicState.vertexAttributes = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                        .location = 0,
+                                        .format   = VK_FORMAT_R32G32_SFLOAT,
+                                        .offset   = offsetof(Vertex, pos)},
+                                       {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                        .location = 1,
+                                        .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                        .offset   = offsetof(Vertex, color)}};
+
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
+
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", rectangle_slang);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", rectangle_slang);
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", rectangle_vert_glsl);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", rectangle_frag_glsl);
 #endif
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
+
+    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, m_graphicState, &m_pipeline));
+    NVVK_DBG_NAME(m_pipeline);
   }
 
   void createGeometryBuffers()
@@ -256,91 +267,106 @@ private:
     const std::vector<uint16_t> indices  = {0, 2, 1, 2, 0, 3};
 
     {
-      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+      nvvk::StagingUploader uploader;
+      uploader.init(&m_alloc);
+
+      NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(indices).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m_vertices, 0, std::span(vertices)));
+      NVVK_CHECK(uploader.appendBuffer(m_indices, 0, std::span(indices)));
+      NVVK_DBG_NAME(m_vertices.buffer);
+      NVVK_DBG_NAME(m_indices.buffer);
+
+      uploader.cmdUploadAppended(cmd);
       m_app->submitAndWaitTempCmdBuffer(cmd);
-      m_dutil->DBG_NAME(m_vertices.buffer);
-      m_dutil->DBG_NAME(m_indices.buffer);
+      uploader.deinit();
     }
   }
 
   void destroyResources()
   {
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_pipeline, nullptr);
 
-    m_alloc->destroy(m_vertices);
-    m_alloc->destroy(m_indices);
+    m_alloc.destroyBuffer(m_vertices);
+    m_alloc.destroyBuffer(m_indices);
     m_vertices = {};
     m_indices  = {};
-    m_gBuffers.reset();
+    m_gBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string(), 95);
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string(), 95);
   }
 
-  nvvkhl::Application* m_app{nullptr};
+  nvapp::Application*     m_app{};
+  nvvk::GBuffer           m_gBuffers;
+  nvvk::ResourceAllocator m_alloc;
+  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
 
-  std::unique_ptr<nvvkhl::GBuffer>  m_gBuffers;
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
 
-  VkExtent2D        m_viewSize{0, 0};
-  VkFormat          m_colorFormat      = VK_FORMAT_B8G8R8A8_UNORM;       // Color format of the image
-  VkFormat          m_depthFormat      = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkPipelineLayout  m_pipelineLayout   = VK_NULL_HANDLE;                 // The description of the pipeline
-  VkPipeline        m_graphicsPipeline = VK_NULL_HANDLE;                 // The graphic pipeline to render
-  nvvk::Buffer      m_vertices;                                          // Buffer of the vertices
-  nvvk::Buffer      m_indices;                                           // Buffer of the indices
-  VkClearColorValue m_clearColor{{0.1F, 0.4F, 0.1F, 1.0F}};              // Clear color
-  VkDevice          m_device = VK_NULL_HANDLE;                           // Convenient
+  VkFormat          m_colorFormat    = VK_FORMAT_B8G8R8A8_UNORM;       // Color format of the image
+  VkFormat          m_depthFormat    = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
+  VkPipelineLayout  m_pipelineLayout = VK_NULL_HANDLE;                 // The description of the pipeline
+  VkPipeline        m_pipeline       = VK_NULL_HANDLE;                 // The graphic pipeline to render
+  nvvk::Buffer      m_vertices;                                        // Buffer of the vertices
+  nvvk::Buffer      m_indices;                                         // Buffer of the indices
+  VkClearColorValue m_clearColor{{0.1F, 0.4F, 0.1F, 1.0F}};            // Clear color
+  VkDevice          m_device = VK_NULL_HANDLE;                         // Convenient
 };
 
 
 int main(int argc, char** argv)
 {
-  VkContextSettings             vkSetup;  // Vulkan creation context information (see nvvk::Context)
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;  // Base application information
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  // Command line parsing
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
+  nvvk::ContextInitInfo vkSetup = {
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
-  // Create Vulkan context
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
 
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+  // Creation of the Vulkan context
+  nvvk::Context vkContext;  // Vulkan context
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
+
 
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  app->addElement(test);
-  app->addElement(std::make_shared<RectangleSample>());
+  app.addElement(std::make_shared<RectangleSample>());
 
-  app->run();
-  app.reset();
-  vkContext.reset();
+  app.run();
+  app.deinit();
+  vkContext.deinit();
 
-  return test->errorCode();
+  return 0;
 }

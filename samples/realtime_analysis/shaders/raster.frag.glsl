@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 450
@@ -30,7 +30,7 @@
 #define INSPECTOR_DESCRIPTOR_SET 0
 #define INSPECTOR_INSPECTION_DATA_BINDING eFragInspectorData
 #define INSPECTOR_METADATA_BINDING eFragInspectorMeta
-#include "nvvkhl/shaders/dh_inspector.h"
+#include "nvshaders/inspector_io.h"
 
 layout(location = 0) in vec2 inUv;
 layout(location = 1) in flat int inParticleID;

@@ -1,37 +1,70 @@
+# Get the name of the current directory
+get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
+project(${PROJECT_NAME})
+message(STATUS "Processing: ${PROJECT_NAME}")
 
-set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+# Add the executable
+file(GLOB EXE_SOURCES "*.cpp" "*.hpp")
 
-set(PROJECT_NAME tiny_shader_toy)
+source_group("Source Files" FILES ${EXE_SOURCES})
+add_executable(${PROJECT_NAME} ${EXE_SOURCES})
 
-create_sample(${PROJECT_NAME}
-  SOURCES 
-    tiny_shader_toy.cpp 
-  SHADER_SOURCES 
-    ${SHD_DIR}/raster.vert.glsl
-    ${SHD_DIR}/raster.frag.glsl
-  SHADER_HEADERS
-    ${SHD_DIR}/buffer_a.glsl
-    ${SHD_DIR}/common.glsl
-    ${SHD_DIR}/image.glsl
- SHADER_SLANG
-   ${SHD_DIR}/raster.slang
+# Link libraries and include directories
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  nvpro2::nvapp
+  nvpro2::nvgui
+  nvpro2::nvvkglsl
+  nvpro2::nvslang
+  nvpro2::nvshaders_host
+  nvpro2::nvutils
+  nvpro2::nvvk
 )
 
-# Install - copying the media directory
-install(DIRECTORY "shaders" 
-        CONFIGURATIONS Release 
-        DESTINATION "bin_${ARCH}/vk_mini_${PROJECT_NAME}")
-install(DIRECTORY "shaders" 
-        CONFIGURATIONS Debug 
-        DESTINATION "bin_${ARCH}_debug/vk_mini_${PROJECT_NAME}")
+add_project_definitions(${PROJECT_NAME})
+
+# Include directory for generated files
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR})
 
 
-        # On Windows, linking release shaderc with a debug app produces linker errors.
-# So we use release shaderc_shared on Windows and release shaderc_combined on Linux.
-if(WIN32 AND USE_SLANG)
-    set(EXECUTABLE_NAME "vk_mini_${PROJECT_NAME}")
-  add_custom_command(TARGET ${EXECUTABLE_NAME} POST_BUILD 
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${Slang_DLL} ${Slang_glslang_DLL} $<TARGET_FILE_DIR:${EXECUTABLE_NAME}> VERBATIM
-      )
-  install(FILES ${Slang_DLL} ${Slang_glslang_DLL} DESTINATION bin_${ARCH}$<IF:$<CONFIG:Debug>,_debug,>)
-endif()
+#------------------------------------------------------------------------------------------------------------------------------
+# Compile shaders
+file(GLOB SHADER_SLANG_FILES "shaders/*.slang")
+set(SHADER_GLSL_FILES 
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader_toy.vert.glsl 
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader_toy.frag.glsl
+)
+
+set(SHADER_H_FILES "shaders/buffer_a.glsl" "shaders/common.glsl" "shaders/image.glsl")
+
+set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
+
+
+compile_slang(
+    "${SHADER_SLANG_FILES}"
+     "${SHADER_OUTPUT_DIR}"
+    GENERATED_SHADER_SLANG_HEADERS
+    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+)
+
+compile_glsl(
+   "${SHADER_GLSL_FILES}"
+   "${SHADER_OUTPUT_DIR}"
+   GENERATED_SHADER_GLSL_HEADERS
+   EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+ )
+
+# Add shader files to the project
+source_group("Shaders" FILES ${SHADER_SLANG_FILES} ${SHADER_GLSL_FILES} ${SHADER_H_FILES})
+source_group("Shaders/Compiled" FILES ${GENERATED_SHADER_SLANG_HEADERS} ${GENERATED_SHADER_GLSL_HEADERS})
+
+# Add the output shader headers (target) directly to the executable
+# This allows to compile the shaders when the executable is built
+target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_SHADER_SLANG_HEADERS} ${GENERATED_SHADER_GLSL_HEADERS} ${SHADER_H_FILES})
+
+#------------------------------------------------------------------------------------------------------------------------------
+# Installation, copy files
+
+copy_to_runtime_and_install( ${PROJECT_NAME}
+    LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
+    AUTO
+)

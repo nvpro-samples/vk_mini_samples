@@ -1,30 +1,67 @@
 # Get the name of the current directory
 get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
+project(${PROJECT_NAME})
+message(STATUS "Processing: ${PROJECT_NAME}")
 
-# Find all source files
-file(GLOB_RECURSE SOURCES 
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.h
+# Add the executable
+file(GLOB EXE_SOURCES "*.cpp" "*.hpp")
+source_group("Source Files" FILES ${EXE_SOURCES})
+add_executable(${PROJECT_NAME} ${EXE_SOURCES})
+
+# Link libraries and include directories
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  nvpro2::nvaftermath
+  nvpro2::nvapp
+  nvpro2::nvgui
+  nvpro2::nvslang
+  nvpro2::nvshaders_host
+  nvpro2::nvutils
+  nvpro2::nvvk
+  tinygltf
 )
 
-# Find all shader files
-set(SHD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
-file(GLOB_RECURSE SHADER_SOURCES ${SHD_DIR}/*.glsl)
-file(GLOB_RECURSE SHADER_HLSL ${SHD_DIR}/*.hlsl)
-file(GLOB_RECURSE SHADER_SLANG ${SHD_DIR}/*.slang)
-file(GLOB_RECURSE SHADER_HEADERS ${SHD_DIR}/*.h)
+add_project_definitions(${PROJECT_NAME})
 
-# Create the sample
-create_sample(${PROJECT_NAME} 
-  SOURCES           ${SOURCES}
-  SHADER_SOURCES    ${SHADER_SOURCES}
-  SHADER_HEADERS    ${SHADER_HEADERS}
-  SHADER_HLSL       ${SHADER_HLSL}
-  SHADER_SLANG      ${SHADER_SLANG}
+# Include directory for generated files
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR})
+
+#------------------------------------------------------------------------------------------------------------------------------
+# Compile shaders
+file(GLOB SHADER_SLANG_FILES "shaders/*.slang")
+file(GLOB SHADER_GLSL_FILES "shaders/*.glsl")
+file(GLOB SHADER_H_FILES "shaders/*.h")
+
+set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
+
+
+
+compile_slang(
+    "${SHADER_SLANG_FILES}"
+     "${SHADER_OUTPUT_DIR}"
+    GENERATED_SHADER_SLANG_HEADERS
+    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
 )
 
-if(NOT NSIGHT_AFTERMATH_SDK)
-  message(       "  - This project should use NSight Aftermath.")
-  message(STATUS "    Install NSight Aftermath SDK and set NSIGHT_AFTERMATH_SDK path (CMake).")
-endif()
+compile_glsl(
+   "${SHADER_GLSL_FILES}"
+   "${SHADER_OUTPUT_DIR}"
+   GENERATED_SHADER_GLSL_HEADERS
+   EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+ )
+
+# Add shader files to the project
+source_group("Shaders" FILES ${SHADER_SLANG_FILES} ${SHADER_GLSL_FILES} ${SHADER_H_FILES})
+source_group("Shaders/Compiled" FILES ${GENERATED_SHADER_SLANG_HEADERS} ${GENERATED_SHADER_GLSL_HEADERS})
+
+# Add the output shader headers (target) directly to the executable
+# This allows to compile the shaders when the executable is built
+target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_SHADER_SLANG_HEADERS} ${GENERATED_SHADER_GLSL_HEADERS} ${SHADER_H_FILES})
+
+#------------------------------------------------------------------------------------------------------------------------------
+# Installation, copy files
+
+copy_to_runtime_and_install( ${PROJECT_NAME}
+    LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
+    FILES ${NsightAftermath_DLLS}
+    AUTO
+)

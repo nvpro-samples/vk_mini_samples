@@ -37,33 +37,20 @@ NVML Monitor:
 
 */
 
-#include <random>
 #include <glm/gtc/matrix_transform.hpp>
+#include <random>
+
+#define USE_SLANG 0  // SLANG is not implemented yet.
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 // clang-format off
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
 
 #define VMA_IMPLEMENTATION
+#define USE_GLSL 1
 
-#include "common/vk_context.hpp"
-#include "imgui/imgui_icon.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_inspector.hpp"
-#include "nvvkhl/element_nvml.hpp"
-#include "nvvkhl/element_profiler.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvk/renderpasses_vk.hpp"
-
+#include <fmt/format.h>
 
 namespace DH {
 using namespace glm;
@@ -75,16 +62,16 @@ using namespace glm;
 
 // Adding the compiled Vulkan shaders
 #if USE_GLSL
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
+#include "_autogen/bitonic_sort.comp.glsl.h"
+#include "_autogen/bitonic_sort_offsets.comp.glsl.h"
 #include "_autogen/calculate_densities.comp.glsl.h"
 #include "_autogen/calculate_pressure_force.comp.glsl.h"
 #include "_autogen/calculate_viscosity.comp.glsl.h"
 #include "_autogen/external_forces.comp.glsl.h"
+#include "_autogen/raster.frag.glsl.h"
+#include "_autogen/raster.vert.glsl.h"
 #include "_autogen/update_positions.comp.glsl.h"
 #include "_autogen/update_spatial_hash.comp.glsl.h"
-#include "_autogen/bitonic_sort.comp.glsl.h"
-#include "_autogen/bitonic_sort_offsets.comp.glsl.h"
 const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
 const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
 const auto& calculateDensities_shd =
@@ -106,13 +93,37 @@ const auto& bitonicSortOffsets_shd =
 #include "_autogen/fluid_sim_2D_slang.h"
 #include "_autogen/raster_slang.h"
 #endif
-#include "nvvk/shaders_vk.hpp"
+
 #include "common/utils.hpp"
 
 
+#include <nvapp/elem_default_menu.hpp>
+#include <nvapp/elem_default_title.hpp>
+#include <nvapp/elem_inspector.hpp>
+#include <nvapp/elem_profiler.hpp>
+#include <nvgpu_monitor/elem_gpu_monitor.hpp>
+#include <nvgui/fonts.hpp>
+#include <nvgui/property_editor.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvutils/primitives.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/formats.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/profiler_vk.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
+
+
 // Elements used by the sample
-std::shared_ptr<nvvkhl::ElementProfiler>  g_profiler;          // #PROFILER
-std::shared_ptr<nvvkhl::ElementInspector> g_inspectorElement;  // #INSPECTOR
+nvutils::ProfilerManager                 g_profilerManager;   // #PROFILER
+std::shared_ptr<nvapp::ElementInspector> g_inspectorElement;  // #INSPECTOR
 
 //-------------------------------------------------------------------------------------------------
 // This sample implement a simple fluid simulation.
@@ -121,7 +132,7 @@ std::shared_ptr<nvvkhl::ElementInspector> g_inspectorElement;  // #INSPECTOR
 // calling the initialization of Vulkan, GLFW and ImGUI. It runs in an infinite loop and
 // call the function from the IAppElement interface, such as onRender, onUIRender, onResize, ..
 //
-class RealtimeAnalysis : public nvvkhl::IAppElement
+class RealtimeAnalysis : public nvapp::IAppElement
 {
   struct AppSettings
   {
@@ -136,6 +147,13 @@ class RealtimeAnalysis : public nvvkhl::IAppElement
     float     interactionRadius   = 0.2f;   // Pull/push radius
   } m_settings;
 
+  struct PipelineResources
+  {
+    VkPipeline           pipeline{};        // Graphic pipeline to render
+    VkPipelineLayout     pipelineLayout{};  // Pipeline layout
+    nvvk::DescriptorPack descriptorPack{};  // Descriptor bindings, layout, pool, and set
+  };
+
   DH::ParticleSetting m_particleSetting = TestA;  // Initialized with Test-A
 
 
@@ -143,33 +161,49 @@ public:
   RealtimeAnalysis()           = default;
   ~RealtimeAnalysis() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
-    m_app         = app;
-    m_device      = app->getDevice();
-    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-              .physicalDevice = app->getPhysicalDevice(),
-              .device         = app->getDevice(),
-              .instance       = app->getInstance(),
-    });                                                                  // Allocator
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);               // Debug utility
-    m_dsetRaster  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);  // Descriptor Set helper
-    m_dsetCompute = std::make_unique<nvvk::DescriptorSetContainer>(m_device);  // Descriptor Set helper
+    m_app    = app;
+    m_device = app->getDevice();
+    m_alloc.init(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });  // Allocator
 
+
+    // Acquiring the sampler which will be used for displaying the GBuffer
+    m_samplerPool.init(app->getDevice());
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    m_gBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFormat,
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
 
     // #INSPECTOR
-    nvvkhl::ElementInspector::InitInfo inspectInfo{
-        .device                   = m_device,
-        .graphicsQueueFamilyIndex = m_app->getQueue(0).familyIndex,
-        .allocator                = m_alloc.get(),
-        .imageCount               = 1u,
-        .bufferCount              = 2u,
-        .computeCount             = 1u,
-        .fragmentCount            = 1u,
+    nvapp::ElementInspector::InitInfo inspectInfo{
+        .device        = m_device,
+        .queueInfo     = m_app->getQueue(0),
+        .allocator     = &m_alloc,
+        .imageCount    = 1u,
+        .bufferCount   = 2u,
+        .computeCount  = 1u,
+        .fragmentCount = 1u,
     };
     g_inspectorElement->init(inspectInfo);
+
+    m_profilerTimeline = g_profilerManager.createTimeline({.name = "Primary Timeline"});
+    m_profilerGpuTimer.init(m_profilerTimeline, m_app->getDevice(), m_app->getPhysicalDevice(), m_app->getQueue(0).familyIndex, false);
+
 
     initParticles();
     createScene();
@@ -184,43 +218,34 @@ public:
     destroyResources();
   }
 
-  void onResize(uint32_t width, uint32_t height) override
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize) override
   {
-    VkExtent2D size = {width, height};
-    m_gBuffers      = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
+    m_gBuffers.update(cmd, viewportSize);
 
-    inspectorViewportResize(size);  // #INSPECTOR
+    inspectorViewportResize(viewportSize);  // #INSPECTOR
   }
 
   void onUIRender() override
   {
-    namespace PE            = ImGuiH::PropertyEditor;
+    namespace PE            = nvgui::PropertyEditor;
     DH::ParticleSetting& pS = m_particleSetting;
     ImGui::Begin("Settings");
     ImGui::TextDisabled("%d FPS / %.3fms", static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
     PE::begin();
     ImGui::SeparatorText("Visual");
-    PE::entry("Radius", [&] { return ImGui::SliderFloat("##1", &m_settings.particleRadius, 0.005f, 0.05f); });
-    PE::entry("Volume", [&] { return ImGui::SliderFloat("##1", (float*)&pS.boundsMultiplier, 1.0f, 15.0f); });
+    PE::SliderFloat("Radius", &m_settings.particleRadius, 0.005f, 0.05f);
+    PE::SliderFloat("Volume", (float*)&pS.boundsMultiplier, 1.0f, 15.0f);
     ImGui::SeparatorText("Physics");
-    PE::entry("Gravity", [&] { return ImGui::SliderFloat("##1", &pS.gravity, -10.0, 0); });
-    PE::entry("Collision Damping", [&] {
-      return ImGui::SliderFloat("##1", &pS.collisionDamping, 0.0, 1, "%.5f", ImGuiSliderFlags_Logarithmic);
-    });
-    PE::entry("Smoothing Radius", [&] {
-      return ImGui::SliderFloat("##1", &pS.smoothingRadius, 0.2f, 2, "%.5f", ImGuiSliderFlags_Logarithmic);
-    });
-    PE::entry("Target Density", [&] { return ImGui::SliderFloat("##1", &pS.targetDensity, 0.0, 500); });
-    PE::entry("Pressure Multiplier", [&] { return ImGui::SliderFloat("##1", &pS.pressureMultiplier, 0.0, 100); });
-    PE::entry("Near Pressure Multiplier",
-              [&] { return ImGui::SliderFloat("##1", &pS.nearPressureMultiplier, 0.0f, 100); });
-    PE::entry("Viscosity Strength", [&] {
-      return ImGui::SliderFloat("##1", &pS.viscosityStrength, 0.0f, 0.5f, "%.5f", ImGuiSliderFlags_Logarithmic);
-    });
+    PE::SliderFloat("Gravity", &pS.gravity, -10.0, 0);
+    PE::SliderFloat("Collision Damping", &pS.collisionDamping, 0.0, 1, "%.5f", ImGuiSliderFlags_Logarithmic);
+    PE::SliderFloat("Smoothing Radius", &pS.smoothingRadius, 0.2f, 2, "%.5f", ImGuiSliderFlags_Logarithmic);
+    PE::SliderFloat("Target Density", &pS.targetDensity, 0.0, 500);
+    PE::SliderFloat("Pressure Multiplier", &pS.pressureMultiplier, 0.0, 100);
+    PE::SliderFloat("Near Pressure Multiplier", &pS.nearPressureMultiplier, 0.0f, 100);
+    PE::SliderFloat("Viscosity Strength", &pS.viscosityStrength, 0.0f, 0.5f, "%.5f", ImGuiSliderFlags_Logarithmic);
     ImGui::SeparatorText("Interaction");
-    PE::entry("Interaction Strength",
-              [&] { return ImGui::SliderFloat("##1", &m_settings.interactionStrength, 0.0f, 100); });
-    PE::entry("Interaction radius", [&] { return ImGui::SliderFloat("##1", &m_settings.interactionRadius, 0.0f, .5f); });
+    PE::SliderFloat("Interaction Strength", &m_settings.interactionStrength, 0.0f, 100);
+    PE::SliderFloat("Interaction radius", &m_settings.interactionRadius, 0.0f, .5f);
     PE::end();
 
     ImGui::SeparatorText("Test");
@@ -249,17 +274,17 @@ public:
     }
 
     ImGui::SeparatorText("Controls");
-    ImGui::PushFont(ImGuiH::getIconicFont());
-    if(ImGui::Button(m_settings.play ? ImGuiH::icon_media_pause : ImGuiH::icon_media_play) || ImGui::IsKeyPressed(ImGuiKey_Space))
+    ImGui::PushFont(nvgui::getIconicFont());
+    if(ImGui::Button(m_settings.play ? nvgui::icon_media_pause : nvgui::icon_media_play) || ImGui::IsKeyPressed(ImGuiKey_Space))
       m_settings.play = !m_settings.play;
     ImGui::SameLine();
-    if(ImGui::Button(ImGuiH::icon_media_step_forward) || ImGui::IsKeyPressed(ImGuiKey_RightArrow))
+    if(ImGui::Button(nvgui::icon_media_step_forward) || ImGui::IsKeyPressed(ImGuiKey_RightArrow))
     {
       m_settings.runOnce = true;
       m_settings.play    = false;
     }
     ImGui::SameLine();
-    if(ImGui::Button(ImGuiH::icon_media_skip_backward) || ImGui::IsKeyPressed(ImGuiKey_R))
+    if(ImGui::Button(nvgui::icon_media_skip_backward) || ImGui::IsKeyPressed(ImGuiKey_R))
     {
       initParticles();
     }
@@ -285,21 +310,24 @@ public:
     }
 
     // Display of the rendered GBuffer
-    ImGui::Image(m_gBuffers->getDescriptorSet(0U), ImGui::GetContentRegionAvail());
+    ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(0U), ImGui::GetContentRegionAvail());
     ImGui::End();
   }
 
   void onRender(VkCommandBuffer cmd) override
   {
-    auto _scope = m_dutil->DBG_SCOPE(cmd);
-    auto sec    = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
+    NVVK_DBG_SCOPE(cmd);
+    m_profilerTimeline->frameAdvance();
+
+    auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, __FUNCTION__);
 
     computeSimulation(cmd);
     renderParticles(cmd);
 
     // #INSPECTOR
     {
-      auto _scopeInspection = m_dutil->scopeLabel(cmd, "Inspection");
+      nvvk::DebugUtil::ScopedCmdLabel _scopeInspection(cmd, "Inspection");
+
       g_inspectorElement->inspectBuffer(cmd, 0);
       g_inspectorElement->inspectBuffer(cmd, 1);
       g_inspectorElement->inspectImage(cmd, 0, VK_IMAGE_LAYOUT_GENERAL);
@@ -348,36 +376,48 @@ private:
     // Copy the particles to the device
     if(m_bParticles.buffer != nullptr)
     {
-      auto cmd = m_app->createTempCmdBuffer();
-      m_alloc->getStaging()->cmdToBuffer(cmd, m_bParticles.buffer, 0, m_particles.size() * sizeof(DH::Particle),
-                                         m_particles.data());
+      auto                  cmd = m_app->createTempCmdBuffer();
+      nvvk::StagingUploader uploader;
+      uploader.init(&m_alloc);
+
+      uploader.appendBuffer(m_bParticles, 0, std::span(m_particles));
+      uploader.cmdUploadAppended(cmd);
+
       m_app->submitAndWaitTempCmdBuffer(cmd);
-      m_alloc->finalizeAndReleaseStaging();
+      uploader.deinit();
     }
   }
 
 
   void createRasterPipeline()
   {
-    m_dsetRaster->addBinding(DH::eFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetRaster->addBinding(DH::eParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetRaster->addBinding(DH::eFragInspectorData, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
-    m_dsetRaster->addBinding(DH::eFragInspectorMeta, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
-    m_dsetRaster->initLayout();
-    m_dsetRaster->initPool(1);
+    nvvk::DescriptorBindings& bindings = m_rasterPipeline.descriptorPack.bindings;
+    bindings.addBinding(DH::eFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(DH::eParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(DH::eFragInspectorData, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    bindings.addBinding(DH::eFragInspectorMeta, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
 
-    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(DH::PushConstant)};
-    m_dsetRaster->initPipeLayout(1, &push_constant_ranges);
+    NVVK_CHECK(m_rasterPipeline.descriptorPack.initFromBindings(m_device, 1));
+    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.layout);
+    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.pool);
+    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.sets[0]);
+
+    const VkPushConstantRange push_constant_ranges{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                   .offset = 0,
+                                                   .size   = sizeof(DH::PushConstant)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_rasterPipeline.pipelineLayout,
+                                          {m_rasterPipeline.descriptorPack.layout}, {push_constant_ranges}));
+    NVVK_DBG_NAME(m_rasterPipeline.pipelineLayout);
 
     // Writing to descriptors
-    const VkDescriptorBufferInfo      dbi_frameinfo{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorBufferInfo      dbi_particles{m_bParticles.buffer, 0, VK_WHOLE_SIZE};
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eFrameInfo, &dbi_frameinfo));
-    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eParticles, &dbi_particles));
+    const VkDescriptorBufferInfo dbi_frameinfo{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo dbi_particles{m_bParticles.buffer, 0, VK_WHOLE_SIZE};
     // #INSPECTOR : Inspector bindings are done in inspectorViewportResize()
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    nvvk::WriteSetContainer writeContainer;
+    VkDescriptorSet         set = m_rasterPipeline.descriptorPack.sets[0];
+    writeContainer.append(bindings.getWriteSet(DH::eFrameInfo, set), m_bFrameInfo);
+    writeContainer.append(bindings.getWriteSet(DH::eParticles, set), m_bParticles);
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
     prend_info.colorAttachmentCount    = 1;
@@ -389,59 +429,67 @@ private:
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
     nvvk::GraphicsPipelineState pipelineState;
-    pipelineState.rasterizationState.cullMode        = VK_CULL_MODE_NONE;
-    pipelineState.depthStencilState.depthWriteEnable = false;
-    pipelineState.setBlendAttachmentState(0,  // Attachment
-                                          nvvk::GraphicsPipelineState::makePipelineColorBlendAttachmentState(
-                                              allBits, VK_TRUE,                     //
-                                              VK_BLEND_FACTOR_SRC_ALPHA,            // Source color blend factor
-                                              VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Destination color blend factor
-                                              VK_BLEND_OP_ADD,                      // Color blend operation
-                                              VK_BLEND_FACTOR_SRC_ALPHA,            // Source alpha blend factor
-                                              VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Destination alpha blend factor
-                                              VK_BLEND_OP_ADD                       // Alpha blend operation
-                                              ));
+    pipelineState.rasterizationState.cullMode                = VK_CULL_MODE_NONE;
+    pipelineState.depthStencilState.depthWriteEnable         = false;
+    pipelineState.colorBlendEnables[0]                       = VK_TRUE;
+    pipelineState.colorBlendEquations[0].alphaBlendOp        = VK_BLEND_OP_ADD;
+    pipelineState.colorBlendEquations[0].colorBlendOp        = VK_BLEND_OP_ADD;
+    pipelineState.colorBlendEquations[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    pipelineState.colorBlendEquations[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    pipelineState.colorBlendEquations[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    pipelineState.colorBlendEquations[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
 
-    pipelineState.addBindingDescriptions({{0, sizeof(nvh::PrimitiveVertex)}});
-    pipelineState.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, p))},  // Position
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, t))},     // TexCoords
-    });
+    pipelineState.vertexBindings   = {{.sType   = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT,
+                                       .stride  = sizeof(nvutils::PrimitiveVertex),
+                                       .divisor = 1}};
+    pipelineState.vertexAttributes = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                       .location = 0,
+                                       .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                       .offset   = offsetof(nvutils::PrimitiveVertex, pos)},
+                                      {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                       .location = 1,
+                                       .format   = VK_FORMAT_R32G32_SFLOAT,
+                                       .offset   = offsetof(nvutils::PrimitiveVertex, tex)}};
 
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_dsetRaster->getPipeLayout(), prend_info, pipelineState);
+
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_rasterPipeline.pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
+
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    assert("Not implemented");
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", vert_shd);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", frag_shd);
 #endif
 
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
+    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, pipelineState, &m_rasterPipeline.pipeline));
+    NVVK_DBG_NAME(m_rasterPipeline.pipeline);
   }
 
   //-------------------------------------------------------------------------------------------------
   // Creating the descriptor set and all compute shaders
   void createComputeShaderObjectAndLayout()
   {
-    VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(DH::PushConstant)};
-
     // Create the layout used by the shader
-    m_dsetCompute->addBinding(DH::eCompParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetCompute->addBinding(DH::eCompSort, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetCompute->addBinding(DH::eCompSetting, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_dsetCompute->addBinding(DH::eThreadInspection, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
-    m_dsetCompute->addBinding(DH::eThreadMetadata, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    nvvk::DescriptorBindings& bindings = m_computePipeline.descriptorPack.bindings;
+    bindings.addBinding(DH::eCompParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(DH::eCompSort, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(DH::eCompSetting, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(DH::eThreadInspection, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
+    bindings.addBinding(DH::eThreadMetadata, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
 
-    m_dsetCompute->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
-    m_dsetCompute->initPipeLayout(1, &push_constant_ranges);
+    NVVK_CHECK(m_computePipeline.descriptorPack.initFromBindings(m_device, 0, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
+    NVVK_DBG_NAME(m_computePipeline.descriptorPack.layout);
+
+
+    const VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(DH::PushConstant)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_computePipeline.pipelineLayout,
+                                          {m_computePipeline.descriptorPack.layout}, {push_constant_ranges}));
+    NVVK_DBG_NAME(m_computePipeline.pipelineLayout);
+
 
     auto shdInfo = VkShaderCreateInfoEXT{
         .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
@@ -452,7 +500,7 @@ private:
         .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
         .pName                  = "main",
         .setLayoutCount         = 1,
-        .pSetLayouts            = &m_dsetCompute->getLayout(),
+        .pSetLayouts            = &m_computePipeline.descriptorPack.layout,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges    = &push_constant_ranges,
         .pSpecializationInfo    = NULL,
@@ -513,36 +561,44 @@ private:
 
   void createVkBuffers()
   {
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_alloc);
     {
       // Buffer for the raster particles (square)
-      m_bParticle.vertices = m_alloc->createBuffer(cmd, m_rasterParticle.vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_bParticle.indices  = m_alloc->createBuffer(cmd, m_rasterParticle.triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-      m_dutil->DBG_NAME(m_bParticle.vertices.buffer);
-      m_dutil->DBG_NAME(m_bParticle.indices.buffer);
+      NVVK_CHECK(m_alloc.createBuffer(m_bParticle.vertices, std::span(m_rasterParticle.vertices).size_bytes(),
+                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_bParticle.indices, std::span(m_rasterParticle.triangles).size_bytes(),
+                                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m_bParticle.vertices, 0, std::span(m_rasterParticle.vertices)));
+      NVVK_CHECK(uploader.appendBuffer(m_bParticle.indices, 0, std::span(m_rasterParticle.triangles)));
+      NVVK_DBG_NAME(m_bParticle.vertices.buffer);
+      NVVK_DBG_NAME(m_bParticle.indices.buffer);
     }
 
     // Buffer used by raster with updated information at each frame
-    m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_bFrameInfo.buffer);
+    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT));
+    NVVK_DBG_NAME(m_bFrameInfo.buffer);
 
     // Buffer holding the particle settings
-    m_bParticleSetting = m_alloc->createBuffer(sizeof(DH::ParticleSetting),
-                                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_bParticleSetting.buffer);
+    NVVK_CHECK(m_alloc.createBuffer(m_bParticleSetting, sizeof(DH::ParticleSetting),
+                                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_DBG_NAME(m_bParticleSetting.buffer);
 
     // Buffer of the particles, used for the simulation
-    m_bParticles = m_alloc->createBuffer(cmd, m_particles, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    m_dutil->DBG_NAME(m_bParticles.buffer);
+    NVVK_CHECK(m_alloc.createBuffer(m_bParticles, std::span(m_particles).size_bytes(),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_CHECK(uploader.appendBuffer(m_bParticles, 0, std::span(m_particles)));
+    NVVK_DBG_NAME(m_bParticles.buffer);
 
     // Buffer used for sorting particles spatially
-    m_bSpatialInfo = m_alloc->createBuffer(m_particles.size() * sizeof(DH::SpatialInfo),
-                                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    m_dutil->DBG_NAME(m_bSpatialInfo.buffer);
+    NVVK_CHECK(m_alloc.createBuffer(m_bSpatialInfo, m_particles.size() * sizeof(DH::SpatialInfo),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_DBG_NAME(m_bSpatialInfo.buffer);
 
+    uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
+    uploader.deinit();
 
     // Updating the inspector with the buffers
     inspectorBufferInit();   // #INSPECTOR
@@ -551,8 +607,9 @@ private:
 
   void computeSimulation(VkCommandBuffer cmd)
   {
-    auto _scope = m_dutil->DBG_SCOPE(cmd);
-    auto sec    = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
+    NVVK_DBG_SCOPE(cmd);
+
+    auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, __FUNCTION__);
 
     if((m_settings.play || m_settings.runOnce))
     {
@@ -564,9 +621,9 @@ private:
       pSetting.spikyPow2DerivativeScalingFactor = 12.f / (glm::pow(pSetting.smoothingRadius, 4.f) * glm::pi<float>());
       pSetting.numParticles                     = NUM_PARTICLES;
       pSetting.deltaTime                        = std::min(1.f / 60.0f, ImGui::GetIO().DeltaTime);
-      pSetting.boundsSize               = glm::vec2(m_gBuffers->getAspectRatio(), 1) * pSetting.boundsMultiplier;
-      pSetting.interactionInputStrength = 0;
-      pSetting.interactionInputRadius   = m_settings.interactionRadius * pSetting.boundsMultiplier;
+      pSetting.boundsSize                       = glm::vec2(m_gBuffers.getAspectRatio(), 1) * pSetting.boundsMultiplier;
+      pSetting.interactionInputStrength         = 0;
+      pSetting.interactionInputRadius           = m_settings.interactionRadius * pSetting.boundsMultiplier;
       if(m_settings.pullInteraction || m_settings.pushInteraction)
         pSetting.interactionInputStrength = m_settings.pushInteraction ? -m_settings.interactionStrength : m_settings.interactionStrength;
       pSetting.interactionInputPoint = m_settings.mouseCoord;
@@ -580,14 +637,16 @@ private:
       const VkDescriptorBufferInfo in_desc3{g_inspectorElement->getComputeInspectionBuffer(0), 0, VK_WHOLE_SIZE};
       const VkDescriptorBufferInfo in_desc4{g_inspectorElement->getComputeMetadataBuffer(0), 0, VK_WHOLE_SIZE};
 
-      std::vector<VkWriteDescriptorSet> writes;
-      writes.push_back(m_dsetCompute->makeWrite(0, DH::eCompParticles, &in_desc0));
-      writes.push_back(m_dsetCompute->makeWrite(0, DH::eCompSort, &in_desc1));
-      writes.push_back(m_dsetCompute->makeWrite(0, DH::eCompSetting, &in_desc2));
-      writes.push_back(m_dsetCompute->makeWrite(0, DH::eThreadInspection, &in_desc3));
-      writes.push_back(m_dsetCompute->makeWrite(0, DH::eThreadMetadata, &in_desc4));
-      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_dsetCompute->getPipeLayout(), 0,
-                                static_cast<uint32_t>(writes.size()), writes.data());
+      nvvk::WriteSetContainer         writeContainer;
+      const nvvk::DescriptorBindings& computeBindings = m_computePipeline.descriptorPack.bindings;
+      writeContainer.append(computeBindings.getWriteSet(DH::eCompParticles), m_bParticles);
+      writeContainer.append(computeBindings.getWriteSet(DH::eCompSort), m_bSpatialInfo);
+      writeContainer.append(computeBindings.getWriteSet(DH::eCompSetting), m_bParticleSetting);
+      writeContainer.append(computeBindings.getWriteSet(DH::eThreadInspection), g_inspectorElement->getComputeInspectionBuffer(0));
+      writeContainer.append(computeBindings.getWriteSet(DH::eThreadMetadata), g_inspectorElement->getComputeMetadataBuffer(0));
+
+      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline.pipelineLayout, 0,
+                                static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
 
 
       int numBlocks = getNumBlocks();  // Number of working blocks
@@ -598,8 +657,9 @@ private:
 
       dispatch(cmd, eExternalForcesShd, numBlocks, "ExternalForce");
       {
-        auto _scopeSort = m_dutil->scopeLabel(cmd, "Sort");
-        auto tsort      = g_profiler->timeRecurring("Sort", cmd);  // #PROFILER
+        nvvk::DebugUtil::ScopedCmdLabel _scopeSort(cmd, "Sort");
+
+        auto timerSection2 = m_profilerGpuTimer.cmdFrameSection(cmd, "Sort");
 
         dispatch(cmd, eUpdateSpatialHashShd, numBlocks, "Hash");
 
@@ -643,23 +703,32 @@ private:
 
   void renderParticles(VkCommandBuffer cmd)
   {
-    auto _scope = m_dutil->DBG_SCOPE(cmd);
-    auto sec    = g_profiler->timeRecurring(__FUNCTION__, cmd);  // #PROFILER
+    NVVK_DBG_SCOPE(cmd);
+
+    auto timerSection = m_profilerGpuTimer.cmdFrameSection(cmd, __FUNCTION__);
 
     // Update Frame buffer uniform buffer
     DH::FrameInfo finfo{};
-    finfo.proj = glm::ortho(-1.F * m_gBuffers->getAspectRatio(), 1.F * m_gBuffers->getAspectRatio(), 1.F, -1.F, -1.F, 1.F);
+    finfo.proj = glm::ortho(-1.F * m_gBuffers.getAspectRatio(), 1.F * m_gBuffers.getAspectRatio(), 1.F, -1.F, -1.F, 1.F);
     finfo.radius = m_settings.particleRadius;
     finfo.scale  = 1 / m_particleSetting.boundsMultiplier;
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
-    nvvk::memoryBarrier(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 
 
     // Drawing the primitives in a G-Buffer
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, {{0, 0, 0, 0}});
-    r_info.pStencilAttachment = nullptr;
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+
+    // Create the rendering info
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
+    renderingInfo.pDepthAttachment     = &depthAttachment;
 
 
     // #INSPECTOR
@@ -667,17 +736,17 @@ private:
     g_inspectorElement->updateMinMaxFragmentInspection(cmd, 0, m_settings.mouseWindowCoord - glm::vec2(1, 1),
                                                        m_settings.mouseWindowCoord + glm::vec2(1, 1));
 
-    vkCmdBeginRendering(cmd, &r_info);  // Begin rendering commands
-    m_app->setViewport(cmd);            // Set the viewport and scissor rectangle
+    vkCmdBeginRendering(cmd, &renderingInfo);  // Begin rendering commands
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
 
     // Bind the graphics pipeline and descriptor sets, which contain shader resources
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dsetRaster->getPipeLayout(), 0, 1,
-                            m_dsetRaster->getSets(), 0, nullptr);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_rasterPipeline.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_rasterPipeline.pipelineLayout, 0, 1,
+                            &m_rasterPipeline.descriptorPack.sets[0], 0, nullptr);
 
     // Push constant information to the shaders
-    vkCmdPushConstants(cmd, m_dsetRaster->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                       sizeof(DH::PushConstant), &m_pushConst);
+    vkCmdPushConstants(cmd, m_rasterPipeline.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(DH::PushConstant), &m_pushConst);
 
     // Bind the vertex buffer and its offset, and the index buffer used for indexed drawing.
     const VkDeviceSize offsets{0};
@@ -694,7 +763,7 @@ private:
   // #INSPECTOR
   void inspectorBufferInit()
   {
-    using EI = nvvkhl::ElementInspector;
+    using EI = nvapp::ElementInspector;
     {
       EI::BufferInspectionInfo info{
           .name         = "Particles",
@@ -730,7 +799,7 @@ private:
   // #INSPECTOR
   void inspectorComputeInit()
   {
-    using EI = nvvkhl::ElementInspector;
+    using EI = nvapp::ElementInspector;
     EI::ComputeInspectionInfo info{
         .name             = "Pressure",
         .format           = {{EI::eF32Vec2, "pressure"}, {EI::eUint32, "Num Elem"}},
@@ -746,18 +815,22 @@ private:
   }
 
   // #INSPECTOR
-  void inspectorViewportResize(VkExtent2D& size)
+  void inspectorViewportResize(const VkExtent2D& size)
   {
-    using EI = nvvkhl::ElementInspector;
+    using EI = nvapp::ElementInspector;
 
     // Inspection of the image stored in m_gBuffers
-    VkImageUsageFlags flags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    VkImageCreateInfo createInfo = nvvk::makeImage2DCreateInfo(size, m_colorFormat, flags);
+    VkImageUsageFlags flags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT
+                              | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VkImageCreateInfo createInfo = DEFAULT_VkImageCreateInfo;
+    createInfo.format            = m_colorFormat;
+    createInfo.extent            = {size.width, size.height, 1};
+    createInfo.usage             = flags;
 
     EI::ImageInspectionInfo imageInspectInfo{
         .name        = "GBuffer-0",
         .createInfo  = createInfo,
-        .sourceImage = m_gBuffers->getColorImage(0),
+        .sourceImage = m_gBuffers.getColorImage(0),
         .format      = EI::formatRGBA8(),  //VK_FORMAT_R8G8B8A8_UNORM
     };
     g_inspectorElement->initImageInspection(0, imageInspectInfo);
@@ -775,10 +848,14 @@ private:
     // initFragmentInspection creates buffers, write the info in descriptor set
     const VkDescriptorBufferInfo inspectorInspection{g_inspectorElement->getFragmentInspectionBuffer(0), 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo inspectorMetadata{g_inspectorElement->getFragmentMetadataBuffer(0), 0, VK_WHOLE_SIZE};
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eFragInspectorData, &inspectorInspection));
-    writes.emplace_back(m_dsetRaster->makeWrite(0, DH::eFragInspectorMeta, &inspectorMetadata));
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+
+    nvvk::WriteSetContainer         writeContainer;
+    const nvvk::DescriptorBindings& rasterBindings = m_rasterPipeline.descriptorPack.bindings;
+    writeContainer.append(rasterBindings.getWriteSet(DH::eFragInspectorData, m_rasterPipeline.descriptorPack.sets[0]),
+                          g_inspectorElement->getFragmentInspectionBuffer(0));
+    writeContainer.append(rasterBindings.getWriteSet(DH::eFragInspectorMeta, m_rasterPipeline.descriptorPack.sets[0]),
+                          g_inspectorElement->getFragmentMetadataBuffer(0));
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
 
   // Dispatch computer shader
@@ -790,7 +867,7 @@ private:
 
     const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
     vkCmdBindShadersEXT(cmd, 1, stages, &m_shaders[shaderID]);
-    vkCmdPushConstants(cmd, m_dsetCompute->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
+    vkCmdPushConstants(cmd, m_computePipeline.pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &m_pushConst);
 
     vkCmdDispatch(cmd, numBlocks, 1, 1);
     if(!label.empty())
@@ -810,42 +887,54 @@ private:
 
   void destroyResources()
   {
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_rasterPipeline.pipeline, nullptr);
 
-    m_alloc->destroy(m_bParticle.vertices);
-    m_alloc->destroy(m_bParticle.indices);
-    m_alloc->destroy(m_bFrameInfo);
-    m_alloc->destroy(m_bParticles);
-    m_alloc->destroy(m_bSpatialInfo);
-    m_alloc->destroy(m_bParticleSetting);
+    m_alloc.destroyBuffer(m_bParticle.vertices);
+    m_alloc.destroyBuffer(m_bParticle.indices);
+    m_alloc.destroyBuffer(m_bFrameInfo);
+    m_alloc.destroyBuffer(m_bParticles);
+    m_alloc.destroyBuffer(m_bSpatialInfo);
+    m_alloc.destroyBuffer(m_bParticleSetting);
+
+    vkDestroyPipelineLayout(m_device, m_rasterPipeline.pipelineLayout, nullptr);
+    m_rasterPipeline.descriptorPack.deinit();
+
+    vkDestroyPipelineLayout(m_device, m_computePipeline.pipelineLayout, nullptr);
+    m_computePipeline.descriptorPack.deinit();
+
 
     for(auto shader : m_shaders)
       vkDestroyShaderEXT(m_app->getDevice(), shader, NULL);
 
-    m_dsetRaster->deinit();
-    m_dsetCompute->deinit();
-    m_gBuffers.reset();
+    // #PROFILER
+    m_profilerGpuTimer.deinit();
+    g_profilerManager.destroyTimeline(m_profilerTimeline);
+
+    m_gBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //-------------------------------------------------------------------------------------------------
   //
-  std::unique_ptr<nvvkhl::AllocVma> m_alloc    = {};
-  std::unique_ptr<nvvkhl::GBuffer>  m_gBuffers = {};
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil    = {};
-  nvvkhl::Application*              m_app      = {nullptr};
-  VkDevice                          m_device   = VK_NULL_HANDLE;
+  nvapp::Application*     m_app      = {nullptr};
+  nvvk::ResourceAllocator m_alloc    = {};
+  nvvk::GBuffer           m_gBuffers = {};
+  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
+
+  VkDevice m_device = VK_NULL_HANDLE;
 
   VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
   VkFormat m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
 
   // Scene resources
-  nvh::PrimitiveMesh        m_rasterParticle;
+  nvutils::PrimitiveMesh    m_rasterParticle;
   std::vector<DH::Particle> m_particles;
   struct PrimitiveMeshVk
   {
@@ -859,33 +948,39 @@ private:
   std::array<VkShaderEXT, numCompShaders> m_shaders = {};
 
   // Pipeline
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dsetRaster;                         // Descriptor set
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dsetCompute;                        // Descriptor set
-  DH::PushConstant                              m_pushConst        = {};              // Information sent to the shader
-  VkPipeline                                    m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  PipelineResources m_rasterPipeline;
+  PipelineResources m_computePipeline;
+
+  // Profiler
+  nvutils::ProfilerTimeline* m_profilerTimeline{};
+  nvvk::ProfilerGpuTimer     m_profilerGpuTimer;
+
+  DH::PushConstant m_pushConst        = {};              // Information sent to the shader
+  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
 };
 
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
   appInfo.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.windowSize            = {1700, 900};
   appInfo.hasUndockableViewport = true;
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
-  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
-  cli.addArgument({"--winSize"}, &appInfo.windowSize, "[width height] of the window");
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  reg.add({"frames", "Number of frames to render in headless mode"}, &appInfo.headlessFrameCount, true);
+  reg.addVector({"winSize", "Width and height of the window"}, &appInfo.windowSize);
+  cli.add(reg);
   cli.parse(argc, argv);
-
 
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
 
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup;
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
     vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   }
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -894,18 +989,18 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME});
 
   // Create Vulkan context
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
-
-  // Loading the Vulkan extension pointers
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Setting up the Vulkan part of the application
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Setting up the layout of the application
   appInfo.dockSetup = [](ImGuiID viewportID) {
@@ -920,28 +1015,37 @@ int main(int argc, char** argv)
   };
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
-  // Global element used in sample
-  g_profiler         = std::make_shared<nvvkhl::ElementProfiler>();   // #PROFILER
-  g_inspectorElement = std::make_shared<nvvkhl::ElementInspector>();  // #INSPECTOR
 
-  // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
+  // #PROFILER
+  // setup the profiler element and views
+  nvapp::ElementProfiler::ViewSettings viewSettings{.name       = "Profiler",
+                                                    .defaultTab = nvapp::ElementProfiler::TABLE,
+                                                    .pieChart   = {.cpuTotal = false, .levels = 2},
+                                                    .lineChart  = {.cpuLine = false}};
+  // setting are optional, but can be used to expose to sample code (like hiding views for benchmark)
 
-  app->addElement(test);                                            // Command line Testing application
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());  // File,  Help
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info  // Window title
-  app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));  // NVML monitor
-  app->addElement(g_profiler);                                   // #PROFILER GPU profiler
-  app->addElement(g_inspectorElement);                           // #INSPECTOR Vk object inspector
-  app->addElement(std::make_shared<RealtimeAnalysis>());         // This sample
+  auto elemProfiler = std::make_shared<nvapp::ElementProfiler>(
+      &g_profilerManager, std::make_shared<nvapp::ElementProfiler::ViewSettings>(std::move(viewSettings)));
 
-  g_profiler->setLabelUsage(false);  // Not using the "auto debug scope naming", using our own instead
 
-  app->run();
-  app.reset();
-  vkContext.reset();
+  g_inspectorElement = std::make_shared<nvapp::ElementInspector>();  // #INSPECTOR
 
-  return test->errorCode();
+
+  app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());  // File,  Help
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info  // Window title
+  app.addElement(std::make_shared<nvgpu_monitor::ElementGpuMonitor>());  // NVML monitor
+  app.addElement(elemProfiler);                                          // #PROFILER GPU profiler
+  app.addElement(g_inspectorElement);                                    // #INSPECTOR Vk object inspector
+  app.addElement(std::make_shared<RealtimeAnalysis>());                  // This sample
+
+  // g_profiler->setLabelUsage(false);  // Not using the "auto debug scope naming", using our own instead
+
+  app.run();
+  app.deinit();
+  vkContext.deinit();
+
+  return 0;
 }

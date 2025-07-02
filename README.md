@@ -32,46 +32,44 @@ cmake ..
 
 The Aftermath sample requires the separate download of the [Nsight Aftermath SDK](https://developer.nvidia.com/nsight-aftermath).
 
-### Shader Language Options: GLSL, HLSL, or SLANG
+### Shader Language Options: GLSL or SLANG
 
-By default, samples use GLSL shaders. However, many also offer equivalent shaders in [HLSL](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl) and [SLANG](https://github.com/shader-slang/slang). To switch between them, select the desired shader language and regenerate the CMake configuration. The solution will update accordingly with compatible projects and their respective shaders.
-
-![Shader Language Selection](docs/use_shaders.png)
+Samples can use either GLSL or Slang (default), and can be changed by changing the define `USE_SLANG` from `1` to `0` to use GLSL.
 
 ## Samples
 
 For those new to this repository, the [solid color](samples/solid_color) and [rectangle](samples/rectangle) samples are recommended starting points to better understand the framework.
 
 
-| Name | Description | Image | GLSL | HLSL | Slang |
-| ------ | ------ | ---- | ---- | ---- | ---- |
-| [barycentric_wireframe](samples/barycentric_wireframe) | Single-pass solid-wireframe rendering using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) | [x] |  [x] | [x] |
-| [compute_multi_threaded](samples/compute_multi_threaded) | Executing a compute shader in a separate thread faster than the main thread.| ![](samples/compute_multi_threaded/docs/multi_threaded_th.jpg) | [x] | [x] | [x] |
-| [compute_only](samples/compute_only) | Basic compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] | [x] |
-| [crash_aftermath](samples/crash_aftermath) | Integration of Nsight Aftermath SDK into an existing application | ![](samples/crash_aftermath/docs/aftermath_th.jpg) | [x] | [x] | [x] |
-| [gltf_raytrace](samples/gltf_raytrace) | glTF scene loading with path-tracing renderer |  ![](samples/gltf_raytrace/docs/gltf_th.jpg) | [x] | [x] | [x] |
-| [gpu_monitor](samples/gpu_monitor) | GPU usage visualization | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] | [x] |
-| [image_ktx](samples/image_ktx) | KTX image display with tonemapping post-processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | [x] | [x] | [x] |
-| [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] | [x] |
-| [line_stipple](samples/line_stipple) | Dashed line rendering with stipple pattern | ![](samples/line_stipple/docs/line_stipple_th.jpg) | [x] | [x] | [x] |
-| [memory_budget](samples/memory_budget) | Dynamic memory allocation within budget constraints | ![](samples/memory_budget/docs/mem_budget_th.jpg) | [x] | [x] | [x] |
-| [mm_opacity](samples/mm_opacity) | Micromap opacity implementation  | ![](samples/mm_opacity/docs/opacity_th.jpg) | [x] | [x] | [x] |
-| [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing demonstration  | ![](samples/msaa/docs/msaa_th.jpg) | [x] | [x] | [x] |
-| [offscreen](samples/offscreen) | Windowless rendering with image save functionality.  | ![](samples/offscreen/docs/offline_th.jpg) | [x] | [x] | [x] |
-| [ray_query](samples/ray_query) | Inline raytracing in compute shaders | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [x] | [x] |
-| [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch usage in ray query | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [x] | [ ] | [x] |
-| [ray_trace](samples/ray_trace) | Basic ray tracer with metallic-roughness shading, reflections, shadows, and sky shader.  | ![](samples/ray_trace/docs/raytrace_th.jpg) | [x] | [x] | [x] |
-| [ray_trace_motion_blur](samples/ray_trace_motion_blur) | Motion blur for dynamic objects using NVIDIA raytracing extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [x] | [ ] | [x] |
-| [ray_tracing_position_fetch](samples/ray_tracing_position_fetch) | VK_KHR_ray_tracing_position_fetch implementation. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [x] | [ ] | [x] |
-| [realtime_analysis](samples/realtime_analysis) | Real-time GPU information display | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [x] | [ ] | [x] |
-| [rectangle](samples/rectangle) | 2D rectangle rendering to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) | [x] | [x] | [x] |
-| [ser_pathtrace](samples/ser_pathtrace) | Shading Execution Reordering (SER) for optimized GPU usage.  | ![](samples/ser_pathtrace/docs/ser_2_th.jpg) | [x] | [x] | [x] |
-| [shader_object](samples/shader_object) | Shader object and dynamic pipeline usage | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] | [x] |
-| [shader_printf](samples/shader_printf) | Shader debugging with printf functionality  | ![](samples/shader_printf/docs/printf_th.jpg) | [x] | [x] | [x] |
-| [simple_polygons](samples/simple_polygons) | Multi-polygon object rasterization.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | [x] | [x] | [x] |
-| [solid_color](samples/solid_color) | Single-pixel texture creation and display.  | ![](samples/solid_color/docs/solid_color_th.jpg) | [x] | [x] | [x] |
-| [texture 3d](samples/texture_3d) | 3D texture creation and ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) | [x] | [x] | [x] |
-| [tiny_shader_toy](samples/tiny_shader_toy) | Real-time shader compilation with error display and multi-stage pipelines.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) | [x] | [ ] | [ ] |
+| Name | Description | Image | GLSL | Slang |
+| ------ | ------ | ---- | ---- | ---- |
+| [barycentric_wireframe](samples/barycentric_wireframe) | Single-pass solid-wireframe rendering using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) | [x] |  [x] |
+| [compute_multi_threaded](samples/compute_multi_threaded) | Executing a compute shader in a separate thread faster than the main thread.| ![](samples/compute_multi_threaded/docs/multi_threaded_th.jpg) | [x] | [x] |
+| [compute_only](samples/compute_only) | Basic compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | [x] | [x] |
+| [crash_aftermath](samples/crash_aftermath) | Integration of Nsight Aftermath SDK into an existing application | ![](samples/crash_aftermath/docs/aftermath_th.jpg) | [x] | [x] |
+| [gltf_raytrace](samples/gltf_raytrace) | glTF scene loading with path-tracing renderer |  ![](samples/gltf_raytrace/docs/gltf_th.jpg) | [ ] | [x] | 
+| [gpu_monitor](samples/gpu_monitor) | GPU usage visualization | ![](samples/gpu_monitor/gpu_monitor_th.png) | [x] | [x] | 
+| [image_ktx](samples/image_ktx) | KTX image display with tonemapping post-processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | [x] | [x] | 
+| [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | [x] | [x] | 
+| [line_stipple](samples/line_stipple) | Dashed line rendering with stipple pattern | ![](samples/line_stipple/docs/line_stipple_th.jpg) | [x] | [x] | 
+| [memory_budget](samples/memory_budget) | Dynamic memory allocation within budget constraints | ![](samples/memory_budget/docs/mem_budget_th.jpg) | [x] | [x] | 
+| [mm_opacity](samples/mm_opacity) | Micromap opacity implementation  | ![](samples/mm_opacity/docs/opacity_th.jpg) | [x] | [x] | 
+| [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing demonstration  | ![](samples/msaa/docs/msaa_th.jpg) | [x] | [x] | 
+| [offscreen](samples/offscreen) | Windowless rendering with image save functionality.  | ![](samples/offscreen/docs/offline_th.jpg) | [x] | [x] | 
+| [ray_query](samples/ray_query) | Inline raytracing in compute shaders | ![](samples/ray_query/docs/ray_query_th.jpg) | [x] | [x] | 
+| [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch usage in ray query | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | [x] | [x] |
+| [ray_trace](samples/ray_trace) | Basic ray tracer with metallic-roughness shading, reflections, shadows, and sky shader.  | ![](samples/ray_trace/docs/raytrace_th.jpg) | [ ] | [x] | 
+| [ray_trace_motion_blur](samples/ray_trace_motion_blur) | Motion blur for dynamic objects using NVIDIA raytracing extension | ![](samples/ray_trace_motion_blur/docs/motion_blur_th.jpg) | [x] | [x] |
+| [ray_tracing_position_fetch](samples/ray_tracing_position_fetch) | VK_KHR_ray_tracing_position_fetch implementation. | ![](samples/ray_tracing_position_fetch/docs/fetch_th.jpg) | [x] | [x] |
+| [realtime_analysis](samples/realtime_analysis) | Real-time GPU information display | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | [x] | [ ] |
+| [rectangle](samples/rectangle) | 2D rectangle rendering to GBuffer.  | ![](samples/rectangle/docs/rectangle_th.jpg) | [x] | [x] | 
+| [ser_pathtrace](samples/ser_pathtrace) | Shading Execution Reordering (SER) for optimized GPU usage.  | ![](samples/ser_pathtrace/docs/ser_2_th.jpg) | [x] | [x] | 
+| [shader_object](samples/shader_object) | Shader object and dynamic pipeline usage | ![](samples/shader_object/docs/shader_object_th.jpg) | [x] | [x] | 
+| [shader_printf](samples/shader_printf) | Shader debugging with printf functionality  | ![](samples/shader_printf/docs/printf_th.jpg) | [x] | [x] | 
+| [simple_polygons](samples/simple_polygons) | Multi-polygon object rasterization.  | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | [x] | [x] | 
+| [solid_color](samples/solid_color) | Single-pixel texture creation and display.  | ![](samples/solid_color/docs/solid_color_th.jpg) | [x] | [x] | 
+| [texture 3d](samples/texture_3d) | 3D texture creation and ray marching. | ![](samples/texture_3d/docs/texture_3d_th.jpg) | [x] | [x] | 
+| [tiny_shader_toy](samples/tiny_shader_toy) | Real-time shader compilation with error display and multi-stage pipelines.  | ![](samples/tiny_shader_toy/docs/tiny_shader_toy_th.jpg) | [x] | [x] |
 
 ## Rendering Architecture
 
@@ -138,18 +136,10 @@ This architecture provides a robust and flexible framework for implementing dive
 
 Vulkan utilizes SPIR-V as its intermediate shader representation, diverging from the direct consumption of human-readable shader text. This architectural decision enables support for multiple high-level shader languages, provided they can target the Vulkan SPIR-V environment.
 
-### Configuration Options
-
-The samples in this repository are designed to accommodate multiple shader languages. Language selection is controlled via CMake options:
-
-- `USE_GLSL`: Enables GLSL shader compilation
-- `USE_SLANG`: Enables Slang shader compilation
-- `USE_HLSL`: Enables HLSL shader compilation
-
 
 ### Supported Languages
 
-#### Slang
+#### Slang (Default)
 
 [Slang](https://github.com/shader-slang/slang) is a high-level shader language with syntax resembling C++. It is extensively used in NVIDIA research due to its versatility in targeting multiple backends:
 
@@ -160,13 +150,8 @@ The samples in this repository are designed to accommodate multiple shader langu
 
 To specify a custom Slang compiler version, modify the `Slang_VERSION` CMakeLists.txt.
 
-#### HLSL (High Level Shading Language)
 
-Microsoft's HLSL, primarily associated with DirectX, has been extended to support SPIR-V code generation. Recent versions of the Vulkan SDK include the DXC compiler by default, facilitating HLSL to SPIR-V compilation.
-
-To use a non-default `dxc` binary, modify the `Vulkan_dxc_EXECUTABLE` path in the `Vulkan` CMake configuration.
-
-#### GLSL (Default)
+#### GLSL
 
 GLSL (OpenGL Shading Language) serves as the default shader language when neither Slang nor HLSL is explicitly enabled. It is natively supported by the Vulkan ecosystem.
 
@@ -174,15 +159,6 @@ This multi-language support strategy offers developers flexibility in shader aut
 
 
 ### Resources
-
-#### HLSL 
-- HLSL to SPIR-V: [Feature Mapping Manual](https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst)
-- Ray Tracing: [HLSL](https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html)
-- Porting to HLSL:
-  - [GLSL variables](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-variables-to-hlsl)
-  - [GLSL types](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-types-to-hlsl)
-  - [Global Variables](https://learn.microsoft.com/en-us/windows/uwp/gaming/glsl-to-hlsl-reference#porting-glsl-pre-defined-global-variables-to-hlsl)
-  - [Mapping between HLSL and GLSL](https://anteru.net/blog/2016/mapping-between-HLSL-and-GLSL/)
 
 #### SLANG
 - [GitHub Repository](https://github.com/shader-slang/slang)

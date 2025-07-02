@@ -18,40 +18,42 @@
  */
 
 #define _USE_MATH_DEFINES
+#include <array>
 #include <map>
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/noise.hpp>  // Perlin noise
 
 
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/error_vk.hpp"
-#include "nvh/parallel_work.hpp"
-
 #include "mm_process.hpp"
-#include "common/bird_curve_helper.hpp"
+#include "bird_curve_helper.hpp"
 #include "common/bit_packer.hpp"
-#include "nvh/alignment.hpp"
-#include <array>
-#include "nvh/timesampler.hpp"
+#include "nvvk/resource_allocator.hpp"
+#include "nvutils/timers.hpp"
+#include "nvvk/staging.hpp"
+#include "nvvk/check_error.hpp"
+#include "nvvk/debug_util.hpp"
+#include "nvutils/parallel_work.hpp"
 
-MicromapProcess::MicromapProcess(VkDevice device, VkPhysicalDevice physicalDevice, nvvk::ResourceAllocator* allocator)
-    : m_device(device)
-    , m_alloc(allocator)
+
+MicromapProcess::MicromapProcess(nvvk::ResourceAllocator* allocator)
+    : m_alloc(allocator)
 {
+  m_device = allocator->getDevice();
+
   // Requesting ray tracing properties
   VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
   prop2.pNext = &m_oppacityProps;
-  vkGetPhysicalDeviceProperties2(physicalDevice, &prop2);
+  vkGetPhysicalDeviceProperties2(allocator->getPhysicalDevice(), &prop2);
 }
 
 MicromapProcess::~MicromapProcess()
 {
-  m_alloc->destroy(m_inputData);
-  m_alloc->destroy(m_microData);
-  m_alloc->destroy(m_trianglesBuffer);
-  m_alloc->destroy(m_scratchBuffer);
-  m_alloc->destroy(m_indexBuffer);
+  m_alloc->destroyBuffer(m_inputData);
+  m_alloc->destroyBuffer(m_microData);
+  m_alloc->destroyBuffer(m_trianglesBuffer);
+  m_alloc->destroyBuffer(m_scratchBuffer);
+  m_alloc->destroyBuffer(m_indexBuffer);
   vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
 }
 
@@ -61,16 +63,21 @@ MicromapProcess::~MicromapProcess()
 // - Pack the data to 11 bit (64_TRIANGLES_64_BYTES format)
 // - Get the usage
 // - Create the vector of VkMicromapTriangleEXT
-bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius, uint16_t micromapFormat)
+bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
+                                         nvvk::StagingUploader&        uploader,
+                                         const nvutils::PrimitiveMesh& mesh,
+                                         uint16_t                      subdivLevel,
+                                         float                         radius,
+                                         uint16_t                      micromapFormat)
 {
-  nvh::ScopedTimer stimer("Create Micromap Data");
+  nvutils::ScopedTimer stimer("Create Micromap Data");
 
   vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
-  m_alloc->destroy(m_scratchBuffer);
-  m_alloc->destroy(m_inputData);
-  m_alloc->destroy(m_microData);
-  m_alloc->destroy(m_trianglesBuffer);
-  m_alloc->destroy(m_indexBuffer);
+  m_alloc->destroyBuffer(m_scratchBuffer);
+  m_alloc->destroyBuffer(m_inputData);
+  m_alloc->destroyBuffer(m_microData);
+  m_alloc->destroyBuffer(m_trianglesBuffer);
+  m_alloc->destroyBuffer(m_indexBuffer);
 
   // Get an array of displacement per triangle
   MicroOpacity micro_dist = createOpacity(mesh, subdivLevel, radius);
@@ -148,8 +155,13 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
       }
     }
 
-    m_inputData = m_alloc->createBuffer(
-        cmd, packed_data, VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    NVVK_CHECK(m_alloc->createBuffer(m_inputData, std::span(packed_data).size_bytes(),
+                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                         | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                     VMA_MEMORY_USAGE_AUTO));
+    NVVK_CHECK(uploader.appendBuffer(m_inputData, 0, std::span(packed_data)));
+    NVVK_DBG_NAME(m_inputData.buffer);
   }
 
   // Micromap Triangle
@@ -161,9 +173,12 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
       uint32_t offset = storage_byte * tri_index;  // Same offset as when storing the data
       micromap_triangles.push_back({offset, subdivLevel, micromapFormat});
     }
-    m_trianglesBuffer = m_alloc->createBuffer(cmd, micromap_triangles,
-                                              VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT
-                                                  | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    NVVK_CHECK(m_alloc->createBuffer(m_trianglesBuffer, std::span(micromap_triangles).size_bytes(),
+                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                         | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                     VMA_MEMORY_USAGE_AUTO));
+    NVVK_CHECK(uploader.appendBuffer(m_trianglesBuffer, 0, std::span(micromap_triangles)));
+    NVVK_DBG_NAME(m_trianglesBuffer.buffer);
   }
 
   // Index buffer: referencing the Micromap Triangle buffer
@@ -174,13 +189,21 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
     {
       i = cnt++;
     }
-    m_indexBuffer = m_alloc->createBuffer(
-        cmd, index, VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    NVVK_CHECK(m_alloc->createBuffer(m_indexBuffer, std::span(index).size_bytes(),
+                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT
+                                         | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+    NVVK_CHECK(uploader.appendBuffer(m_indexBuffer, 0, std::span(index)));
+    NVVK_DBG_NAME(m_indexBuffer.buffer);
   }
 
+  // Upload the data to the GPU
+  uploader.cmdUploadAppended(cmd);
 
+  // Barrier to make sure the data is ready before building the micromap
   barrier(cmd);
 
+  // Build the micromap
   buildMicromap(cmd, VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT);
 
   return true;
@@ -191,7 +214,7 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer cmd, const nvh::Primiti
 //
 bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micromapType)
 {
-  nvh::ScopedTimer stimer("Build Micromap");
+  nvutils::ScopedTimer stimer("Build Micromap");
 
   // Find the size required
   VkMicromapBuildSizesInfoEXT size_info{VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT};
@@ -205,12 +228,15 @@ bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micro
   assert(size_info.micromapSize && "sizeInfo.micromeshSize was zero");
 
   // create micromeshData buffer
-  m_microData = m_alloc->createBuffer(size_info.micromapSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                  | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT);
+  NVVK_CHECK(m_alloc->createBuffer(m_microData, size_info.micromapSize,
+                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_MICROMAP_STORAGE_BIT_EXT));
+  NVVK_DBG_NAME(m_microData.buffer);
 
   uint64_t scratch_size = std::max(size_info.buildScratchSize, static_cast<VkDeviceSize>(4));
-  m_scratchBuffer = m_alloc->createBuffer(scratch_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                            | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT);
+  NVVK_CHECK(m_alloc->createBuffer(m_scratchBuffer, scratch_size,
+                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                       | VK_BUFFER_USAGE_2_MICROMAP_STORAGE_BIT_EXT));
+  NVVK_DBG_NAME(m_scratchBuffer.buffer);
 
   // Create micromap
   VkMicromapCreateInfoEXT mm_create_info{VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT};
@@ -238,9 +264,9 @@ bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micro
 //
 void MicromapProcess::cleanBuildData()
 {
-  m_alloc->destroy(m_scratchBuffer);
-  m_alloc->destroy(m_inputData);
-  m_alloc->destroy(m_trianglesBuffer);
+  m_alloc->destroyBuffer(m_scratchBuffer);
+  m_alloc->destroyBuffer(m_inputData);
+  m_alloc->destroyBuffer(m_trianglesBuffer);
 }
 
 
@@ -262,65 +288,49 @@ void MicromapProcess::barrier(VkCommandBuffer cmd)
 // Return 2 when triangle is within the circle
 // Return 1 when triangle intersect, point, edge or surface
 // Return 0 when it is totally outside
-uint32_t triangleCircleItersection(const std::array<glm::vec3, 3>& p, const glm::vec3& center, float radius)
+static uint32_t triangleCircleItersection(const std::array<glm::vec3, 3>& p, const glm::vec3& center, float radius)
 {
-  float radiusSqr = radius * radius;
+  const float radiusSqr = radius * radius;
 
-  // Vertices within circle
-  int       hit = 0;
-  glm::vec3 c[3];
-  float     csqr[3]{};
+  // Pre-calculate center-to-vertex vectors and their squared distances to circle
+  struct
+  {
+    glm::vec3 vec;
+    float     sqrDist;
+  } c[3] = {{center - p[0], 0.0f}, {center - p[1], 0.0f}, {center - p[2], 0.0f}};
+
+  // Check vertices within circle and calculate squared distances
+  int hit = 0;
   for(int i = 0; i < 3; i++)
   {
-    c[i]    = center - p[i];
-    csqr[i] = glm::dot(c[i], c[i]) - radiusSqr;
-    hit += csqr[i] <= 0 ? 1 : 0;
-  }
-
-  if(hit == 3)
-    return 2;  // Completely inside the circle
-
-  if(hit > 0)
-    return 1;  // Circle crossing the triangle
-
-  glm::vec3 edges[3];
-  edges[0] = p[1] - p[0];
-  edges[1] = p[2] - p[1];
-  edges[2] = p[0] - p[2];
-
-  // Circle is within triangle? (not happening, discard)
-  //hit = 0;
-  //glm::vec3 n[3];
-  //for(int i = 0; i < 3; i++)
-  //{
-  //  n[i] = glm::cross(edges[i], c[i]);
-  //  hit += n[i].y > 0 ? 1 : 0;
-  //}
-  //if(hit == 3)
-  //{
-  //  return 1;  // Circle cover partly the triangle
-  //}
-
-
-  // Circle intersects edges
-  float k[3]{};
-  for(int i = 0; i < 3; i++)
-  {
-    k[i] = glm::dot(edges[i], c[i]);
-    if(k[i] > 0)
+    c[i].sqrDist = glm::dot(c[i].vec, c[i].vec) - radiusSqr;
+    if(c[i].sqrDist <= 0)
     {
-      float len = glm::dot(edges[i], edges[i]);  // squared len
-
-      if(k[i] < len)
-      {
-        if(csqr[i] * len <= k[i] * k[i])
-          return 1;
-      }
+      hit++;
+      if(hit == 3)
+        return 2;  // Early exit: Completely inside the circle
     }
   }
 
-  // Triangle outside circle
-  return 0;
+  if(hit > 0)
+    return 1;  // Circle crossing the triangle - at least one vertex inside
+
+  // Calculate edges for edge intersection tests
+  const glm::vec3 edges[3] = {p[1] - p[0], p[2] - p[1], p[0] - p[2]};
+
+  // Check if circle intersects any edge
+  for(int i = 0; i < 3; i++)
+  {
+    const float k = glm::dot(edges[i], c[i].vec);
+    if(k > 0)
+    {
+      const float lenSqr = glm::dot(edges[i], edges[i]);
+      if(k < lenSqr && c[i].sqrDist * lenSqr <= k * k)
+        return 1;  // Circle intersects this edge
+    }
+  }
+
+  return 0;  // Triangle outside circle
 }
 
 
@@ -329,9 +339,9 @@ uint32_t triangleCircleItersection(const std::array<glm::vec3, 3>& p, const glm:
 // - A micro triangle will be fully opaque if all its position are within the `radius`.
 //   fully transparent when all its position are outside and unknown if one position crosses
 //   the radius boundary.
-MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius)
+MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvutils::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius)
 {
-  nvh::ScopedTimer stimer("Create Displacements");
+  nvutils::ScopedTimer stimer("Create Displacements");
 
   MicroOpacity displacements;  // Return of displacement values for all triangles
 
@@ -344,13 +354,13 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvh::Primitiv
 
   // Find the distances in parallel
   // Faster than : for(size_t tri_index = 0; tri_index < num_tri; tri_index++)
-  nvh::parallel_batches<32>(
+  nvutils::parallel_batches<32>(
       num_tri,
       [&](uint64_t tri_index) {
         // Retrieve the positions of the triangle
-        glm::vec3 t0 = mesh.vertices[mesh.triangles[tri_index].v[0]].p;
-        glm::vec3 t1 = mesh.vertices[mesh.triangles[tri_index].v[1]].p;
-        glm::vec3 t2 = mesh.vertices[mesh.triangles[tri_index].v[2]].p;
+        glm::vec3 t0 = mesh.vertices[mesh.triangles[tri_index].indices[0]].pos;
+        glm::vec3 t1 = mesh.vertices[mesh.triangles[tri_index].indices[1]].pos;
+        glm::vec3 t2 = mesh.vertices[mesh.triangles[tri_index].indices[2]].pos;
 
         // Working on this triangle
         RawTriangle& triangle = displacements.rawTriangles[tri_index];

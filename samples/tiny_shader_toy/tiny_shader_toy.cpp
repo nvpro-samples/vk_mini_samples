@@ -29,11 +29,19 @@ This sample replicate in a simple form, the execution of shaders like
 
 */
 
+
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
+#define VMA_IMPLEMENTATION
+#define IMGUI_DEFINE_MATH_OPERATORS
+
 #include <glm/glm.hpp>
 
 // clang-format off
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
+
 
 #include <array>
 #include <filesystem>
@@ -41,32 +49,27 @@ namespace fs = std::filesystem;
 
 #include <vulkan/vulkan_core.h>
 
+#include "common/utils.hpp"
+#include "nvapp/application.hpp"
+#include "nvapp/elem_default_menu.hpp"
+#include "nvslang/slang.hpp"
+#include "nvutils/logger.hpp"
+#include "nvutils/parameter_parser.hpp"
+#include "nvutils/timers.hpp"
+#include "nvvk/barriers.hpp"
+#include "nvvk/check_error.hpp"
+#include "nvvk/context.hpp"
+#include "nvvk/debug_util.hpp"
+#include "nvvk/default_structs.hpp"
+#include "nvvk/descriptors.hpp"
+#include "nvvk/gbuffers.hpp"
+#include "nvvk/graphics_pipeline.hpp"
+#include "nvvk/resource_allocator.hpp"
+#include "nvvk/sampler_pool.hpp"
+#include "nvvk/staging.hpp"
+#include "nvvkglsl/glsl.hpp"
 #include <imgui.h>
 #include <shaderc/shaderc.hpp>
-
-#define VMA_IMPLEMENTATION
-#define IMGUI_DEFINE_MATH_OPERATORS
-#include "common/vk_context.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/renderpasses_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/glsl_compiler.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-
-
-#if USE_SLANG
-#include "common/slang_compiler.hpp"
-#endif
 
 
 // ShaderToy inputs
@@ -113,7 +116,7 @@ private:
 };
 
 
-class TinyShaderToy : public nvvkhl::IAppElement
+class TinyShaderToy : public nvapp::IAppElement
 {
   enum GbufItems
   {
@@ -124,53 +127,60 @@ class TinyShaderToy : public nvvkhl::IAppElement
 
   struct ResourceGroup
   {
-    VkShaderModule vmod;
-    VkShaderModule fmod_i;
-    VkShaderModule fmod_a;
+    VkShaderModule vertexModule;
+    VkShaderModule fragModule;
+    VkShaderModule fragAModule;
     VkDevice       device;
-    VkPipeline     gp;
-    VkPipeline     gp_a;
+    VkPipeline     pipeline;
+    VkPipeline     pipelineA;
   };
 
 public:
   TinyShaderToy()           = default;
   ~TinyShaderToy() override = default;
 
-  std::vector<std::string> getShaderDirs()
-  {
-    return {
-        NVPSystem::exePath() + std::string(PROJECT_RELDIRECTORY) + std::string("shaders"),  //
-        NVPSystem::exePath() + std::string(PROJECT_NAME) + std::string("/shaders"),         //
-        NVPSystem::exePath()                                                                //
-    };
-  }
 
-
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc  = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-         .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-         .physicalDevice = app->getPhysicalDevice(),
-         .device         = app->getDevice(),
-         .instance       = app->getInstance(),
+    // Create the Vulkan allocator (VMA)
+    m_alloc.init({
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
     });  // Allocator
-    m_dset   = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+
 
     m_fileBufferA = std::make_unique<FileCheck>(getFilePath("buffer_a.glsl"));
     m_fileImage   = std::make_unique<FileCheck>(getFilePath("image.glsl"));
 
-#if USE_GLSL
-    // shaderc compiler
-    m_glslC = std::make_unique<nvvkhl::GlslCompiler>();
-    // Add search paths
-    for(const auto& path : getShaderDirs())
-      m_glslC->addInclude(path);
-#elif USE_SLANG
-    m_slangC = std::make_unique<SlangCompiler>();
-#endif
+    // The texture sampler to use
+    m_samplerPool.init(m_device);
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // Initialization of the G-Buffers we want use
+    m_gBuffers.init({.allocator      = &m_alloc,
+                     .colorFormats   = {m_rgba32Format, m_rgba32Format, m_rgba32Format},
+                     .imageSampler   = linearSampler,
+                     .descriptorPool = m_app->getTextureDescriptorPool()});
+
+    // Setting up the Slang compiler
+    m_slangCompiler.addSearchPaths(nvsamples::getShaderDirs());
+    m_slangCompiler.defaultTarget();
+    m_slangCompiler.defaultOptions();
+    m_slangCompiler.addOption({slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, 1}});
+    m_slangCompiler.addOption({slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, 0}});
+
+    // Setting up the GLSL compiler
+    m_glslCompiler.addSearchPaths(nvsamples::getShaderDirs());
+    m_glslCompiler.defaultTarget();
+    m_glslCompiler.defaultOptions();
+
 
     const std::string err_msg = compileShaders();
     if(!err_msg.empty())
@@ -190,16 +200,27 @@ public:
     destroyResources();
   }
 
-  void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   void onUIRender() override
   {
-    if(!m_gBuffers)
-      return;
 
     static std::string error_msg;
     {  // Setting panel
+      bool reloadShaders = false;
+
       ImGui::Begin("Settings");
+      if(ImGui::RadioButton("GLSL", !m_useSlang))
+      {
+        m_useSlang    = false;
+        reloadShaders = true;
+      }
+      if(ImGui::RadioButton("Slang", m_useSlang))
+      {
+        m_useSlang    = true;
+        reloadShaders = true;
+      }
+
       ImGui::Text("Edit the fragment shader, then click:");
 
       ImGui::Text("Open");
@@ -214,7 +235,7 @@ public:
         openFile("buffer_a.glsl");
       }
 
-      bool reloadShaders = ImGui::Button("Reload Shaders");
+      reloadShaders |= ImGui::Button("Reload Shaders");
       reloadShaders |= m_fileBufferA->hasChanged();
       reloadShaders |= m_fileImage->hasChanged();
       if(reloadShaders)
@@ -262,7 +283,7 @@ public:
       updateUniforms();
 
       // Display the G-Buffer image
-      ImGui::Image(m_gBuffers->getDescriptorSet(eImage), ImGui::GetContentRegionAvail());
+      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(eImage), ImGui::GetContentRegionAvail());
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -270,10 +291,7 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
-    if(!m_gBuffers)
-      return;
+    NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
     // Ping-Pong double buffer
     static int double_buffer{0};
@@ -288,11 +306,18 @@ public:
     renderToBuffer(cmd, m_pipelineBufA, in_image, out_image);
 
     // Barrier - making sure the rendered image from BufferA is ready to be used
-    const VkImageMemoryBarrier image_memory_barrier =
-        nvvk::makeImageMemoryBarrier(m_gBuffers->getColorImage(out_image), VK_ACCESS_SHADER_READ_BIT,
-                                     VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                         nullptr, 0, nullptr, 1, &image_memory_barrier);
+    const VkImageMemoryBarrier2 image_memory_barrier = nvvk::makeImageMemoryBarrier({
+        .image     = m_gBuffers.getColorImage(out_image),
+        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+    });
+
+    const VkDependencyInfo depInfo{.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                   .imageMemoryBarrierCount = 1,
+                                   .pImageMemoryBarriers    = &image_memory_barrier};
+
+    vkCmdPipelineBarrier2(cmd, &depInfo);
+
 
     renderToBuffer(cmd, m_pipelineImg, out_image, eImage);
 
@@ -308,43 +333,68 @@ private:
 
   void createPipelineLayout()
   {
-    const VkPushConstantRange push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
+    m_bindings.addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 
-    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
-    m_dset->initPipeLayout(1, &push_constants);
-    m_dutil->DBG_NAME(m_dset->getLayout());
-    m_dutil->DBG_NAME(m_dset->getPipeLayout());
+    NVVK_CHECK(m_bindings.createDescriptorSetLayout(m_device, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                                    &m_descriptorSetLayout));
+    NVVK_DBG_NAME(m_descriptorSetLayout);
+
+    const VkPushConstantRange pushConstants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorSetLayout}, {pushConstants}));
+    NVVK_DBG_NAME(m_pipelineLayout);
   }
 
   void createPipelines()
   {
     nvvk::GraphicsPipelineState pstate;
-    pstate.addBindingDescriptions({{0, sizeof(Vertex)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, pos))},  // Position
-    });
 
-    VkPipelineRenderingCreateInfo prend_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
-                                             .colorAttachmentCount    = 1,
-                                             .pColorAttachmentFormats = &m_rgba32Format};
+    pstate.vertexBindings = {
+        {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, .stride = sizeof(Vertex), .divisor = 1}};
+    pstate.vertexAttributes = {{.sType  = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                .format = VK_FORMAT_R32G32_SFLOAT,
+                                .offset = offsetof(Vertex, pos)}};
+
+    VkPipelineRenderingCreateInfo renderingInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+                                                .colorAttachmentCount    = 1,
+                                                .pColorAttachmentFormats = &m_rgba32Format};
 
     // Create the pipeline for "Image"
     {
-      nvvk::GraphicsPipelineGenerator pgen(m_device, m_dset->getPipeLayout(), prend_info, pstate);
-      pgen.addShader(m_vmodule, VK_SHADER_STAGE_VERTEX_BIT);
-      pgen.addShader(m_fmodule, VK_SHADER_STAGE_FRAGMENT_BIT);
-      m_pipelineImg = pgen.createPipeline();
-      m_dutil->setObjectName(m_pipelineImg, "Image");
+      nvvk::GraphicsPipelineCreator creator;
+      creator.pipelineInfo.layout = m_pipelineLayout;
+      creator.colorFormats        = {m_rgba32Format};
+      if(m_useSlang)
+      {
+        creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", m_slagModule);
+        creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", m_slagModule);
+      }
+      else
+      {
+        creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_glslVertModule);
+        creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_glslFragModule);
+      }
+      creator.createGraphicsPipeline(m_device, nullptr, pstate, &m_pipelineImg);
+      NVVK_DBG_NAME(m_pipelineImg);
     }
 
     // Create the pipeline for "Buffer-A"
     {
-      nvvk::GraphicsPipelineGenerator pgen(m_device, m_dset->getPipeLayout(), prend_info, pstate);
-      pgen.addShader(m_vmodule, VK_SHADER_STAGE_VERTEX_BIT);
-      pgen.addShader(m_fmoduleA, VK_SHADER_STAGE_FRAGMENT_BIT);
-      m_pipelineBufA = pgen.createPipeline();
-      m_dutil->setObjectName(m_pipelineBufA, "BufferA");
+      nvvk::GraphicsPipelineCreator creator;
+      creator.pipelineInfo.layout = m_pipelineLayout;
+      creator.colorFormats        = {m_rgba32Format};
+      if(m_useSlang)
+      {
+        creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", m_slagModule);
+        creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentBuffer", m_slagModule);
+      }
+      else
+      {
+        creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", m_glslVertModule);
+        creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", m_glslFragAModule);
+      }
+
+      creator.createGraphicsPipeline(m_device, nullptr, pstate, &m_pipelineBufA);
+      NVVK_DBG_NAME(m_pipelineBufA);
     }
   }
 
@@ -352,27 +402,32 @@ private:
   // Buffer-A will write back to itself while Image will take Buffer-A as input
   void renderToBuffer(VkCommandBuffer cmd, VkPipeline pipeline, GbufItems inImage, GbufItems outImage)
   {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-    // Render to `outImage` buffer, depth is unused
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(outImage)},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_LOAD_OP_CLEAR);
-    r_info.pStencilAttachment = nullptr;
+    // Rendering to GBuffer: attachment information
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    colorAttachment.clearValue                = {.color = m_clearColor};
+    colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_LOAD;
+    VkRenderingInfo renderingInfo             = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea                  = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount        = 1;
+    renderingInfo.pColorAttachments           = &colorAttachment;
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    vkCmdBeginRendering(cmd, &r_info);
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+    vkCmdBeginRendering(cmd, &renderingInfo);
     {
-      m_app->setViewport(cmd);
+      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
 
       // Writing descriptor
-      const VkDescriptorImageInfo       in_desc = m_gBuffers->getDescriptorImageInfo(inImage);
-      std::vector<VkWriteDescriptorSet> writes;
-      writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
-      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0,
-                                static_cast<uint32_t>(writes.size()), writes.data());
+      nvvk::WriteSetContainer writeContainer;
+      writeContainer.append(m_bindings.getWriteSet(0), m_gBuffers.getDescriptorImageInfo(inImage));
+      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0,
+                                static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
 
       // Pushing the "Input Uniforms"
-      vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms), &m_inputUniform);
+      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(InputUniforms), &m_inputUniform);
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
       const VkDeviceSize offsets{0};
@@ -381,15 +436,9 @@ private:
       vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   }
 
-  void createGbuffers(VkExtent2D size)
-  {
-    // Creating the 3 buffers (see BufItems)
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size,
-                                                   std::vector{m_rgba32Format, m_rgba32Format, m_rgba32Format});
-  }
 
   void createGeometryBuffers()
   {
@@ -400,66 +449,77 @@ private:
     const std::vector<uint16_t> indices  = {0, 3, 2, 0, 2, 1};
 
     {
-      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+      nvvk::StagingUploader uploader;
+      uploader.init(&m_alloc);
+
+      NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(indices).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m_vertices, 0, std::span(vertices)));
+      NVVK_CHECK(uploader.appendBuffer(m_indices, 0, std::span(indices)));
+      NVVK_DBG_NAME(m_vertices.buffer);
+      NVVK_DBG_NAME(m_indices.buffer);
+
+      uploader.cmdUploadAppended(cmd);
       m_app->submitAndWaitTempCmdBuffer(cmd);
-      m_dutil->DBG_NAME(m_vertices.buffer);
-      m_dutil->DBG_NAME(m_indices.buffer);
+      uploader.deinit();
     }
   }
 
 
-  void setCompilerOptions()
-  {
-    m_glslC->resetOptions();
-    m_glslC->options()->SetTargetSpirv(shaderc_spirv_version::shaderc_spirv_version_1_3);
-    m_glslC->options()->SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
-    m_glslC->options()->SetGenerateDebugInfo();
-    m_glslC->options()->SetOptimizationLevel(shaderc_optimization_level_zero);
-  }
-
   std::string compileShaders()
   {
-#if USE_GLSL
-    return compileGlslShaders();
-#elif USE_SLANG
-    return compileSlangShaders();
-#endif
+    vkQueueWaitIdle(m_app->getQueue(0).queue);
+    if(m_useSlang)
+      return compileSlangShaders();
+    else
+      return compileGlslShaders();
   }
 
   std::string compileGlslShaders()
   {
-    nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
-    std::string      error_msg;
+    nvutils::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
+
+    std::string error_msg;
 
     // Compile default shaders
 
     shaderc::SpvCompilationResult vert_result;
     shaderc::SpvCompilationResult frag_result;
     shaderc::SpvCompilationResult frag_result_a;
-    compileGlslShader("raster.vert.glsl", shaderc_shader_kind::shaderc_vertex_shader, false, vert_result);
-    compileGlslShader("raster.frag.glsl", shaderc_shader_kind::shaderc_fragment_shader, true, frag_result);
-    compileGlslShader("raster.frag.glsl", shaderc_shader_kind::shaderc_fragment_shader, false, frag_result_a);
+    compileGlslShader("shader_toy.vert.glsl", shaderc_shader_kind::shaderc_vertex_shader, false, vert_result);
+    compileGlslShader("shader_toy.frag.glsl", shaderc_shader_kind::shaderc_fragment_shader, true, frag_result);
+    compileGlslShader("shader_toy.frag.glsl", shaderc_shader_kind::shaderc_fragment_shader, false, frag_result_a);
 
     if(vert_result.GetNumErrors() == 0 && frag_result.GetNumErrors() == 0 && frag_result_a.GetNumErrors() == 0)
     {
       // Deleting resources, but not immediately as they are still in used
-      m_app->submitResourceFree([vmod = m_vmodule, fmod_i = m_fmodule, fmod_a = m_fmoduleA, device = m_device,
-                                 gp = m_pipelineImg, gp_a = m_pipelineBufA]() {
-        vkDestroyShaderModule(device, vmod, nullptr);
-        vkDestroyShaderModule(device, fmod_i, nullptr);
-        vkDestroyShaderModule(device, fmod_a, nullptr);
-        vkDestroyPipeline(device, gp, nullptr);
-        vkDestroyPipeline(device, gp_a, nullptr);
+      m_app->submitResourceFree([vertModule = m_glslVertModule, fragModule = m_glslFragModule, fragAModule = m_glslFragAModule,
+                                 device = m_device, pipelineImg = m_pipelineImg, pipelineBufA = m_pipelineBufA]() {
+        vkDestroyShaderModule(device, vertModule, nullptr);
+        vkDestroyShaderModule(device, fragModule, nullptr);
+        vkDestroyShaderModule(device, fragAModule, nullptr);
+        vkDestroyPipeline(device, pipelineImg, nullptr);
+        vkDestroyPipeline(device, pipelineBufA, nullptr);
       });
 
-      m_vmodule  = m_glslC->createModule(m_device, vert_result);
-      m_fmodule  = m_glslC->createModule(m_device, frag_result);
-      m_fmoduleA = m_glslC->createModule(m_device, frag_result_a);
-      m_dutil->setObjectName(m_vmodule, "Vertex");
-      m_dutil->setObjectName(m_fmodule, "Image");
-      m_dutil->setObjectName(m_fmoduleA, "BufferA");
+
+      VkShaderModuleCreateInfo createInfo{.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+      // Vertex shader
+      createInfo.codeSize = m_glslCompiler.getSpirvSize(vert_result);
+      createInfo.pCode    = m_glslCompiler.getSpirv(vert_result);
+      NVVK_CHECK(vkCreateShaderModule(m_device, &createInfo, nullptr, &m_glslVertModule));
+      NVVK_DBG_NAME(m_glslVertModule);
+      // Fragment shaders (main)
+      createInfo.codeSize = m_glslCompiler.getSpirvSize(frag_result);
+      createInfo.pCode    = m_glslCompiler.getSpirv(frag_result);
+      NVVK_CHECK(vkCreateShaderModule(m_device, &createInfo, nullptr, &m_glslFragModule));
+      NVVK_DBG_NAME(m_glslFragModule);
+      // Fragment shaders (buffer A)
+      createInfo.codeSize = m_glslCompiler.getSpirvSize(frag_result_a);
+      createInfo.pCode    = m_glslCompiler.getSpirv(frag_result_a);
+      NVVK_CHECK(vkCreateShaderModule(m_device, &createInfo, nullptr, &m_glslFragAModule));
+      NVVK_DBG_NAME(m_glslFragAModule);
     }
     else
     {
@@ -474,70 +534,45 @@ private:
 
   void compileGlslShader(const std::string& filename, shaderc_shader_kind shaderKind, bool macroImage, shaderc::SpvCompilationResult& result)
   {
-    nvh::ScopedTimer st(__FUNCTION__);
-    setCompilerOptions();
+    nvutils::ScopedTimer st(__FUNCTION__);
+    // setCompilerOptions();
     if(macroImage)
-      m_glslC->options()->AddMacroDefinition("INCLUDE_IMAGE");
-    result = m_glslC->compileFile(filename, shaderKind);
+      m_glslCompiler.options().AddMacroDefinition("INCLUDE_IMAGE");
+    result = m_glslCompiler.compileFile(filename, shaderKind);
   }
 
   std::string compileSlangShaders()
   {
-    nvh::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
-    std::string      error_msg;
+    nvutils::ScopedTimer st(__FUNCTION__);  // Prints the time for running this / compiling shaders
+    std::string          error_msg;
 
-#if USE_SLANG
-    // Spirv code for the shaders
-    std::vector<uint32_t> vertexSpirvCode;
-    std::vector<uint32_t> fragmentSpirvCode;
-    std::vector<uint32_t> fragmentASpirvCode;
-
-    // The shader file
-    std::vector<std::string> searchPaths    = getShaderDirs();
-    std::string              rasterFilename = nvh::findFile("raster.slang", searchPaths, true);
-
-    // Always create a new session before compiling all files
-    m_slangC->newSession(searchPaths);
+    if(m_slangCompiler.compileFile("shader_toy.slang"))
     {
-      nvh::ScopedTimer st("Vertex");
-      if(!m_slangC->compileModule("raster", "vertexMain", vertexSpirvCode, error_msg))
-        return error_msg;
+      // Deleting resources, but not immediately as they are still in used
+      m_app->submitResourceFree(
+          [slagModule = m_slagModule, device = m_device, pipelineImg = m_pipelineImg, pipelineBufA = m_pipelineBufA]() {
+            vkDestroyShaderModule(device, slagModule, nullptr);
+            vkDestroyPipeline(device, pipelineImg, nullptr);
+            vkDestroyPipeline(device, pipelineBufA, nullptr);
+          });
+
+
+      const VkShaderModuleCreateInfo createInfo{
+          .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+          .codeSize = m_slangCompiler.getSpirvSize(),
+          .pCode    = m_slangCompiler.getSpirv(),
+      };
+      NVVK_CHECK(vkCreateShaderModule(m_device, &createInfo, nullptr, &m_slagModule));
+      NVVK_DBG_NAME(m_slagModule);
     }
+    else
     {
-      nvh::ScopedTimer st("fragmentMain");
-      if(!m_slangC->compileModule("raster", "fragmentMain", fragmentSpirvCode, error_msg))
-        return error_msg;
-    }
-    {
-      nvh::ScopedTimer st("Buffer-A");
-      if(!m_slangC->compileModule("raster", "fragmentBuffer", fragmentASpirvCode, error_msg))
-        return error_msg;
+      error_msg += "Error compiling Slang\n";
+      error_msg += m_slangCompiler.getLastDiagnosticMessage();
+      return error_msg;
     }
 
-    // Deleting resources, but not immediately as they are still in used
-    ResourceGroup resources{m_vmodule, m_fmodule, m_fmoduleA, m_device, m_pipelineImg, m_pipelineBufA};
-    m_app->submitResourceFree([resources = std::move(resources)]() {
-      vkDestroyShaderModule(resources.device, resources.vmod, nullptr);
-      vkDestroyShaderModule(resources.device, resources.fmod_i, nullptr);
-      vkDestroyShaderModule(resources.device, resources.fmod_a, nullptr);
-      vkDestroyPipeline(resources.device, resources.gp, nullptr);
-      vkDestroyPipeline(resources.device, resources.gp_a, nullptr);
-    });
 
-    {
-      nvh::ScopedTimer st("Create Vulkan Shader Modules");
-      m_vmodule  = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(vertexSpirvCode.data()),
-                                            vertexSpirvCode.size() * sizeof(uint32_t));
-      m_fmodule  = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentSpirvCode.data()),
-                                            fragmentSpirvCode.size() * sizeof(uint32_t));
-      m_fmoduleA = nvvk::createShaderModule(m_device, static_cast<const uint32_t*>(fragmentASpirvCode.data()),
-                                            fragmentASpirvCode.size() * sizeof(uint32_t));
-      m_dutil->setObjectName(m_vmodule, "Vertex");
-      m_dutil->setObjectName(m_fmodule, "Image");
-      m_dutil->setObjectName(m_fmoduleA, "BufferA");
-    }
-
-#endif
     return error_msg;
   }
 
@@ -579,7 +614,7 @@ private:
   std::string getFilePath(const std::string& file)
   {
     std::string directoryPath;
-    for(const auto& dir : getShaderDirs())
+    for(const auto& dir : nvsamples::getShaderDirs())
     {
       fs::path p = fs::path(dir) / fs::path(file);
       if(fs::exists(p))
@@ -609,39 +644,46 @@ private:
   {
     vkDestroyPipeline(m_device, m_pipelineImg, nullptr);
     vkDestroyPipeline(m_device, m_pipelineBufA, nullptr);
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
-    m_alloc->destroy(m_vertices);
-    m_alloc->destroy(m_indices);
+
+    vkDestroyShaderModule(m_device, m_slagModule, nullptr);
+    vkDestroyShaderModule(m_device, m_glslVertModule, nullptr);
+    vkDestroyShaderModule(m_device, m_glslFragModule, nullptr);
+    vkDestroyShaderModule(m_device, m_glslFragAModule, nullptr);
+
+    m_alloc.destroyBuffer(m_vertices);
+    m_alloc.destroyBuffer(m_indices);
     m_vertices = {};
     m_indices  = {};
-    m_gBuffers.reset();
-    m_dset->deinit();
-
-    vkDestroyShaderModule(m_device, m_vmodule, nullptr);
-    vkDestroyShaderModule(m_device, m_fmodule, nullptr);
-    vkDestroyShaderModule(m_device, m_fmoduleA, nullptr);
+    m_gBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
-  nvvkhl::Application* m_app{nullptr};
+  nvapp::Application*     m_app{};
+  nvvk::GBuffer           m_gBuffers{};
+  nvvk::ResourceAllocator m_alloc{};
+  nvvkglsl::GlslCompiler  m_glslCompiler{};
+  nvslang::SlangCompiler  m_slangCompiler{};
+  nvvk::SamplerPool       m_samplerPool;
 
-  std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers{};
-  std::unique_ptr<nvvk::DebugUtil>              m_dutil{};
-  std::unique_ptr<nvvkhl::AllocVma>             m_alloc{};
-  std::unique_ptr<nvvkhl::GlslCompiler>         m_glslC{};
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset{};  // Descriptor set
-  std::unique_ptr<FileCheck>                    m_fileBufferA{};
-  std::unique_ptr<FileCheck>                    m_fileImage{};
+  nvvk::DescriptorBindings    m_bindings;
+  nvvk::GraphicsPipelineState m_graphicState;
+  VkDescriptorSetLayout       m_descriptorSetLayout{};
+  VkPipeline                  m_pipeline{};
+  VkPipelineLayout            m_pipelineLayout{};
 
-#if USE_SLANG
-  std::unique_ptr<SlangCompiler> m_slangC{};
-#endif
+  std::unique_ptr<FileCheck> m_fileBufferA{};
+  std::unique_ptr<FileCheck> m_fileImage{};
 
 
   VkFormat          m_rgba32Format = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the images
@@ -652,62 +694,68 @@ private:
   VkClearColorValue m_clearColor{{0.1F, 0.4F, 0.1F, 1.0F}};          // Clear color
   VkDevice          m_device = VK_NULL_HANDLE;                       // Convenient
 
+  // Settings
   int           m_frame{0};
   float         m_time{0};
   bool          m_pause{false};
+  bool          m_useSlang{true};
   InputUniforms m_inputUniform;
 
-  VkShaderModule m_vmodule  = VK_NULL_HANDLE;
-  VkShaderModule m_fmodule  = VK_NULL_HANDLE;
-  VkShaderModule m_fmoduleA = VK_NULL_HANDLE;
+  VkShaderModule m_slagModule{};
+  VkShaderModule m_glslVertModule{};
+  VkShaderModule m_glslFragModule{};
+  VkShaderModule m_glslFragAModule{};
 };
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
+  nvvk::Context                vkContext;  // The Vulkan context
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
-  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  reg.add({"frames", "Number of frames to render in headless mode"}, &appInfo.headlessFrameCount, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
-  VkContextSettings vkSetup;
+
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
 
   // Vulkan context creation
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
-
-  // Loading function pointers
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
 
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
-  app->addElement(std::make_shared<TinyShaderToy>());
+  app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());
+  app.addElement(std::make_shared<TinyShaderToy>());
 
-  app->run();
+  app.run();
 
-  app.reset();
-  vkContext.reset();
+  app.deinit();
+  vkContext.deinit();
 
-  return test->errorCode();
+  return 0;
 }

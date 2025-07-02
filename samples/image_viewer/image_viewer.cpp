@@ -17,168 +17,203 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//////////////////////////////////////////////////////////////////////////
 /*
- 
+
  This sample shows how to load and display an image.
  - Render to a GBuffer and displayed using ImGui
  - The image is applied as a texture on a quad.
- - It is possible to change the sampling filters on the fly (using 2 sets) (see m_frame)
+ - It is possible to change the sampling filters on the fly, with proper flagging of descriptor layout.
  - Zoom and pan the image under the cursor
 
 */
-//////////////////////////////////////////////////////////////////////////
+
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
+#define VMA_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION  // Implementation of the image loading library
+
+#include <array>
+
+#include <GLFW/glfw3.h>
+#undef APIENTRY
+
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <stb/stb_image.h>
 
 // clang-format off
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
-
-#include <array>
-#include <imgui.h>
-#include <vulkan/vulkan_core.h>
-
-#define VMA_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
-#include "nvh/fileoperations.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "common/vk_context.hpp"
+#include <imgui/imgui.h>
 
 
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
+#include <nvapp/application.hpp>
+#include <nvapp/elem_default_title.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/mipmaps.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
 
-#include <GLFW/glfw3.h>
+#include "common/utils.hpp"
+
+// Our compiled shaders
+#include "_autogen/image_viewer.frag.glsl.h"
+#include "_autogen/image_viewer.slang.h"
+#include "_autogen/image_viewer.vert.glsl.h"
 
 
 // Texture wrapper class which load an image
 struct SampleTexture
 {
-  SampleTexture(VkDevice device, uint32_t queueIndex, nvvkhl::AllocVma* a)
-      : m_device(device)
-      , m_queueIndex(queueIndex)
-      , m_alloc(a)
+  SampleTexture(nvvk::ResourceAllocator* alloc)
+      : m_alloc(alloc)
   {
-    m_size = {1, 1};
-    std::array<uint8_t, 4> data{255, 255, 0, 255};
-    create(4, data.data());
+    m_device = m_alloc->getDevice();
   }
 
-  SampleTexture(VkDevice device, uint32_t queueIndex, nvvkhl::AllocVma* a, const std::string& filename)
-      : m_device(device)
-      , m_queueIndex(queueIndex)
-      , m_alloc(a)
+  ~SampleTexture() { m_alloc->destroyImage(const_cast<nvvk::Image&>(m_image)); }
+
+  void createFromFile(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const std::filesystem::path& filename)
   {
-    int      w        = 0;
-    int      h        = 0;
-    int      comp     = 0;
-    int      req_comp = 4;
-    stbi_uc* data     = stbi_load(filename.c_str(), &w, &h, &comp, req_comp);
+    int      w, h, comp = 0;
+    stbi_uc* data = stbi_load(filename.string().c_str(), &w, &h, &comp, 4);
     if((data != nullptr) && w > 1 && h > 1)
     {
-      m_size = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
-      create(w * h * req_comp, data);
+      create(cmd, staging, {uint32_t(w), uint32_t(h)}, std::span<uint8_t>(data, w * h * 4));
       stbi_image_free(data);
     }
   }
 
-  ~SampleTexture()
-  {  // Destroying in next frame, avoid deleting while using
-    m_alloc->destroy(const_cast<nvvk::Texture&>(m_texture));
-  }
-
   // Create the image, the sampler and the image view + generate the mipmap level for all
-  void create(uint32_t bufsize, void* data)
+  void create(VkCommandBuffer cmd, nvvk::StagingUploader& uploader, VkExtent2D size, const std::span<uint8_t>& data)
   {
-    const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    const VkFormat            format    = VK_FORMAT_R8G8B8A8_UNORM;
-    const VkImageCreateInfo create_info = nvvk::makeImage2DCreateInfo(m_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
+    m_size = size;
 
-    nvvk::CommandPool cpool(m_device, m_queueIndex);
-    VkCommandBuffer   cmd = cpool.createCommandBuffer();
-    m_texture             = m_alloc->createTexture(cmd, bufsize, data, create_info, sampler_info);
-    nvvk::cmdGenerateMipmaps(cmd, m_texture.image, format, m_size, create_info.mipLevels);
-    cpool.submitAndWait(cmd);
+    const VkFormat      format      = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkImageLayout imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageCreateInfo createInfo = DEFAULT_VkImageCreateInfo;
+    createInfo.mipLevels         = nvvk::mipLevels(m_size);
+    createInfo.extent            = {m_size.width, m_size.height, 1};
+    createInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    createInfo.format            = format;
+
+    NVVK_CHECK(m_alloc->createImage(m_image, createInfo, DEFAULT_VkImageViewCreateInfo));
+    NVVK_DBG_NAME(m_image.image);
+    NVVK_DBG_NAME(m_image.descriptor.imageView);
+    NVVK_CHECK(uploader.appendImage(m_image, data, imageLayout));
+
+    // run copy prior mipmaps
+    uploader.cmdUploadAppended(cmd);
+
+    nvvk::cmdGenerateMipmaps(cmd, m_image.image, m_size, createInfo.mipLevels);
   }
 
-  void               setSampler(const VkSampler& sampler) { m_texture.descriptor.sampler = sampler; }
-  [[nodiscard]] bool isValid() const { return m_texture.image != nullptr; }
-  [[nodiscard]] const VkDescriptorImageInfo& descriptor() const { return m_texture.descriptor; }
+  void               setSampler(const VkSampler& sampler) { m_image.descriptor.sampler = sampler; }
+  [[nodiscard]] bool isValid() const { return m_image.image != nullptr; }
+  [[nodiscard]] const VkDescriptorImageInfo& descriptor() const { return m_image.descriptor; }
   [[nodiscard]] const VkExtent2D&            getSize() const { return m_size; }
   [[nodiscard]] float getAspect() const { return static_cast<float>(m_size.width) / static_cast<float>(m_size.height); }
 
 private:
-  VkDevice          m_device{};
-  uint32_t          m_queueIndex{0};
-  VkExtent2D        m_size{0, 0};
-  nvvk::Texture     m_texture;
-  nvvkhl::AllocVma* m_alloc{nullptr};
+  VkDevice                 m_device{};
+  nvvk::ResourceAllocator* m_alloc{nullptr};
+  VkExtent2D               m_size{0, 0};
+  nvvk::Image              m_image;
 };
+
+
+struct ImageViewerSettings
+{
+  float     zoom = {1};
+  glm::vec2 pan  = {0, 0};
+} g_imageViewerSettings;
+
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
-class ImageViewer : public nvvkhl::IAppElement
+class ImageViewer : public nvapp::IAppElement
 {
 public:
   ImageViewer() = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app->getPhysicalDevice(),
-        .device         = app->getDevice(),
-        .instance       = app->getInstance(),
-    });  // Allocator
-    m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+    // Creating the allocator
+    m_alloc.init({
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
+    });
 
-    // Find image file
-    const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
-    const std::string              img_file = nvh::findFile(R"(media/fruit.jpg)", default_search_paths, true);
-    assert(!img_file.empty());
-    m_texture = std::make_shared<SampleTexture>(m_app->getDevice(), m_app->getQueue(0).familyIndex, m_alloc.get(), img_file);
+    // set up staging
+    m_stagingUploader.init(&m_alloc, true);
+
+    // Acquiring the sampler which will be used for displaying the GBuffer and the texture
+    m_samplerPool.init(app->getDevice());
+    createSamplers();
+
+    // Creating the G-Buffer, a single color attachment, no depth-stencil
+    VkSampler linearSampler;
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+    m_gBuffers.init({.allocator      = &m_alloc,
+                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},
+                     .imageSampler   = linearSampler,
+                     .descriptorPool = m_app->getTextureDescriptorPool()});
+
+
+    // Find image file and create the texture
+    const std::filesystem::path imageFilename = nvutils::findFile("fruit.jpg", nvsamples::getResourcesDirs());
+    assert(!imageFilename.empty());
+    m_texture           = std::make_shared<SampleTexture>(&m_alloc);
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    m_texture->createFromFile(cmd, m_stagingUploader, imageFilename);
+    m_texture->setSampler(m_samplers[0]);  // Default to nearest
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+    m_stagingUploader.releaseStaging();
     assert(m_texture->isValid());
 
-    createSamplers();
     createPipeline();
-    createVkBuffers();
-    updateTexture();
+    createVkBuffers();  // The geometry is a simple quad
   }
 
   void onDetach() override
   {
     vkDeviceWaitIdle(m_device);
-    destroyResources();
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+    vkDestroyShaderEXT(m_device, m_vertexShader, nullptr);
+    vkDestroyShaderEXT(m_device, m_fragmentShader, nullptr);
+
+    m_alloc.destroyBuffer(m_vertices);
+    m_alloc.destroyBuffer(m_indices);
+
+    m_vertices = {};
+    m_indices  = {};
+
+    m_stagingUploader.deinit();
+    m_samplerPool.deinit();
+    m_texture.reset();
+    m_gBuffers.deinit();
+    m_alloc.deinit();
   }
 
   void onUIMenu() override
@@ -205,15 +240,15 @@ public:
     }
   }
 
-  void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   void onUIRender() override
   {
     // Setting menu
     {
       ImGui::Begin("Settings");
-      ImGui::SliderFloat("Zoom", &m_zoom, 0.01F, 2.0F, nullptr, ImGuiSliderFlags_Logarithmic);
-      ImGui::SliderFloat2("Pan", &m_pan.x, -1.F, 1.0F);
+      ImGui::SliderFloat("Zoom", &g_imageViewerSettings.zoom, 0.01F, 2.0F, nullptr, ImGuiSliderFlags_Logarithmic);
+      ImGui::SliderFloat2("Pan", &g_imageViewerSettings.pan.x, -1.F, 1.0F);
 
       {  // Sampling filters
         static int mode   = 0;
@@ -224,19 +259,19 @@ public:
         if(change)
         {
           m_texture->setSampler(m_samplers[mode]);
-          updateTexture();
         }
       }
       if(ImGui::Button("Reset"))
       {
-        m_zoom = 1;
-        m_pan  = {0, 0};
+        g_imageViewerSettings.zoom = 1;
+        g_imageViewerSettings.pan  = {0, 0};
       }
       ImGui::SameLine();
       if(ImGui::Button("1:1"))
       {
-        m_zoom = static_cast<float>(m_texture->getSize().width) / static_cast<float>(m_viewSize.x);
-        m_pan  = {0, 0};
+        g_imageViewerSettings.zoom =
+            static_cast<float>(m_texture->getSize().width) / static_cast<float>(m_gBuffers.getSize().width);
+        g_imageViewerSettings.pan = {0, 0};
       }
 
       ImGui::End();
@@ -256,32 +291,31 @@ public:
       {
         const ImGuiIO& io = ImGui::GetIO();
 
-        glm::vec2       mouse_pos = ImGui::GetMousePos();               // Current mouse pos in window
-        const glm::vec2 corner    = ImGui::GetCursorScreenPos();        // Corner of the viewport
-        mouse_pos                 = (mouse_pos - corner) - size / 2.F;  // Mouse pos relative to center of viewport
-        const glm::vec2 pan       = mouse_pos * (2.F / m_zoom) / size;  // Position in image space before zoom
+        glm::vec2       mousePos = ImGui::GetMousePos();              // Current mouse pos in window
+        const glm::vec2 corner   = ImGui::GetCursorScreenPos();       // Corner of the viewport
+        mousePos                 = (mousePos - corner) - size / 2.F;  // Mouse pos relative to center of viewport
+        const glm::vec2 pan = mousePos * (2.F / g_imageViewerSettings.zoom) / size;  // Position in image space before zoom
 
         // Change zoom on mouse wheel
         if(io.MouseWheel > 0)
         {
-          m_zoom *= 1.1F;
+          g_imageViewerSettings.zoom *= 1.1F;
         }
         if(io.MouseWheel < 0)
         {
-          m_zoom /= 1.1F;
+          g_imageViewerSettings.zoom /= 1.1F;
         }
 
-        const glm::vec2 pan2 = mouse_pos * (2.F / m_zoom) / size;  // Position in image space after zoom
-        m_pan += pan2 - pan;  // Re-adjust panning (making zoom relative to mouse cursor)
+        const glm::vec2 pan2 = mousePos * (2.F / g_imageViewerSettings.zoom) / size;  // Position in image space after zoom
+        g_imageViewerSettings.pan += pan2 - pan;  // Re-adjust panning (making zoom relative to mouse cursor)
 
-        const glm::vec2 drag = ImGui::GetMouseDragDelta(0, 0);  // Get the amount of mouse drag
-        ImGui::ResetMouseDragDelta();                           // We want static move
-        m_pan += drag * (2.F / m_zoom) / size;                  // Drag in image space
+        const glm::vec2 drag = ImGui::GetMouseDragDelta(0, 0);                          // Get the amount of mouse drag
+        ImGui::ResetMouseDragDelta();                                                   // We want static move
+        g_imageViewerSettings.pan += drag * (2.F / g_imageViewerSettings.zoom) / size;  // Drag in image space
       }
 
       // Display the G-Buffer image
-      if(m_gBuffers)
-        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image(ImTextureID(m_gBuffers.getDescriptorSet()), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -289,80 +323,90 @@ public:
 
     // Window Title
     {
-      static float dirty_timer = 0.0F;
-      dirty_timer += ImGui::GetIO().DeltaTime;
-      if(dirty_timer > 1.0F)  // Refresh every seconds
+      static float dirtyTimer = 0.0F;
+      dirtyTimer += ImGui::GetIO().DeltaTime;
+      if(dirtyTimer > 1.0F)  // Refresh every seconds
       {
         std::array<char, 256> buf{};
-        snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", PROJECT_NAME, static_cast<int>(m_viewSize.x),
-                 static_cast<int>(m_viewSize.y), static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
+        snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", nvutils::getExecutablePath().stem().string().c_str(),
+                 static_cast<int>(m_gBuffers.getSize().width), static_cast<int>(m_gBuffers.getSize().height),
+                 static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         glfwSetWindowTitle(m_app->getWindowHandle(), buf.data());
-        dirty_timer = 0;
+        dirtyTimer = 0;
       }
     }
   }
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if(!m_gBuffers)
-      return;
-
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    NVVK_DBG_SCOPE(cmd);
 
     // Adjusting the aspect ratio of the image
-    const float img_aspect_ratio  = m_texture->getAspect();
-    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    const float imgAspectRatio  = m_texture->getAspect();
+    const float viewAspectRatio = m_gBuffers.getAspectRatio();
 
     m_pushConst.scale = {1.0F, 1.0F};
-    if(img_aspect_ratio > view_aspect_ratio)
+
+    bool  isImgWider = imgAspectRatio > viewAspectRatio;
+    float ratio      = isImgWider ? viewAspectRatio / imgAspectRatio : imgAspectRatio / viewAspectRatio;
+
+    // If aspect ratio <= 1, scale x for wider images and y for taller ones
+    bool scale_x = (isImgWider ? imgAspectRatio : viewAspectRatio) <= 1;
+    if(scale_x)
     {
-      if(img_aspect_ratio <= 1)
-      {
-        m_pushConst.scale.x = view_aspect_ratio / img_aspect_ratio;
-      }
-      else
-      {
-        m_pushConst.scale.y = view_aspect_ratio / img_aspect_ratio;
-      }
+      m_pushConst.scale.x = ratio;
     }
     else
     {
-      if(view_aspect_ratio <= 1)
-      {
-        m_pushConst.scale.y = img_aspect_ratio / view_aspect_ratio;
-      }
-      else
-      {
-        m_pushConst.scale.x = img_aspect_ratio / view_aspect_ratio;
-      }
+      m_pushConst.scale.y = ratio;
     }
 
     // Applying the zoom and pan
     const glm::mat4 ortho = glm::ortho(-1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F);
-    const glm::mat4 scale = glm::scale(glm::mat4(1), glm::vec3(m_zoom, m_zoom, 0));
-    const glm::mat4 trans = glm::translate(glm::mat4(1), glm::vec3(m_pan.x, m_pan.y, 0));
-    m_pushConst.transfo   = ortho * scale * trans;
+    const glm::mat4 scale = glm::scale(glm::mat4(1), glm::vec3(g_imageViewerSettings.zoom, g_imageViewerSettings.zoom, 0));
+    const glm::mat4 trans =
+        glm::translate(glm::mat4(1), glm::vec3(g_imageViewerSettings.pan.x, g_imageViewerSettings.pan.y, 0));
+    m_pushConst.transfo = ortho * scale * trans;
 
     // Drawing the quad in a G-Buffer
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    r_info.pStencilAttachment = nullptr;
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    vkCmdBeginRendering(cmd, &r_info);
+    // Create the rendering info
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
+
+    nvvk::cmdImageMemoryBarrier(cmd, {.image        = m_gBuffers.getColorImage(),
+                                      .oldLayout    = VK_IMAGE_LAYOUT_GENERAL,
+                                      .newLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                      .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                      .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT});
+
+    vkCmdBeginRendering(cmd, &renderingInfo);
     {
-      const VkDeviceSize offsets{0};
-      m_app->setViewport(cmd);
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+      const VkDeviceSize offsets[] = {0};
+
+      m_dynamicPipeline.cmdApplyAllStates(cmd);
+      m_dynamicPipeline.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+      m_dynamicPipeline.cmdBindShaders(cmd, {.vertex = m_vertexShader, .fragment = m_fragmentShader});
+
       vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant), &m_pushConst);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
-      vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
+
+      updateTexture(cmd);
+
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, offsets);
       vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
       vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+
+    nvvk::cmdImageMemoryBarrier(cmd, {.image        = m_gBuffers.getColorImage(),
+                                      .oldLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                      .newLayout    = VK_IMAGE_LAYOUT_GENERAL,
+                                      .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                      .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT});
   }
 
 private:
@@ -380,69 +424,81 @@ private:
 
   void createPipeline()
   {
-    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->initLayout();
-    m_dset->initPool(2);  // two frames - allow to change textures on the fly
-    m_dutil->setObjectName(m_dset->getLayout(), "Texture");
+    m_descBind.addBinding(
+        {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT});
+    NVVK_CHECK(m_descBind.createDescriptorSetLayout(m_device, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT, &m_descriptorSetLayout));
+    NVVK_DBG_NAME(m_descriptorSetLayout);
 
+    // Pipeline layout
+    const VkPushConstantRange pushConstantRanges = {VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorSetLayout}, {pushConstantRanges}));
+    NVVK_DBG_NAME(m_pipelineLayout);
 
-    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant)};
+    m_dynamicPipeline.vertexBindings = {
+        {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, .stride = sizeof(Vertex), .divisor = 1}};
+    m_dynamicPipeline.vertexAttributes = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                           .location = 0,
+                                           .format   = VK_FORMAT_R32G32_SFLOAT,
+                                           .offset   = offsetof(Vertex, pos)},
+                                          {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                           .location = 1,
+                                           .format   = VK_FORMAT_R32G32_SFLOAT,
+                                           .offset   = offsetof(Vertex, uv)}};
 
-    VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    create_info.pushConstantRangeCount = 1;
-    create_info.pPushConstantRanges    = &push_constant_ranges;
-    create_info.setLayoutCount         = 1;
-    create_info.pSetLayouts            = &m_dset->getLayout();
-
-    vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout);
-
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_colorFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
-
-    // Creating the Pipeline
-    nvvk::GraphicsPipelineState pstate;
-    pstate.addBindingDescriptions({{0, sizeof(Vertex)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, pos))},  // Position
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, uv))},   // Color
-    });
-
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
+    // Creating the shaders
+    VkShaderCreateInfoEXT shaderInfo{
+        .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
+        .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
+        .setLayoutCount         = 1,
+        .pSetLayouts            = &m_descriptorSetLayout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &pushConstantRanges,
+    };
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    shaderInfo.codeSize  = image_viewer_slang_sizeInBytes;
+    shaderInfo.pCode     = image_viewer_slang;
+    shaderInfo.pName     = "vertexMain";
+    shaderInfo.stage     = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderInfo.nextStage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_vertexShader);
+    NVVK_DBG_NAME(m_vertexShader);
+    shaderInfo.pName     = "fragmentMain";
+    shaderInfo.stage     = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderInfo.nextStage = 0;
+    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_fragmentShader);
+    NVVK_DBG_NAME(m_fragmentShader);
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    shaderInfo.pName    = "main";
+    shaderInfo.codeSize = std::span(image_viewer_vert_glsl).size_bytes();
+    shaderInfo.pCode    = std::span(image_viewer_vert_glsl).data();
+    shaderInfo.stage    = VK_SHADER_STAGE_VERTEX_BIT;
+    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_vertexShader);
+    NVVK_DBG_NAME(m_vertexShader);
+    shaderInfo.pName    = "main";
+    shaderInfo.stage    = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderInfo.codeSize = std::span(image_viewer_frag_glsl).size_bytes();
+    shaderInfo.pCode    = std::span(image_viewer_frag_glsl).data();
+    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_fragmentShader);
+    NVVK_DBG_NAME(m_fragmentShader);
 #endif
-
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
   }
 
-  void updateTexture()
+  // Push the image descriptor, such that it can be used in shader
+  void updateTexture(VkCommandBuffer cmd)
   {
-    m_frame = (m_frame + 1) % 2;
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dset->makeWrite(m_frame, 0, &m_texture->descriptor()));
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    nvvk::WriteSetContainer container;
+    container.append(m_descBind.getWriteSet(0), m_texture->descriptor());
+
+    VkPushDescriptorSetInfo pushInfo{.sType                = VK_STRUCTURE_TYPE_PUSH_DESCRIPTOR_SET_INFO,
+                                     .stageFlags           = VK_SHADER_STAGE_ALL_GRAPHICS,
+                                     .layout               = m_pipelineLayout,
+                                     .descriptorWriteCount = container.size(),
+                                     .pDescriptorWrites    = container.data()};
+
+    vkCmdPushDescriptorSet2(cmd, &pushInfo);
   }
 
-  void createGbuffers(const glm::vec2& size)
-  {
-    m_viewSize = size;
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(),
-                                                   VkExtent2D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)},
-                                                   m_colorFormat, m_depthFormat);
-  }
-
+  // Creating the geometry and pushing it to the GPU
   void createVkBuffers()
   {
     // Quad with UV coordinates
@@ -454,64 +510,58 @@ private:
     vertices[3] = {{-1.0F, 1.0F}, {0.0F, 1.0F}};
 
     {
+      assert(m_stagingUploader.isAppendedEmpty());
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-      m_dutil->DBG_NAME(m_vertices.buffer);
-      m_dutil->DBG_NAME(m_indices.buffer);
+      NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(indices).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
+      NVVK_DBG_NAME(m_vertices.buffer);
+      NVVK_DBG_NAME(m_indices.buffer);
+      NVVK_CHECK(m_stagingUploader.appendBuffer(m_vertices, 0, std::span(vertices)));
+      NVVK_CHECK(m_stagingUploader.appendBuffer(m_indices, 0, std::span(indices)));
+      m_stagingUploader.cmdUploadAppended(cmd);
       m_app->submitAndWaitTempCmdBuffer(cmd);
+      m_stagingUploader.releaseStaging();
     }
   }
 
+  // Create two samplers, one nearest, one linear
   void createSamplers()
-  {  // Create two samplers, one nearest, one linear
-    VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    sampler_info.magFilter  = VK_FILTER_NEAREST;
-    sampler_info.minFilter  = VK_FILTER_NEAREST;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  {
+    m_samplers.resize(2);
 
-    m_samplers.emplace_back(m_alloc->acquireSampler(sampler_info));
+    VkSamplerCreateInfo sampler_info{
+        .sType      = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter  = VK_FILTER_NEAREST,
+        .minFilter  = VK_FILTER_NEAREST,
+        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+    };
+
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_samplers[0], sampler_info));
+    NVVK_DBG_NAME(m_samplers[0]);
+
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
-    m_samplers.emplace_back(m_alloc->acquireSampler(sampler_info));
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_samplers[1], sampler_info));
+    NVVK_DBG_NAME(m_samplers[1]);
   }
 
-
-  void destroyResources()
-  {
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-
-    m_alloc->destroy(m_vertices);
-    m_alloc->destroy(m_indices);
-    m_vertices = {};
-    m_indices  = {};
-
-    m_texture.reset();
-    m_dset->deinit();
-    m_gBuffers.reset();
-  }
-
+  // Saving the buffer to disk
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*              m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
+  nvapp::Application*     m_app{};
+  nvvk::ResourceAllocator m_alloc;
+  nvvk::StagingUploader   m_stagingUploader{};
+  nvvk::SamplerPool       m_samplerPool;
+  nvvk::GBuffer           m_gBuffers;  // G-Buffers: color
 
-  glm::vec2                        m_viewSize{0, 0};
-  VkFormat                         m_colorFormat{VK_FORMAT_R8G8B8A8_UNORM};       // Color format of the image
-  VkFormat                         m_depthFormat{VK_FORMAT_X8_D24_UNORM_PACK32};  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor{{0, 0, 0, 1}};                    // Clear color
-  VkDevice                         m_device{VK_NULL_HANDLE};                      // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                    // G-Buffers: color + depth
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;                           // Descriptor set
+  VkDevice m_device{};  // Convenient
 
   // Resources
   nvvk::Buffer           m_vertices;  // Buffer of the vertices
@@ -519,66 +569,78 @@ private:
   std::vector<VkSampler> m_samplers;
 
   // Data and setting
-  float                          m_zoom{1};
-  glm::vec2                      m_pan{0, 0};
-  std::shared_ptr<SampleTexture> m_texture;  // Loaded image and displayed
+  PushConstant                   m_pushConst;  // Information sent to the shader
+  std::shared_ptr<SampleTexture> m_texture;    // Loaded image and displayed
 
   // Pipeline
-  PushConstant     m_pushConst;                          // Information sent to the shader
-  VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
-  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int              m_frame{0};
+  VkDescriptorSetLayout       m_descriptorSetLayout{};  // Descriptor set layout
+  VkPipelineLayout            m_pipelineLayout{};       // The description of the pipeline
+  nvvk::GraphicsPipelineState m_dynamicPipeline;
+  nvvk::DescriptorBindings    m_descBind;
+
+  // Shaders
+  VkShaderEXT m_vertexShader{};
+  VkShaderEXT m_fragmentShader{};
 };
 
 
 //////////////////////////////////////////////////////////////////////////
-/// </summary>
-/// <param name="argc"></param>
-/// <param name="argv"></param>
-/// <returns></returns>
+///
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::Application           app;        // Main application
+  nvapp::ApplicationCreateInfo appInfo;    // Base application information
+  nvvk::ContextInitInfo        vkSetup;    // Vulkan context information
+  nvvk::Context                vkContext;  // Vulkan context
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  // Parsing the command line
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  reg.add({"zoom", "Zoom in image"}, &g_imageViewerSettings.zoom);
+  reg.addVector({"pan", "Pan in image"}, &g_imageViewerSettings.pan);
+  reg.addVector({"size", "Window size"}, &appInfo.windowSize);
+  cli.add(reg);
   cli.parse(argc, argv);
 
   // Vulkan creation context information
-  VkContextSettings vkSetup;
+  VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dStateFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  vkSetup = {.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+             .deviceExtensions   = {
+                 {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+                 {VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &dStateFeatures},
+                 {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures},
+             }};
+
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
   // Creation of the Vulkan context
-  VulkanContext vkContext(vkSetup);
-  if(!vkContext.isValid())
-    std::exit(0);
-
-  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Setting up the application
-  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appInfo.vSync          = true;
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();
   appInfo.physicalDevice = vkContext.getPhysicalDevice();
   appInfo.queues         = vkContext.getQueueInfos();
+  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
 
-  // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  // Create the application and add the image viewer sample
+  app.init(appInfo);
+  app.addElement(std::make_shared<ImageViewer>());
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
 
-  // Create a view/render
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  app->addElement(test);
-  app->addElement(std::make_shared<ImageViewer>());
-
-  app->run();
-  app.reset();
+  app.run();
+  app.deinit();
   vkContext.deinit();
 
-  return test->errorCode();
+  return 0;
 }

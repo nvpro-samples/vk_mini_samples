@@ -8,10 +8,14 @@ _Build/*
 _Install/*
 bin_x64/*
 downloaded_resources/*
-/nvpro_core/
+/nvpro_core*/
 .vscode/**
 .vs/
 **/nsight-aftermath-usage-guidelines.txt
 **/LICENSE
+log_offscreen.txt
 
 samples/.vscode/
+
+_bin/
+

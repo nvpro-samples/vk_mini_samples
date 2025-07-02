@@ -17,227 +17,200 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
-/*
-  This sample is not using any shaders, it is simply copying a color in a texture and displaying that image.
-  
-  The example `SolidColor` is attached to the nvvk::Application as an engine, and will be called for various 
-  events:
-    - onAttach : called at when adding the engine
-    - onDetach: called when application stops
-    - onUIRender: called at each frame, before a frame render begins
-    - onUIMenu: called by application to add a menubar
-
-  See nvvk::Application for more details, but in a nutshell, the application is 
-   - creates a GLFW window
-   - creates Vulkan context: VkInstance, VkDevice, VkPhysicalDevice
-   - creates the swapchains (using ImGui code)
-   - loops and call onUIRender, onUIMenu, onRender (not used here)
-   - commit the frame command buffer and submit the frame
-
-   This example and a few others are using MicroVk. This is creating the Vulkan resource manager, 
-   it is the allocator of memory, creation of images and buffers. We are wrapping this in a
-   class, since the allocator will be use every everywhere. 
-
-
-*/
-
-
-#include <array>
-#include <vulkan/vulkan_core.h>
-
 #define VMA_IMPLEMENTATION
-#include "backends/imgui_impl_vulkan.h"             // ImGui_ImplVulkan_AddTexture
-#include "common/vk_context.hpp"                    // Vulkan context
-#include "nvvk/debug_util_vk.hpp"                   // Vulkan debug names
-#include "nvvk/images_vk.hpp"                       // Image creation helpers
-#include "nvvkhl/alloc_vma.hpp"                     // VMA allocator
-#include "nvvkhl/application.hpp"                   // The application framework
-#include "nvvkhl/element_benchmark_parameters.hpp"  // Tests and benchmarks
-#include "nvvk/extensions_vk.hpp"
 
-class SolidColor : public nvvkhl::IAppElement
+#include <volk.h>
+#include <span>
+
+#include <imgui/imgui.h>
+#include <imgui/backends/imgui_impl_vulkan.h>
+
+#include <nvapp/application.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
+
+#define SHOW_MENU 1      // Enabling the standard Window menu.
+#define SHOW_SETTINGS 1  // Show the setting panel
+#define ANIMATE 1        // Modify the image at each frame
+
+class EmptyElement : public nvapp::IAppElement
 {
 public:
-  SolidColor()           = default;
-  ~SolidColor() override = default;
+  EmptyElement()           = default;
+  ~EmptyElement() override = default;
 
-  // Implementation of nvvk::IApplication interface
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
-    m_app = app;
+    m_app                                = app;
+    VmaAllocatorCreateInfo allocatorInfo = {
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
+    };
+    m_alloc.init(allocatorInfo);
 
-    // Create the Vulkan allocator (VMA)
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app->getPhysicalDevice(),
-        .device         = app->getDevice(),
-        .instance       = app->getInstance(),
-    });  // Allocator
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_app->getDevice());
-    createTexture();
-  };
+    m_stagingUploader.init(&m_alloc, true);
+
+    m_samplerPool.init(app->getDevice());
+
+    // Create a 1x1 Vulkan 2D texture
+    VkImageCreateInfo imageInfo = DEFAULT_VkImageCreateInfo;
+    imageInfo.format            = VK_FORMAT_R32G32B32A32_SFLOAT;
+    imageInfo.extent            = {1, 1, 1};
+    imageInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    std::array<float, 4> imageData = {0.46F, 0.72F, 0, 1};  // NVIDIA green
+
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    NVVK_CHECK(m_alloc.createImage(m_image, imageInfo, DEFAULT_VkImageViewCreateInfo));
+    NVVK_CHECK(m_stagingUploader.appendImage(m_image, std::span<float>(imageData.data(), imageData.size()),
+                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+    NVVK_DBG_NAME(m_image.image);
+    NVVK_DBG_NAME(m_image.descriptor.imageView);
+
+    m_stagingUploader.cmdUploadAppended(cmd);
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+    m_stagingUploader.releaseStaging();
+
+    // Default sampler for the texture
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_image.descriptor.sampler));
+
+    // Add image to ImGui, for display
+    m_targetImage = ImGui_ImplVulkan_AddTexture(m_image.descriptor.sampler, m_image.descriptor.imageView,
+                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    NVVK_CHECK(m_alloc.createBuffer(m_stagingBuffer, std::span<float>(imageData).size_bytes(),
+                                    VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                    VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT));
+    NVVK_DBG_NAME(m_stagingBuffer.buffer);
+  }
 
   void onDetach() override
   {
     NVVK_CHECK(vkDeviceWaitIdle(m_app->getDevice()));
-    destroyResources();
-  };
-
+    ImGui_ImplVulkan_RemoveTexture(m_targetImage);
+    m_alloc.destroyImage(m_image);
+    m_alloc.destroyBuffer(m_stagingBuffer);
+    m_stagingUploader.deinit();
+    m_alloc.deinit();
+    m_samplerPool.deinit();
+  }
 
   void onUIRender() override
   {
-    // Settings
+#if SHOW_SETTINGS
+    // [optional] convenient setting panel
     ImGui::Begin("Settings");
-    if(ImGui::ColorEdit3("Color", m_imageData.data()))
-    {
-      m_dirty = true;
-    }
     ImGui::TextDisabled("%d FPS / %.3fms", static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
     ImGui::End();
+#endif
 
-    // Using viewport Window
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
+    // Rendered image displayed fully in 'Viewport' window
     ImGui::Begin("Viewport");
-
-    // Display the colored image
-    if(m_texture.image != nullptr)
-    {
-      ImGui::Image(m_descriptorSet, ImGui::GetContentRegionAvail());
-    }
-
+    ImGui::Image(ImTextureID(m_targetImage), ImGui::GetContentRegionAvail());
     ImGui::End();
-    ImGui::PopStyleVar();
   }
 
-  void onRender(VkCommandBuffer cmd) override
+  void onRender(VkCommandBuffer cmd)
   {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+#if ANIMATE
+    ImVec4                                  rgb = {0, 0, 0, 1};
+    const std::array<VkBufferImageCopy2, 1> copyRegion{{{
+        .sType            = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+        .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+        .imageExtent      = m_image.extent,
+    }}};  // Copy the whole image
 
-    if(m_dirty)
-    {
-      setData(cmd);
-    }
+    ImGui::ColorConvertHSVtoRGB((float)ImGui::GetTime() * 0.25f, 1, 1, rgb.x, rgb.y, rgb.z);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+    std::memcpy(m_stagingBuffer.mapping, &rgb, sizeof(ImVec4));  // Update the staging buffer (single pixel)
+
+    VkCopyBufferToImageInfo2 copyBufferToImageInfo{
+        .sType          = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+        .srcBuffer      = m_stagingBuffer.buffer,
+        .dstImage       = m_image.image,
+        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .regionCount    = uint32_t(copyRegion.size()),
+        .pRegions       = copyRegion.data(),
+    };
+
+    vkCmdCopyBufferToImage2(cmd, &copyBufferToImageInfo);  // Copy the staging buffer to the image
+    nvvk::cmdImageMemoryBarrier(cmd, {m_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+#endif
   }
 
+  // [optional] Called if showMenu is true
   void onUIMenu() override
   {
-    bool close_app{false};
-
     if(ImGui::BeginMenu("File"))
     {
       if(ImGui::MenuItem("Exit", "Ctrl+Q"))
-      {
-        close_app = true;
-      }
+        m_app->close();
       ImGui::EndMenu();
     }
-
     if(ImGui::IsKeyPressed(ImGuiKey_Q) && ImGui::IsKeyDown(ImGuiKey_LeftCtrl))
-    {
-      close_app = true;
-    }
-
-    if(close_app)
-    {
       m_app->close();
-    }
   }
-
 
 private:
-  void createTexture()
-  {
-    assert(!m_texture.image);
-
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-
-    const VkImageCreateInfo   create_info = nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R32G32B32A32_SFLOAT);
-    const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    m_texture = m_alloc->createTexture(cmd, m_imageData.size() * sizeof(float), m_imageData.data(), create_info, sampler_info);
-    m_app->submitAndWaitTempCmdBuffer(cmd);
-    m_dutil->setObjectName(m_texture.image, "Image");
-    m_dutil->setObjectName(m_texture.descriptor.sampler, "Sampler");
-    m_descriptorSet = ImGui_ImplVulkan_AddTexture(m_texture.descriptor.sampler, m_texture.descriptor.imageView,
-                                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  }
-
-  void setData(VkCommandBuffer cmd)
-  {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
-    assert(m_texture.image);
-    const VkOffset3D               offset{0};
-    const VkImageSubresourceLayers subresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    const VkExtent3D               extent{1, 1, 1};
-    nvvk::cmdBarrierImageLayout(cmd, m_texture.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-    nvvk::StagingMemoryManager* staging = m_alloc->getStaging();
-    staging->cmdToImage(cmd, m_texture.image, offset, extent, subresource, m_imageData.size() * sizeof(float),
-                        m_imageData.data());
-
-    nvvk::cmdBarrierImageLayout(cmd, m_texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    m_dirty = false;
-  }
-
-  void destroyResources() { m_alloc->destroy(m_texture); }
-
-  void onLastHeadlessFrame() override
-  {
-    m_app->saveImageToFile(m_texture.image, {1, 1}, nvh::getExecutablePath().replace_extension(".jpg").string());
-  }
-
-  // Local data
-  nvvk::Texture        m_texture;
-  std::array<float, 4> m_imageData{1, 1, 0, 1};
-  VkDescriptorSet      m_descriptorSet{};
-  bool                 m_dirty{false};
-
-  std::unique_ptr<nvvkhl::AllocVma> m_alloc;
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  nvvkhl::Application*              m_app{nullptr};
+  nvapp::Application*     m_app             = {};
+  nvvk::Image             m_image           = {};
+  nvvk::ResourceAllocator m_alloc           = {};
+  nvvk::StagingUploader   m_stagingUploader = {};
+  nvvk::Buffer            m_stagingBuffer   = {};
+  nvvk::SamplerPool       m_samplerPool     = {};
+  VkDescriptorSet         m_targetImage     = {};
 };
+
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup{.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME}};
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
     vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
-  // Create Vulkan context
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
-
-  // Application setup
-  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
-  appInfo.vSync          = true;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.name           = "The Empty Example";
+  appInfo.useMenu        = SHOW_MENU ? true : false;
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
+  app.addElement(std::make_shared<EmptyElement>());
+  app.run();
+  app.deinit();
+  vkContext.deinit();
 
-  // Create this example
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  app->addElement(test);
-  app->addElement(std::make_shared<SolidColor>());
-
-  app->run();
-
-  return test->errorCode();
+  return 0;
 }

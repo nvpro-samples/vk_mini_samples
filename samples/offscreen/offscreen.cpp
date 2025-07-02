@@ -22,165 +22,171 @@
  rendered image to disk.
 */
 
-#include <array>
-#include <memory>
-#include "nvh/fileoperations.hpp"
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
-#define VMA_IMPLEMENTATION
+#define STBIW_WINDOWS_UTF8
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-
-
-#include "nvh/commandlineparser.hpp"
-#include "nvh/timesampler.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/context_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/error_vk.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvk/shaders_vk.hpp"
-
-#include "stb_image_write.h"
-#include "common/vk_context.hpp"  // Simple but complete Vulkan context creation
+#pragma warning(disable : 4996)  // sprintf warning
+#define VMA_IMPLEMENTATION
+#include <glm/glm.hpp>
+#include <stb/stb_image_write.h>
+#include <vulkan/vulkan_core.h>
 
 // Shaders
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "shaders/shaderio.h"  // Shared between host and device
+}  // namespace shaderio
 
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-#include "nvh/fileoperations.hpp"
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
+#include "_autogen/offscreen.frag.glsl.h"
+#include "_autogen/offscreen.slang.h"
+#include "_autogen/offscreen.vert.glsl.h"
+
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvutils/timers.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/commands.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/resources.hpp>
 
 
 namespace nvvkhl {
 class OfflineRender
 {
 public:
-  explicit OfflineRender(VkInstance instance, VkDevice device, VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex)
-      : m_device(device)
+  OfflineRender()  = default;
+  ~OfflineRender() = default;
+
+  void init(VkInstance instance, VkDevice device, VkPhysicalDevice physicalDevice, const nvvk::QueueInfo& queue)
   {
-    VmaAllocatorCreateInfo vmaInfo{
-        .physicalDevice = physicalDevice,
-        .device         = device,
-        .instance       = instance,
+    m_device = device;
+    m_queue  = queue;
+
+    // Initialize the resource allocator
+    m_alloc.init({.physicalDevice = physicalDevice, .device = device, .instance = instance});
+
+    // Initialize the GBuffer
+    m_gBuffers.init({.allocator = &m_alloc, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM}});
+
+    // Create a command pool, for creating the command buffer
+    const VkCommandPoolCreateInfo commandPoolCreateInfo{
+        .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags            = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,  // Hint that commands will be short-lived
+        .queueFamilyIndex = m_queue.familyIndex,
     };
-    m_alloc   = std::make_unique<nvvkhl::AllocVma>(vmaInfo);
-    m_cmdPool = std::make_unique<nvvk::CommandPool>(device, queueFamilyIndex);
+    NVVK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, nullptr, &m_commandPool));
+    NVVK_DBG_NAME(m_commandPool);
   }
-
-  ~OfflineRender() { destroy(); };
-
 
   //--------------------------------------------------------------------------------------------------
   // Rendering the scene to a frame buffer
-  void offlineRender(float anim_time)
+  void offlineRender(float animTime)
   {
-    const nvh::ScopedTimer s_timer("Offline rendering");
+    const nvutils::ScopedTimer s_timer("Offline rendering");
 
     std::array<VkClearValue, 2> clear_values{};
     clear_values[0].color        = {{0.1F, 0.1F, 0.4F, 0.F}};
     clear_values[1].depthStencil = {1.0F, 0};
 
     // Preparing the rendering
-    VkCommandBuffer cmd = m_cmdPool->createCommandBuffer();
+    VkCommandBuffer cmd;
+    NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_device, m_commandPool));
 
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    r_info.pStencilAttachment = nullptr;
+    // Render the scene to the frame buffer (GBuffer)
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    vkCmdBeginRendering(cmd, &r_info);
+    // Dynamic rendering
+    VkRenderingAttachmentInfoKHR colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                    = m_gBuffers.getColorImageView();
 
-    const glm::vec2 size_f = {static_cast<float>(m_gBuffers->getSize().width), static_cast<float>(m_gBuffers->getSize().height)};
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
 
-    // Viewport and scissor
-    const VkViewport viewport{0.0F, 0.0F, size_f.x, size_f.y, 0.0F, 1.0F};
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdBeginRendering(cmd, &renderingInfo);
 
-    const VkRect2D scissor{{0, 0}, m_gBuffers->getSize()};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    // Pushing the time and aspect ratio to the shader
+    shaderio::PushConstant pushConstant{
+        .iTime       = animTime,
+        .aspectRatio = m_gBuffers.getAspectRatio(),
+    };
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(shaderio::PushConstant), &pushConstant);
 
-    // Rendering the full-screen pixel shader
-    DH::PushConstant push_c{};
-    push_c.aspectRatio = size_f.x / size_f.y;
-    push_c.iTime       = anim_time;
-
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DH::PushConstant), &push_c);
+    // Rendering the scene
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);  // No vertices, it is implicitly done in the vertex shader
 
     // Done and submit execution
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
-
-    m_cmdPool->submitAndWait(cmd);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+    NVVK_CHECK(nvvk::endSingleTimeCommands(cmd, m_device, m_commandPool, m_queue.queue));
   }
 
   //--------------------------------------------------------------------------------------------------
   // Save the image to disk
   //
-  void saveImage(const std::string& outFilename)
+  void saveImage(const std::filesystem::path& outFilename)
   {
-    const nvh::ScopedTimer s_timer("Save Image\n");
+    const nvutils::ScopedTimer s_timer("Save Image\n");
 
     // Create a temporary buffer to hold the pixels of the image
-    const VkBufferUsageFlags usage{VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    const VkDeviceSize buffer_size  = 4 * sizeof(uint8_t) * m_gBuffers->getSize().width * m_gBuffers->getSize().height;
-    nvvk::Buffer       pixel_buffer = m_alloc->createBuffer(buffer_size, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    const VkBufferUsageFlags usage{VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT};
+    const VkDeviceSize bufferSize = 4 * sizeof(uint8_t) * m_gBuffers.getSize().width * m_gBuffers.getSize().height;
+    nvvk::Buffer       pixelBuffer;
+    NVVK_CHECK(m_alloc.createBuffer(pixelBuffer, bufferSize, usage, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                    VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT));
+    NVVK_DBG_NAME(pixelBuffer.buffer);
 
-    imageToBuffer(m_gBuffers->getColorImage(), pixel_buffer.buffer);
+    imageToBuffer(m_gBuffers.getColorImage(), pixelBuffer.buffer);
 
     // Write the buffer to disk
-    LOGI(" - Size: %d, %d\n", m_gBuffers->getSize().width, m_gBuffers->getSize().height);
-    LOGI(" - Bytes: %d\n", m_gBuffers->getSize().width * m_gBuffers->getSize().height * 4);
-    LOGI(" - Out name: %s\n", outFilename.c_str());
-    const void* data = m_alloc->map(pixel_buffer);
-    stbi_write_jpg(outFilename.c_str(), m_gBuffers->getSize().width, m_gBuffers->getSize().height, 4, data, 0);
-    m_alloc->unmap(pixel_buffer);
+    const std::string outFilenameUtf8 = nvutils::utf8FromPath(outFilename);
+    LOGI(" - Size: %d, %d\n", m_gBuffers.getSize().width, m_gBuffers.getSize().height);
+    LOGI(" - Bytes: %d\n", m_gBuffers.getSize().width * m_gBuffers.getSize().height * 4);
+    LOGI(" - Out name: %s\n", outFilenameUtf8.c_str());
+    const void* data = pixelBuffer.mapping;
+    stbi_write_jpg(outFilenameUtf8.c_str(), m_gBuffers.getSize().width, m_gBuffers.getSize().height, 4, data, 100);
 
     // Destroy temporary buffer
-    m_alloc->destroy(pixel_buffer);
+    m_alloc.destroyBuffer(pixelBuffer);
   }
 
 
   //--------------------------------------------------------------------------------------------------
   // Copy the image to a buffer - this linearize the image memory
   //
-  void imageToBuffer(const VkImage& imgIn, const VkBuffer& pixelBufferOut)
+  void imageToBuffer(const VkImage& imageIn, const VkBuffer& pixelBufferOut) const
   {
-    const nvh::ScopedTimer s_timer(" - Image To Buffer");
+    const nvutils::ScopedTimer s_timer(" - Image To Buffer");
 
-    VkCommandBuffer cmd = m_cmdPool->createCommandBuffer();
+    VkCommandBuffer cmd;
+    NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_device, m_commandPool));
 
-    // Make the image layout eTransferSrcOptimal to copy to buffer
-    const VkImageSubresourceRange subresource_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresource_range);
+    // Set the image to the right layout
+    nvvk::cmdImageMemoryBarrier(cmd, {imageIn, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL});
 
     // Copy the image to the buffer
-    VkBufferImageCopy copy_region{};
-    copy_region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy_region.imageExtent      = VkExtent3D{m_gBuffers->getSize().width, m_gBuffers->getSize().height, 1};
-    vkCmdCopyImageToBuffer(cmd, imgIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixelBufferOut, 1, &copy_region);
+    VkBufferImageCopy copyRegion{};
+    copyRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copyRegion.imageExtent      = VkExtent3D{m_gBuffers.getSize().width, m_gBuffers.getSize().height, 1};
+    vkCmdCopyImageToBuffer(cmd, imageIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixelBufferOut, 1, &copyRegion);
 
     // Put back the image as it was
-    nvvk::cmdBarrierImageLayout(cmd, imgIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, subresource_range);
-    m_cmdPool->submitAndWait(cmd);
+    nvvk::cmdImageMemoryBarrier(cmd, {imageIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+
+    // Submit the command buffer and wait for it to finish
+    NVVK_CHECK(nvvk::endSingleTimeCommands(cmd, m_device, m_commandPool, m_queue.queue));
   }
 
 
@@ -189,106 +195,112 @@ public:
   //
   void createPipeline()
   {
-    const nvh::ScopedTimer s_timer("Create Pipeline");
+    const nvutils::ScopedTimer s_timer("Create Pipeline");
 
     // Pipeline Layout: The layout of the shader needs only Push Constants: we are using parameters, time and aspect ratio
-    const VkPushConstantRange  push_constants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DH::PushConstant)};
-    VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    layout_info.pushConstantRangeCount = 1;
-    layout_info.pPushConstantRanges    = &push_constants;
-    NVVK_CHECK(vkCreatePipelineLayout(m_device, &layout_info, nullptr, &m_pipelineLayout));
+    const VkPushConstantRange  pushConstants = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(shaderio::PushConstant)};
+    VkPipelineLayoutCreateInfo layoutInfo{
+        .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &pushConstants,
+    };
+    NVVK_CHECK(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_pipelineLayout));
 
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_colorFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
+    // Holds the state of the graphic pipeline
+    nvvk::GraphicsPipelineState graphicState;
+    graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
-    nvvk::GraphicsPipelineState pstate;
-    pstate.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+    // Helper to create the graphic pipeline
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout = m_pipelineLayout;
 
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
+
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", offscreen_slang);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", offscreen_slang);
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", offscreen_vert_glsl);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", offscreen_frag_glsl);
 #endif
-    m_pipeline = pgen.createPipeline();
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
+
+    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, graphicState, &m_pipeline));
+    NVVK_DBG_NAME(m_pipeline);
   }
 
 
   //--------------------------------------------------------------------------------------------------
-  // Creating an offscreen frame buffer and the associated render pass
+  // Creating an off screen frame buffer and the associated render pass
   //
   void createFramebuffer(const VkExtent2D& size)
   {
-    const nvh::ScopedTimer s_timer("Create Framebuffer");
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
+    const nvutils::ScopedTimer s_timer("Create Framebuffer");
+    VkCommandBuffer            cmd;
+    nvvk::beginSingleTimeCommands(cmd, m_device, m_commandPool);
+    NVVK_CHECK(m_gBuffers.update(cmd, size));
+    nvvk::endSingleTimeCommands(cmd, m_device, m_commandPool, m_queue.queue);
   }
 
-  void destroy()
+  void deinit()
   {
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_pipeline, nullptr);
-    m_gBuffers.reset();
-    m_cmdPool.reset();
-    m_alloc.reset();
+    vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+
+    m_gBuffers.deinit();
+    m_alloc.deinit();
   }
 
 private:
-  VkDevice                           m_device{VK_NULL_HANDLE};
-  std::unique_ptr<nvvkhl::AllocVma>  m_alloc;
-  std::unique_ptr<nvvk::CommandPool> m_cmdPool;
-  std::unique_ptr<nvvkhl::GBuffer>   m_gBuffers;
+  nvvk::ResourceAllocator m_alloc;     // Resource allocator for the buffers
+  nvvk::GBuffer           m_gBuffers;  // GBuffer for the offscreen rendering
 
-  VkClearColorValue m_clearColor{{0.1F, 0.4F, 0.1F, 1.0F}};  // Clear color
-  VkPipelineLayout  m_pipelineLayout{VK_NULL_HANDLE};        // The description of the pipeline
-  VkPipeline        m_pipeline{VK_NULL_HANDLE};              // The graphic pipeline to render
-  VkFormat          m_colorFormat{VK_FORMAT_R8G8B8A8_UNORM};
-  VkFormat          m_depthFormat{VK_FORMAT_D32_SFLOAT};
+  nvvk::QueueInfo  m_queue;             // Queue information
+  VkCommandPool    m_commandPool{};     // Command pool for the command buffer
+  VkDevice         m_device{};          // Vulkan device
+  VkPipelineLayout m_pipelineLayout{};  // The description of the pipeline
+  VkPipeline       m_pipeline{};        // The graphic pipeline to render
 };
 }  // namespace nvvkhl
 
 int main(int argc, char** argv)
 {
   // Logging to file
-  const std::string logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
-  nvprintSetLogFileName(logfile.c_str());
+  const std::filesystem::path logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
+  nvutils::Logger::getInstance().setOutputFile(logfile);
 
-  float       anim_time{0.0F};
-  glm::uvec2  render_size{800, 600};
-  std::string output_file = nvh::getExecutablePath().replace_extension("jpg").string();
+  float                 animTime{0.0F};
+  glm::uvec2            renderSize{800, 600};
+  std::filesystem::path outputFile = nvutils::getExecutablePath().replace_extension("jpg");
 
-  nvh::CommandLineParser parser("Offline Render");
-  parser.addArgument({"-t", "--time"}, &anim_time, "Animation time");
-  parser.addArgument({"-s", "--size"}, &render_size, "Render size width");
-  parser.addArgument({"-o", "--output"}, &output_file, "Output filename (must end with .jpg)");
-  if(!parser.parse(argc, argv))
+  std::string                projectName = nvutils::getExecutablePath().stem().string();
+  nvutils::ParameterParser   cli(projectName);
+  nvutils::ParameterRegistry reg;
+  reg.add({"time", "Run in headless mode", "t"}, &animTime, true);
+  reg.addVector({"size", "Render size width", "s"}, &renderSize);
+  reg.add({"output", "Output filename (must end with .jpg)", "o"}, &outputFile);
+  cli.add(reg);
+  cli.parse(argc, argv);
+
+
+  // Creating the Vulkan instance and device, with only defaults, no extension
+  nvvk::ContextInitInfo vkSetup{.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME}};
+  nvvk::Context         vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
-    parser.printHelp();
+    LOGE("Error in Vulkan context creation\n");
     return 1;
   }
 
-  // Creating the Vulkan instance and device, with only defaults, no extension
-  auto vkContext = std::make_unique<VulkanContext>(VkContextSettings());
-
   // Create the application
-  auto app = std::make_unique<nvvkhl::OfflineRender>(vkContext->getInstance(), vkContext->getDevice(),
-                                                     vkContext->getPhysicalDevice(), vkContext->getQueueInfo(0).familyIndex);
+  nvvkhl::OfflineRender app;
+  app.init(vkContext.getInstance(), vkContext.getDevice(), vkContext.getPhysicalDevice(), vkContext.getQueueInfo(0));
+  app.createFramebuffer({renderSize.x, renderSize.y});  // Framebuffer where it will render
+  app.createPipeline();                                 // How the quad will be rendered: shaders and more
+  app.offlineRender(animTime);                          // Rendering
+  app.saveImage(outputFile);                            // Saving rendered image
+  app.deinit();                                         // Destroying the application
 
-  app->createFramebuffer({render_size.x, render_size.y});  // Framebuffer where it will render
-  app->createPipeline();                                   // How the quad will be rendered: shaders and more
-  app->offlineRender(anim_time);                           // Rendering
-
-  app->saveImage(output_file);  // Saving rendered image
-
-  app.reset();
-  vkContext.reset();
+  vkContext.deinit();
 
   return 0;
 }

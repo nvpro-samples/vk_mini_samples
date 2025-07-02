@@ -23,51 +23,44 @@
 #include <vector>
 #include <string>
 #include <filesystem>
-#include "nvpsystem.hpp"
-#include "vulkan/vulkan_core.h"
+#include <span>
 
-namespace nvvk {
-inline std::vector<std::string> getMediaDirs()
+#include <vulkan/vulkan_core.h>
+#include <nvutils/file_operations.hpp>
+
+namespace nvsamples {
+
+inline static std::vector<std::filesystem::path> getResourcesDirs()
 {
+  std::filesystem::path exePath = nvutils::getExecutablePath().parent_path();
   return {
-      NVPSystem::exePath() + std::string("../media"),  //
-      NVPSystem::exePath() + std::string("/media"),    //
-      NVPSystem::exePath()                             //
+      std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_ROOT_DIRECTORY) / "resources"),
+      std::filesystem::absolute(exePath / "resources"),  //
+      std::filesystem::absolute(exePath)                 //
   };
 }
 
-// Find the full path of the shader file
-inline std::string getFilePath(const std::string& file, const std::vector<std::string>& paths)
+inline static std::vector<std::filesystem::path> getShaderDirs()
 {
-  namespace fs = std::filesystem;
-
-  if(fs::exists(fs::path(file)))
-  {
-    return file;
-  }
-
-  std::string directoryPath;
-  for(const auto& dir : paths)
-  {
-    fs::path p = fs::path(dir) / fs::path(file);
-    if(fs::exists(p))
-    {
-      directoryPath = p.string();
-      break;
-    }
-  }
-  return directoryPath;
-}
-
-
-inline void memoryBarrier(VkCommandBuffer cmd)
-{
-  VkMemoryBarrier mb{
-      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-      .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
-      .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+  std::filesystem::path exePath = nvutils::getExecutablePath().parent_path();
+  std::filesystem::path exeName = nvutils::getExecutablePath().stem();
+  return {
+      std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_SOURCE_DIRECTORY) / "shaders"),
+      std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_NVSHADERS_DIRECTORY)),
+      std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_ROOT_DIRECTORY) / "common"),
+      std::filesystem::absolute(std::filesystem::path(NVSHADERS_DIR)),
+      std::filesystem::absolute(exePath / exeName / "shaders"),
+      std::filesystem::absolute(exePath),
   };
-  VkPipelineStageFlags srcDstStage{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-  vkCmdPipelineBarrier(cmd, srcDstStage, srcDstStage, 0, 1, &mb, 0, nullptr, 0, nullptr);
 }
-}  // namespace nvvk
+
+inline static VkShaderModuleCreateInfo getShaderModuleCreateInfo(const std::span<const uint32_t>& spirv)
+{
+  return VkShaderModuleCreateInfo{
+      .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+      .codeSize = spirv.size_bytes(),
+      .pCode    = spirv.data(),
+  };
+}
+
+}  // namespace nvsamples

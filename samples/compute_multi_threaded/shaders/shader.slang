@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#version 460
-#include "device_host.h"
-#define WORKGROUP_SIZE 16
+#include "shaderio.h"
 
 [[vk::binding(0)]] RWTexture2D<float4> outImage;
 [[vk::push_constant]]  ConstantBuffer<PushConstant> pushConst;
@@ -76,15 +74,11 @@ void computeMain(uint3 threadIdx : SV_DispatchThreadID)
   //for(float i = 0.0; i < pushConst.iter; i++)
   //{
   //  uv = frac(uv * pushConst.zoom) - 0.5f;
-
   //  float d = length(uv) * exp(-length(uv0));
-
   //  float3 col = palette(length(uv0) + i  + iTime * .6);
-
   //  d = sin(d * 8 + iTime) / 2;
   //  d = abs(d);
   //  d = pow(0.01 / d, 1.2);
-
   //  finalColor += col * d;
   //}
 

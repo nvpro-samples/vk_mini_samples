@@ -17,72 +17,84 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
 #define VMA_IMPLEMENTATION
-#include "nvvk/descriptorsets_vk.hpp"               // Descriptor set helper
-#include "nvvkhl/alloc_vma.hpp"                     // Our allocator
-#include "nvvkhl/application.hpp"                   // For Application and IAppElememt
-#include "nvvkhl/gbuffer.hpp"                       // G-Buffer helper
-#include "nvvkhl/shaders/dh_comp.h"                 // Workgroup size and count
-#include "nvvkhl/element_benchmark_parameters.hpp"  // For testing
-
-#include "common/vk_context.hpp"
-#include "nvvk/extensions_vk.hpp"
+#include <glm/glm.hpp>
+#include <vector>
 
 
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "shaders/shaderio.h"  // Shared between host and device
+}  // namespace shaderio
+#include "_autogen/compute_only.comp.glsl.h"  // Generated compiled shader
+#include "_autogen/compute_only.slang.h"
 
 #define SHOW_MENU 1      // Enabling the standard Window menu.
 #define SHOW_SETTINGS 1  // Show the setting panel
 
+#include <nvapp/application.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/compute_pipeline.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
 
-// Shader spir-v source code, compiled from CMake
-#if USE_HLSL
-#include "_autogen/shader_computeMain.spirv.h"
-const auto& comp_shd = std::vector<uint8_t>{std::begin(shader_computeMain), std::end(shader_computeMain)};
-#elif USE_SLANG
-#include "_autogen/shader_slang.h"
-const auto& comp_shd = std::vector<uint32_t>{std::begin(shaderSlang), std::end(shaderSlang)};
-#else
-#include "_autogen/shader.comp.glsl.h"  // Generated compiled shader
-const auto& comp_shd = std::vector<uint32_t>{std::begin(shader_comp_glsl), std::end(shader_comp_glsl)};
-#endif
 
-template <typename T>  // Return memory usage size
-size_t getShaderSize(const std::vector<T>& vec)
-{
-  using baseType = typename std::remove_reference<T>::type;
-  return sizeof(baseType) * vec.size();
-}
-
-DH::PushConstant g_pushC = {.zoom = 1.5f, .iter = 2};
-
-class ComputeOnlyElement : public nvvkhl::IAppElement
+class ComputeOnlyElement : public nvapp::IAppElement
 {
 public:
   ComputeOnlyElement()           = default;
   ~ComputeOnlyElement() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
-    m_app   = app;
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app->getPhysicalDevice(),
-        .device         = app->getDevice(),
-        .instance       = app->getInstance(),
-    });  // Allocator
-    m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_app->getDevice());
+    m_app = app;
+    m_alloc.init(VmaAllocatorCreateInfo{
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
+    });
+
+    // Acquiring the sampler which will be used for displaying the GBuffer
+    m_samplerPool.init(app->getDevice());
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer
+    m_gBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
+
     createShaderObjectAndLayout();
   }
 
   void onDetach() override
   {
     NVVK_CHECK(vkDeviceWaitIdle(m_app->getDevice()));
-    for(auto shader : m_shaders)
-      vkDestroyShaderEXT(m_app->getDevice(), shader, NULL);
+    vkDestroyShaderEXT(m_app->getDevice(), m_shader, NULL);
+
+    vkDestroyPipelineLayout(m_app->getDevice(), m_pipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_app->getDevice(), m_descriptorSetLayout, nullptr);
+
+    m_samplerPool.deinit();
+    m_gBuffers.deinit();
+    m_alloc.deinit();
   }
 
   void onUIRender() override
@@ -91,36 +103,35 @@ public:
     // [optional] convenient setting panel
     ImGui::Begin("Settings");
     ImGui::TextDisabled("%d FPS / %.3fms", static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
-    ImGui::SliderFloat("Zoom", &g_pushC.zoom, 0.1f, 3.f);
-    ImGui::SliderInt("Iteration", &g_pushC.iter, 1, 8);
+    ImGui::SliderFloat("Zoom", &m_pushConst.zoom, 0.1f, 3.f);
+    ImGui::SliderInt("Iteration", &m_pushConst.iter, 1, 8);
     ImGui::End();
 #endif
 
     // Rendered image displayed fully in 'Viewport' window
     ImGui::Begin("Viewport");
-    ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+    ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
     ImGui::End();
   }
 
   void onRender(VkCommandBuffer cmd)
   {
     // Push descriptor set
-    const VkDescriptorImageInfo       in_desc = m_gBuffers->getDescriptorImageInfo();
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.push_back(m_dset->makeWrite(0, 0, &in_desc));
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_dset->getPipeLayout(), 0,
-                              static_cast<uint32_t>(writes.size()), writes.data());
+    nvvk::WriteSetContainer writeContainer;
+    writeContainer.append(m_bindings.getWriteSet(0), m_gBuffers.getDescriptorImageInfo());
+    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0,
+                              static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
 
     // Bind compute shader
     const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
-    vkCmdBindShadersEXT(cmd, 1, stages, m_shaders.data());
+    vkCmdBindShadersEXT(cmd, 1, stages, &m_shader);
 
     // Pushing constants
-    g_pushC.time = static_cast<float>(ImGui::GetTime());
-    vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant), &g_pushC);
+    m_pushConst.time = static_cast<float>(ImGui::GetTime());
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant), &m_pushConst);
 
     // Dispatch compute shader
-    VkExtent2D group_counts = getGroupCounts(m_gBuffers->getSize());
+    VkExtent2D group_counts = nvvk::getGroupCounts(m_gBuffers.getSize(), WORKGROUP_SIZE);
     vkCmdDispatch(cmd, group_counts.width, group_counts.height, 1);
   }
 
@@ -133,108 +144,124 @@ public:
         m_app->close();
       ImGui::EndMenu();
     }
-    if(ImGui::IsKeyPressed(ImGuiKey_Q) && ImGui::IsKeyDown(ImGuiKey_LeftCtrl))
+    if(ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Q))
       m_app->close();
   }
 
-  void onResize(uint32_t width, uint32_t height) override
-  {
-    // Re-creating the G-Buffer (RGBA8) when the viewport size change
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_app->getDevice(), m_alloc.get(), VkExtent2D{width, height}, VK_FORMAT_R8G8B8A8_UNORM);
-  }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   //-------------------------------------------------------------------------------------------------
   // Creating the pipeline layout and shader object
   void createShaderObjectAndLayout()
   {
-    VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(DH::PushConstant)};
+    VkPushConstantRange pushConstant = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(shaderio::PushConstant)};
 
     // Create the layout used by the shader
-    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    m_dset->initLayout(VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR);
-    m_dset->initPipeLayout(1, &push_constant_ranges);
+    m_bindings.addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    NVVK_CHECK(m_bindings.createDescriptorSetLayout(m_app->getDevice(), VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                                    &m_descriptorSetLayout));
+    NVVK_DBG_NAME(m_descriptorSetLayout);
+
+    NVVK_CHECK(nvvk::createPipelineLayout(m_app->getDevice(), &m_pipelineLayout, {m_descriptorSetLayout}, {pushConstant}));
+    NVVK_DBG_NAME(m_pipelineLayout);
 
     // Compute shader description
-    std::vector<VkShaderCreateInfoEXT> shaderCreateInfos;
-    shaderCreateInfos.push_back(VkShaderCreateInfoEXT{
+    VkShaderCreateInfoEXT shaderCreateInfos = {
         .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
         .pNext                  = NULL,
         .flags                  = VK_SHADER_CREATE_DISPATCH_BASE_BIT_EXT,
         .stage                  = VK_SHADER_STAGE_COMPUTE_BIT,
         .nextStage              = 0,
         .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-        .codeSize               = getShaderSize(comp_shd),
-        .pCode                  = comp_shd.data(),
-        .pName                  = USE_GLSL ? "main" : "computeMain",
         .setLayoutCount         = 1,
-        .pSetLayouts            = &m_dset->getLayout(),
+        .pSetLayouts            = &m_descriptorSetLayout,
         .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &push_constant_ranges,
+        .pPushConstantRanges    = &pushConstant,
         .pSpecializationInfo    = NULL,
-    });
+    };
+#if USE_SLANG
+    shaderCreateInfos.codeSize = compute_only_slang_sizeInBytes;
+    shaderCreateInfos.pCode    = compute_only_slang;
+    shaderCreateInfos.pName    = "computeMain";
+#else
+    shaderCreateInfos.codeSize = std::span(compute_only_comp_glsl).size_bytes();
+    shaderCreateInfos.pCode    = std::span(compute_only_comp_glsl).data();
+    shaderCreateInfos.pName    = "main";
+#endif
+
     // Create the shader
-    NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), 1, shaderCreateInfos.data(), NULL, m_shaders.data()));
+    NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), 1, &shaderCreateInfos, NULL, &m_shader));
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
 private:
-  nvvkhl::Application*                          m_app = {nullptr};
-  std::unique_ptr<nvvkhl::AllocVma>             m_alloc;
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;
-  std::unique_ptr<nvvkhl::GBuffer>              m_gBuffers;
-  std::array<VkShaderEXT, 1>                    m_shaders = {};
+  nvapp::Application*      m_app{};        // Application instance
+  nvvk::ResourceAllocator  m_alloc;        // Allocator
+  nvvk::GBuffer            m_gBuffers;     // G-Buffers: color + depth
+  nvvk::SamplerPool        m_samplerPool;  // The sampler pool, used to create a sampler for the texture
+  nvvk::DescriptorBindings m_bindings;     // Descriptor bindings helper
+
+  VkShaderEXT           m_shader{};
+  VkPipelineLayout      m_pipelineLayout{};       // Pipeline layout
+  VkDescriptorSetLayout m_descriptorSetLayout{};  // Descriptor set layout
+
+  shaderio::PushConstant m_pushConst = {.zoom = 1.5f, .iter = 2};
 };
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
-  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  // Command parser
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
   // Extension feature needed.
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-  // Setting up how Vulkan context must be created
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions = {{VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
-  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
 
   // Create the Vulkan context
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
-  if(!vkContext->isValid())
-    std::exit(0);
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Setting up how the the application must be created
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.useMenu        = SHOW_MENU ? true : false;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
-  auto app  = std::make_unique<nvvkhl::Application>(appInfo);                    // Create the application
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);  // Create the test framework
-  app->addElement(test);                                                         // Add the test element (--test ...)
-  app->addElement(std::make_shared<ComputeOnlyElement>());                       // Add our sample to the application
-  app->run();  // Loop infinitely, and call IAppElement virtual functions at each frame
+  // Create the application
+  nvapp::Application app;
+  app.init(appInfo);
 
-  app.reset();  // Clean up
-  //vkContext.deinit();
-  vkContext.reset();
+  app.addElement(std::make_shared<ComputeOnlyElement>());  // Add our sample to the application
 
-  return test->errorCode();
+  app.run();  // Loop infinitely, and call IAppElement virtual functions at each frame
+
+  app.deinit();
+  vkContext.deinit();
+
+  return 0;
 }

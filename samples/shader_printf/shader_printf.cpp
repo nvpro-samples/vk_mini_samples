@@ -36,71 +36,81 @@
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
 
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
+
 #include <array>
 #include <vulkan/vulkan_core.h>
 
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
+#include <glm/glm.hpp>
 
 #define VMA_IMPLEMENTATION
-#include "common/vk_context.hpp"
-#include "nvh/nvprint.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/error_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/renderpasses_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_logger.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvk/images_vk.hpp"
 
 
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "shaders/shaderio.h"  // Shared between host and device
+}  // namespace shaderio
 
 
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
+#include "_autogen/shader_printf.slang.h"
+#include "_autogen/shader_printf.frag.glsl.h"
+#include "_autogen/shader_printf.vert.glsl.h"
 
-static nvvkhl::SampleAppLog g_logger;
+#include <nvapp/application.hpp>
+#include <nvapp/elem_dbgprintf.hpp>
+#include <nvapp/elem_logger.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/formats.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
+#include <nvvk/validation_settings.hpp>
 
-class ShaderPrintf : public nvvkhl::IAppElement
+class ShaderPrintf : public nvapp::IAppElement
 {
 public:
   ShaderPrintf()           = default;
   ~ShaderPrintf() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
-    m_app         = app;
-    m_device      = m_app->getDevice();
-    m_dutil       = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc       = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-              .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-              .physicalDevice = app->getPhysicalDevice(),
-              .device         = app->getDevice(),
-              .instance       = app->getInstance(),
-    });                                                           // Allocator
+    m_app    = app;
+    m_device = m_app->getDevice();
+    m_alloc.init(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
+    });                                                                 // Allocator
     m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());  // Not all depth are supported
+
+    // The texture sampler to use
+    m_samplerPool.init(m_device);
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // Initialization of the G-Buffers we want use
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    m_gBuffers.init({.allocator      = &m_alloc,
+                     .colorFormats   = {m_colorFormat},
+                     .depthFormat    = m_depthFormat,
+                     .imageSampler   = linearSampler,
+                     .descriptorPool = m_app->getTextureDescriptorPool()});
 
     createPipeline();
     createGeometryBuffers();
@@ -136,7 +146,7 @@ public:
     }
   }
 
-  void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   void onUIRender() override
   {
@@ -164,9 +174,8 @@ public:
       }
 
       // Display the G-Buffer image
-      if(m_gBuffers)
       {
-        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+        ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
       }
       ImGui::End();
       ImGui::PopStyleVar();
@@ -175,21 +184,28 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if(!m_gBuffers)
-      return;
+    NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-    nvvk::createRenderingInfo             renderingInfo({{0, 0}, m_viewSize}, {m_gBuffers->getColorImageView()},
-                                                        m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                                        VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    renderingInfo.pStencilAttachment = nullptr;
+    // Rendering to GBuffer: attachment information
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    colorAttachment.clearValue                = {.color = m_clearColor};
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.clearValue                = {{{1.0F, 0}}};
+    VkRenderingInfo renderingInfo             = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea                  = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount        = 1;
+    renderingInfo.pColorAttachments           = &colorAttachment;
+    renderingInfo.pDepthAttachment            = &depthAttachment;
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
     vkCmdBeginRendering(cmd, &renderingInfo);
     {
-      m_app->setViewport(cmd);
+      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
       vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(DH::PushConstant), &m_pushConstant);
+                         sizeof(shaderio::PushConstant), &m_pushConstant);
 
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
       const VkDeviceSize offsets{0};
@@ -198,7 +214,7 @@ public:
       vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   }
 
 private:
@@ -212,7 +228,7 @@ private:
   {
 
     const VkPushConstantRange pushConstantRanges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                    sizeof(DH::PushConstant)};
+                                                    sizeof(shaderio::PushConstant)};
 
     VkPipelineLayoutCreateInfo createInfo{
         .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -229,35 +245,33 @@ private:
     };
 
     nvvk::GraphicsPipelineState pstate;
-    pstate.addBindingDescriptions({{0, sizeof(Vertex)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, pos))},       // Position
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, color))},  // Color
-    });
+
+    pstate.vertexBindings = {
+        {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, .stride = sizeof(Vertex), .divisor = 1}};
+    pstate.vertexAttributes = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                .location = 0,
+                                .format   = VK_FORMAT_R32G32_SFLOAT,
+                                .offset   = offsetof(Vertex, pos)},
+                               {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                .location = 1,
+                                .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                .offset   = offsetof(Vertex, color)}};
+
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prendInfo, pstate);
 #if(USE_SLANG)
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", shader_printf_slang);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", shader_printf_slang);
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", shader_printf_vert_glsl);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", shader_printf_frag_glsl);
 #endif
-
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-#if(USE_SLANG)
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
-  }
-
-  void createGbuffers(VkExtent2D size)
-  {
-    m_viewSize = size;
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), m_viewSize, m_colorFormat, m_depthFormat);
+    creator.createGraphicsPipeline(m_device, nullptr, pstate, &m_graphicsPipeline);
+    NVVK_DBG_NAME(m_graphicsPipeline);
   }
 
   void createGeometryBuffers()
@@ -269,12 +283,20 @@ private:
     const std::vector<uint16_t> indices  = {0, 2, 1, 2, 0, 3};
 
     {
-      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_vertices          = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_indices           = m_alloc->createBuffer(cmd, indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+      nvvk::StagingUploader uploader;
+      uploader.init(&m_alloc);
+
+      NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(indices).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m_vertices, 0, std::span(vertices)));
+      NVVK_CHECK(uploader.appendBuffer(m_indices, 0, std::span(indices)));
+      NVVK_DBG_NAME(m_vertices.buffer);
+      NVVK_DBG_NAME(m_indices.buffer);
+
+      uploader.cmdUploadAppended(cmd);
       m_app->submitAndWaitTempCmdBuffer(cmd);
-      m_dutil->DBG_NAME(m_vertices.buffer);
-      m_dutil->DBG_NAME(m_indices.buffer);
+      uploader.deinit();
     }
   }
 
@@ -283,28 +305,30 @@ private:
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
 
-    m_alloc->destroy(m_vertices);
-    m_alloc->destroy(m_indices);
+    m_alloc.destroyBuffer(m_vertices);
+    m_alloc.destroyBuffer(m_indices);
     m_vertices = {};
     m_indices  = {};
-    m_gBuffers.reset();
+
+    m_gBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
-  nvvkhl::Application* m_app{nullptr};
+  //----------------------------------------------------------------------------------
+  nvapp::Application*     m_app{};
+  nvvk::GBuffer           m_gBuffers;
+  nvvk::ResourceAllocator m_alloc;
+  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
 
-  std::unique_ptr<nvvkhl::GBuffer>  m_gBuffers;
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
+  shaderio::PushConstant m_pushConstant{};
 
-  DH::PushConstant m_pushConstant{};
-
-  VkExtent2D        m_viewSize{0, 0};
   VkFormat          m_colorFormat      = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
   VkFormat          m_depthFormat      = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
   VkPipelineLayout  m_pipelineLayout   = VK_NULL_HANDLE;            // The description of the pipeline
@@ -321,50 +345,64 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.addVector({"size", "Size of the window to be created", "s"}, &appInfo.windowSize);
+  reg.add({"headless"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
-  // #debug_printf : reroute the log to our nvvkhl::SampleAppLog class. The ElememtLogger will display it.
-  nvprintSetCallback([](int level, const char* fmt) { g_logger.addLog(level, "%s", fmt); });
-  g_logger.setLogLevel(LOGBITS_ALL);
+  // This is the Element Logger, which will be used to display the log in the UI
+  static auto elemLogger = std::make_shared<nvapp::ElementLogger>(true);
+  elemLogger->setLevelFilter(nvapp::ElementLogger::eBitERROR | nvapp::ElementLogger::eBitWARNING | nvapp::ElementLogger::eBitINFO);
+
+  // The logger will redirect the log to the Element Logger, to be displayed in the UI
+  nvutils::Logger::getInstance().setLogCallback([](nvutils::Logger::LogLevel logLevel, const std::string& str) {
+    elemLogger->addLog(logLevel, "%s", str.c_str());
+  });
 
 
-  // #debug_printf
-  // Adding the GPU debug information to the KHRONOS validation layer
-  ValidationSettings validationLayer{
-      .validate_gpu_based = {"GPU_BASED_DEBUG_PRINTF"},
-      .printf_to_stdout   = VK_FALSE,
-      .printf_buffer_size = 1024,
-  };
-
-  VkContextSettings vkSetup{
-      .instanceExtensions    = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-      .deviceExtensions      = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
-      .instanceCreateInfoExt = validationLayer.buildPNextChain(),
+  // Create the Vulkan context
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
   };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
     vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    vkSetup.deviceExtensions.push_back({VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME});
   }
-  vkSetup.enableValidationLayers = true;  // Required for the debug_printf
 
-  // Create the Vulkan context with the above settings
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);
+  // This element helps parsing the printf output, and clean it
+  // It is also creating the VkDebugUtilsMessengerEXT with info level, which isn't set be default
+  auto elemDbgPrintf = std::make_shared<nvapp::ElementDbgPrintf>();
+
+
+  // #debug_printf
+  // This is adding the settings to enable the validation layer for the debug printf
+  nvvk::ValidationSettings validation{};
+  validation.setPreset(nvvk::ValidationSettings::LayerPresets::eDebugPrintf);
+  vkSetup.instanceCreateInfoExt = validation.buildPNextChain();
+
+
+  // Create the Vulkan context
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Setting how we want the application
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Setting up the layout of the application
   appInfo.dockSetup = [](ImGuiID viewportID) {
@@ -375,46 +413,17 @@ int main(int argc, char** argv)
   };
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
-
-  //------
-  // #debug_printf
-  // Vulkan message callback - for receiving the printf in the shader
-  auto dbgMessengerCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
-                                 const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void* userData) -> VkBool32 {
-    // Get rid of all the extra message we don't need
-    std::string cleanMsg  = callbackData->pMessage;
-    std::string delimiter = " | ";
-    size_t      pos       = cleanMsg.rfind(delimiter);  // Remove everything before the last " | "
-    if(pos != std::string::npos)
-      cleanMsg = cleanMsg.substr(pos + delimiter.length());
-    nvprintfLevel(LOGLEVEL_DEBUG, "%s", cleanMsg.c_str());  // <- This will end up in the Logger (only if DEBUG is on)
-    return VK_FALSE;                                        // to continue
-  };
-
-  // Creating the callback
-  VkDebugUtilsMessengerEXT           dbg_messenger{};
-  VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info{
-      .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-      .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-      .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
-      .pfnUserCallback = dbgMessengerCallback,
-  };
-  NVVK_CHECK(vkCreateDebugUtilsMessengerEXT(app->getInstance(), &dbg_messenger_create_info, nullptr, &dbg_messenger));
+  nvapp::Application app;
+  app.init(appInfo);
 
   // Create a view/render
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  app->addElement(test);
-  app->addElement(std::make_unique<nvvkhl::ElementLogger>(&g_logger, true));  // Add logger window
-  app->addElement(std::make_shared<ShaderPrintf>());
+  app.addElement(elemLogger);     // Add logger window
+  app.addElement(elemDbgPrintf);  // Add the debug printf element
+  app.addElement(std::make_shared<ShaderPrintf>());
 
-  app->run();
+  app.run();
+  app.deinit();
+  vkContext.deinit();
 
-  // #debug_printf : Removing the callback
-  vkDestroyDebugUtilsMessengerEXT(app->getInstance(), dbg_messenger, nullptr);
-
-  app.reset();
-  vkContext.reset();
-
-  return test->errorCode();
+  return 0;
 }

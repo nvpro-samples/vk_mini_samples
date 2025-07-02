@@ -18,38 +18,34 @@
  */
 
 
-/*
-  This sample is not using any shaders, it is simply showing the GPU usage
-  
-*/
+/*----------------------------------------------------------------------------------
+  This sample is not using any shaders, it is simply showing the GPU usage 
+  ---------------------------------------------------------------------------------*/
 
-
-#include <array>
-#include <vulkan/vulkan_core.h>
-
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_nvml.hpp"
-#include "common/vk_context.hpp"
+#include <nvapp/application.hpp>
+#include <nvgpu_monitor/elem_gpu_monitor.hpp>
+#include <nvutils/logger.hpp>
+#include <nvvk/context.hpp>
 
 int main(int argc, char** argv)
 {
-  VkContextSettings vkSetup;
-  nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
-  vkSetup.apiVersion             = VK_API_VERSION_1_3;
-  vkSetup.enableAllFeatures      = false;
-  vkSetup.enableValidationLayers = false;
-  vkSetup.verbose                = false;
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}},
+  };
+  nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
 
   // Create the Vulkan context
-  VulkanContext vkContext(vkSetup);
-  if(!vkContext.isValid())
-    std::exit(0);
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Set how the application should be
-  nvvkhl::ApplicationCreateInfo appSetup;
-  appSetup.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  nvapp::ApplicationCreateInfo appSetup;
+  appSetup.name                  = fmt::format("{}", PROJECT_NAME);
   appSetup.vSync                 = true;
   appSetup.hasUndockableViewport = false;
   appSetup.windowSize            = {750, 400};
@@ -57,19 +53,19 @@ int main(int argc, char** argv)
   appSetup.device                = vkContext.getDevice();
   appSetup.physicalDevice        = vkContext.getPhysicalDevice();
   appSetup.queues                = vkContext.getQueueInfos();
-  //appSetup.imguiConfigFlags      = ;
 
   // Setting up the layout of the application. Docking the NVML monitor in the center
   appSetup.dockSetup = [](ImGuiID viewportID) { ImGui::DockBuilderDockWindow("NVML Monitor", viewportID); };
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appSetup);
+  nvapp::Application app;
+  app.init(appSetup);
 
   // The NVML (GPU) monitor
-  app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));
-  app->run();
+  app.addElement(std::make_shared<nvgpu_monitor::ElementGpuMonitor>(true));
+  app.run();
 
-  app.reset();
+  app.deinit();
   vkContext.deinit();
 
   return 0;

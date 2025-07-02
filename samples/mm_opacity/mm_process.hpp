@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,25 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-#include "nvvk/context_vk.hpp"
-#include "nvvk/resourceallocator_vk.hpp"
-#include "nvh/primitives.hpp"
+#include "nvvk/resource_allocator.hpp"
+#include "nvutils/primitives.hpp"
+#include "nvvk/staging.hpp"
+
 
 class MicromapProcess
 {
 
 public:
-  MicromapProcess(VkDevice device, VkPhysicalDevice physicalDevice, nvvk::ResourceAllocator* allocator);
+  MicromapProcess(nvvk::ResourceAllocator* allocator);
   ~MicromapProcess();
 
-  bool createMicromapData(VkCommandBuffer cmd, const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius, uint16_t micromapFormat);
+  bool createMicromapData(VkCommandBuffer               cmd,
+                          nvvk::StagingUploader&        uploader,
+                          const nvutils::PrimitiveMesh& mesh,
+                          uint16_t                      subdivLevel,
+                          float                         radius,
+                          uint16_t                      micromapFormat);
   void cleanBuildData();
 
   const VkMicromapEXT&                   micromap() { return m_micromap; }
@@ -61,7 +67,7 @@ private:
 
   bool                buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT type);
   static void         barrier(VkCommandBuffer cmd);
-  static MicroOpacity createOpacity(const nvh::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius);
+  static MicroOpacity createOpacity(const nvutils::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius);
 
   VkDevice                 m_device;
   nvvk::ResourceAllocator* m_alloc;

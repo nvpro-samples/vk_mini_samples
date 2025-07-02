@@ -32,57 +32,65 @@
   again.
 
 */
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
+#define VMA_IMPLEMENTATION
+#define VMA_MEMORY_BUDGET 1
+
+
+#include <condition_variable>
+#include <mutex>
+#include <string>
 #include <thread>
 
-#define VMA_MEMORY_BUDGET 1
-#define VMA_IMPLEMENTATION
-#include "imgui/imgui_camera_widget.h"
-#include "imgui/imgui_helper.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "nvvk/memallocator_dma_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/element_nvml.hpp"
-#include "nvvkhl/gbuffer.hpp"
+#include <glm/glm.hpp>
 
-#include "common/vk_context.hpp"
-#include "common/utils.hpp"
-
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "shaders/shaderio.h"  // Shared between host and device
+}  // namespace shaderio
 
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
 
-std::shared_ptr<nvvkhl::ElementBenchmarkParameters> g_benchmark;
+#include "_autogen/memory_budget.frag.glsl.h"
+#include "_autogen/memory_budget.slang.h"
+#include "_autogen/memory_budget.vert.glsl.h"
+
+#include <nvapp/application.hpp>
+#include <nvapp/elem_camera.hpp>
+#include <nvapp/elem_default_menu.hpp>
+#include <nvapp/elem_default_title.hpp>
+#include <nvgpu_monitor/elem_gpu_monitor.hpp>
+#include <nvgui/camera.hpp>
+#include <nvgui/property_editor.hpp>
+#include <nvutils/camera_manipulator.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvutils/primitives.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/commands.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/formats.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
+
 
 static uint32_t SIZE_OF_MESH = 142'000'000;  // Approximation of the memory used by the average Menger Sponge
 
 //--------------------------------------------------------------------------------------------------
-// Convert a value to a metric formatted string (e.g. 1000 -> "1k")
-//
+// Converts numeric values to human-readable metric format (e.g., 1000 -> "1k")
+// @param value - Numeric value to format
+// @param unit - Optional unit string to append
+// @return Formatted string with metric prefix
+//--------------------------------------------------------------------------------------------------
 template <typename T>
 inline std::string metricFormatter(T value, const char* unit = "")
 {
@@ -101,8 +109,16 @@ inline std::string metricFormatter(T value, const char* unit = "")
   return fmt::format("{:6.4g}{}{}", value / s_value[6], s_prefix[6], unit);
 }
 
-// Fill an array with the nodes to create or delete
-std::vector<int> fillArray(int start, int numElements, const std::vector<nvh::Node>& nodes, bool forward = true, bool add = true)
+//--------------------------------------------------------------------------------------------------
+// Creates array of indices for mesh creation/deletion
+// @param start - Starting index
+// @param numElements - Number of elements to generate
+// @param nodes - Reference to scene nodes
+// @param forward - Direction of traversal
+// @param add - True for creation, false for deletion
+// @return Vector of indices
+//--------------------------------------------------------------------------------------------------
+static std::vector<int> fillArray(int start, int numElements, const std::vector<nvutils::Node>& nodes, bool forward = true, bool add = true)
 {
   std::vector<int> result(numElements);
   int              sizeArray = static_cast<int>(nodes.size());
@@ -124,30 +140,27 @@ std::vector<int> fillArray(int start, int numElements, const std::vector<nvh::No
   return result;
 }
 
-template <typename T>
-inline size_t getBaseTypeSize(const std::vector<T>& vec)
-{
-  using BaseType = typename std::remove_reference<T>::type;
-  return sizeof(BaseType);
-}
 
 //--------------------------------------------------------------------------------------------------
-// This class will create a Menger Sponge using a thread and create/delete meshes to stay within
-// the memory budget
-//
-class MemoryBudget : public nvvkhl::IAppElement
+// MemoryBudget: Main class demonstrating Vulkan memory budget management
+// - Creates and manages a Menger Sponge fractal scene
+// - Monitors GPU memory usage using VK_EXT_memory_budget extension
+// - Dynamically adds/removes scene objects to stay within memory budget
+// - Uses shader objects for rendering
+//--------------------------------------------------------------------------------------------------
+class MemoryBudget : public nvapp::IAppElement
 {
-  // Application settings
+  // Application settings and statistics for memory budget management and scene state
   struct Settings
   {
-    int   statNumTriangles = 0;  // Number of triangles displayed
-    int   statNumMesh      = 0;  // Number of meshes displayed
-    float progress         = 0;  // Progress of the creation
-    int   numMeshes        = 0;  // Number of created meshes
-    int   firstIn          = 0;
-    int   firstOut         = 0;
-    bool  stopCreating     = false;
-    float budgetPercentage = 0.8F;  // 80% of the budget
+    int   statNumTriangles = 0;      // Total number of triangles currently rendered
+    int   statNumMesh      = 0;      // Total number of active meshes in the scene
+    float progress         = 0;      // Progress indicator for mesh creation (0.0 to 1.0)
+    int   numMeshes        = 0;      // Current count of created meshes
+    int   firstIn          = 0;      // Index for next mesh to be created
+    int   firstOut         = 0;      // Index for next mesh to be removed
+    bool  stopCreating     = false;  // Flag to stop mesh creation thread
+    float budgetPercentage = 0.8F;   // Target percentage of total GPU memory budget to use
   };
 
 
@@ -155,11 +168,12 @@ public:
   MemoryBudget() { m_pushConst.pointSize = 1.0F; }
   ~MemoryBudget() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void setCamera(std::shared_ptr<nvutils::CameraManipulator> cameraManip) { m_cameraManip = cameraManip; }
+
+  void onAttach(nvapp::Application* app) override
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
 
     // #MEMORY_BUDGET
     VmaAllocatorCreateInfo allocator_info = {
@@ -168,10 +182,26 @@ public:
         .device                      = m_app->getDevice(),
         .preferredLargeHeapBlockSize = (128ull * 1024 * 1024),
         .instance                    = m_app->getInstance(),
-        .vulkanApiVersion            = VK_API_VERSION_1_3,
+        .vulkanApiVersion            = VK_API_VERSION_1_4,
     };
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(allocator_info);  // Allocator
-    m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+
+    m_alloc.init(allocator_info);
+
+    // Acquiring the sampler which will be used for displaying the GBuffer
+    m_samplerPool.init(app->getDevice());
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    m_gBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFormat,
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
 
     createScene();
     createFrameInfoBuffer();
@@ -181,26 +211,26 @@ public:
 
   void onDetach() override
   {
+    // Stop any running creation thread and wait for it to complete
+    stopMeshCreationThread();
+
     vkDeviceWaitIdle(m_device);
     destroyResources();
   }
 
-  void onResize(uint32_t width, uint32_t height) override { createGbuffers({width, height}); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   void onUIRender() override
   {
-    if(!m_gBuffers)
-      return;
-
     static bool  showApply      = false;
     static int   numMeshes      = 0;
     static float showOverBudget = 0;
 
     // VMA, but Vulkan method to get the budgets below
-    // static uint64_t currentFrame = 0;
-    // vmaSetCurrentFrameIndex(m_alloc->vma(), currentFrame);
-    // VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
-    // vmaGetHeapBudgets(m_alloc->vma(), budgets);
+    static uint32_t currentFrame = 0;
+    vmaSetCurrentFrameIndex(m_alloc, currentFrame);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
+    vmaGetHeapBudgets(m_alloc, budgets);
 
     // Check if we are over budget, which is 80% of the budget by default
     // If it is the case, we will stop creating new objects and start deleting some
@@ -212,8 +242,9 @@ public:
     // #MEMORY_BUDGET
     if(m_settings.numMeshes != 0 && overbudgetUsage > 0)
     {
-      m_settings.stopCreating = true;
+      stopMeshCreationThread();
       vkDeviceWaitIdle(m_device);
+
       int numObj = static_cast<int>(std::max(overbudgetUsage / double(SIZE_OF_MESH), 1.));
       LOGI("Over budget: %f\n", overbudgetUsage);
       std::vector<int> toDelete = fillArray(m_settings.firstOut, numObj, m_nodes, true, false);
@@ -224,10 +255,10 @@ public:
     }
 
     {  // Setting menu
-      namespace PE = ImGuiH::PropertyEditor;
+      namespace PE = nvgui::PropertyEditor;
 
       ImGui::Begin("Settings");
-      ImGuiH::CameraWidget();
+      nvgui::CameraWidget(m_cameraManip);
 
       bool showProgress = m_settings.progress > 0.0F && m_settings.progress < 0.99F;
 
@@ -235,20 +266,13 @@ public:
       ImGui::BeginDisabled(showProgress);
       {
         PE::begin();
-        PE::entry(
-            "Budget Threshold",
-            [&]() { return ImGui::SliderFloat("##T", &m_settings.budgetPercentage, 0.1f, 2, "%.3f"); },
-            "Percentage of usage over budget.");
+        PE::SliderFloat("Budget Threshold", &m_settings.budgetPercentage, 0.1f, 2, "%.3f", {}, "Percentage of usage over budget.");
 
         if(!showApply)
           numMeshes = m_settings.numMeshes;
 
-        if(PE::entry(
-               "Number of elements",
-               [&]() {
-                 return ImGui::SliderInt("##Num", &numMeshes, 0, static_cast<int>(m_nodes.size()), "%d", ImGuiSliderFlags_AlwaysClamp);
-               },
-               "Number of visible element"))
+        if(PE::SliderInt("Number of elements", &numMeshes, 0, static_cast<int>(m_nodes.size()), "%d",
+                         ImGuiSliderFlags_AlwaysClamp, "Number of visible element"))
         {
           showApply = (numMeshes != m_settings.numMeshes);
         }
@@ -261,13 +285,9 @@ public:
             showApply = false;
             if(numMeshes > m_settings.numMeshes)
             {
-              std::thread([&]() {
-                int              numObj   = numMeshes - m_settings.numMeshes;
-                std::vector<int> toCreate = fillArray(m_settings.firstIn, numObj, m_nodes, true, true);
-                m_settings.stopCreating   = false;
-                createMeshes(toCreate);  // Adding from another thread all objects
-                numMeshes = m_settings.numMeshes;
-              }).detach();
+              int numObj = numMeshes - m_settings.numMeshes;
+              startMeshCreationThread(numObj);
+              numMeshes = m_settings.numMeshes;
             }
             else
             {
@@ -333,7 +353,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer image
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -342,29 +362,37 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if(!m_gBuffers)
-      return;
-
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-    const glm::vec2&                      clip = CameraManip.getClipPlanes();
+    NVVK_DBG_SCOPE(cmd);
 
     // Update Frame buffer uniform buffer
-    DH::FrameInfo finfo{};
-    finfo.view = CameraManip.getMatrix();
-    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), m_gBuffers->getAspectRatio(), clip.x, clip.y);
-    finfo.proj[1][1] *= -1;
-    finfo.camPos = CameraManip.getEye();
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
-    nvvk::memoryBarrier(cmd);
+    shaderio::FrameInfo finfo{};
+    finfo.view   = m_cameraManip->getViewMatrix();
+    finfo.proj   = m_cameraManip->getPerspectiveMatrix();
+    finfo.camPos = m_cameraManip->getEye();
+    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(shaderio::FrameInfo), &finfo);
+
+    // Making sure the information is transfered
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
 
-    // Drawing the primitives in G-Buffer 0
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(0)},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    r_info.pStencilAttachment = nullptr;
+    // Drawing the primitives in a G-Buffer
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    colorAttachment.clearValue                = {m_clearColor};
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
 
-    renderAllMeshes(cmd, r_info);
+    // Create the rendering info
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
+    renderingInfo.pDepthAttachment     = &depthAttachment;
+
+
+    renderAllMeshes(cmd, renderingInfo);
   }
 
 
@@ -389,28 +417,34 @@ private:
 
   void createScene()
   {
-    nvh::ScopedTimer st(__FUNCTION__);
+    nvutils::ScopedTimer st(__FUNCTION__);
 
-    m_nodes = nvh::mengerSpongeNodes(2, 0.7F, 4080);
+    m_nodes = nvutils::mengerSpongeNodes(2, 0.7F, 4080);
     m_meshes.resize(m_nodes.size() + 1);
     m_meshVk.resize(m_nodes.size() + 1);
     m_materials.resize(m_nodes.size() + 1);
-    m_meshes[0]    = nvh::createCube();
+    m_meshes[0]    = nvutils::createCube();
     m_materials[0] = {.7f, .7f, .7f};
+
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_alloc);
 
     {  // Create the buffer for the cube
       VkCommandBuffer  cmd = m_app->createTempCmdBuffer();
       PrimitiveMeshVk& m   = m_meshVk[0];
-      m.vertices           = m_alloc->createBuffer(cmd, m_meshes[0].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices            = m_alloc->createBuffer(cmd, m_meshes[0].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-      m_dutil->DBG_NAME(m.vertices.buffer);
-      m_dutil->DBG_NAME(m.indices.buffer);
+      NVVK_CHECK(m_alloc.createBuffer(m.vertices, std::span(m_meshes[0].vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m.indices, std::span(m_meshes[0].triangles).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m.vertices, 0, std::span(m_meshes[0].vertices)));
+      NVVK_CHECK(uploader.appendBuffer(m.indices, 0, std::span(m_meshes[0].triangles)));
+      NVVK_DBG_NAME(m.vertices.buffer);
+      NVVK_DBG_NAME(m.indices.buffer);
+      uploader.cmdUploadAppended(cmd);
       m_app->submitAndWaitTempCmdBuffer(cmd);
-      m_alloc->finalizeAndReleaseStaging();
+      uploader.deinit();
     }
 
-    CameraManip.setClipPlanes({0.01F, 100.0F});  // Default camera
-    CameraManip.setLookat({-1.24282, 0.28388, 1.24613}, {-0.07462, -0.08036, -0.02502}, {0.00000, 1.00000, 0.00000});
+    m_cameraManip->setClipPlanes({0.01F, 100.0F});  // Default camera
+    m_cameraManip->setLookat({-1.24282, 0.28388, 1.24613}, {-0.07462, -0.08036, -0.02502}, {0.00000, 1.00000, 0.00000});
 
     // Find a good number of objects to create
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = getMemoryBudget();
@@ -421,18 +455,67 @@ private:
     numObj = std::min(numObj, static_cast<int>(m_nodes.size()));
 
     // Create in another thread, all meshes
-    std::thread([&, numObj]() {
+    startMeshCreationThread(numObj);
+  }
+
+  //--------------------------------------------------------------------------------------------------
+  // Creates scene objects in a separate thread to avoid blocking the main rendering thread
+  // @param numObj - Number of new objects to create
+  //--------------------------------------------------------------------------------------------------
+  void startMeshCreationThread(int numObj)
+  {
+    std::unique_lock<std::mutex> lock(m_threadMutex);
+    if(m_threadRunning)
+    {
+      // Wait for any existing thread to complete
+      m_settings.stopCreating = true;
+      m_threadCV.wait(lock, [this] { return !m_threadRunning; });
+    }
+
+    m_settings.stopCreating = false;
+    m_threadRunning         = true;
+
+    std::thread([this, numObj]() {
       std::vector<int> toCreate = fillArray(m_settings.firstIn, numObj, m_nodes, true, true);
       createMeshes(toCreate);  // Adding from another thread all objects
+
+      // Signal thread completion
+      {
+        std::lock_guard<std::mutex> lock(m_threadMutex);
+        m_threadRunning = false;
+        m_threadCV.notify_one();
+      }
     }).detach();
   }
 
-  // Create the meshes in parallel
+  void stopMeshCreationThread()
+  {
+    std::unique_lock<std::mutex> lock(m_threadMutex);
+    m_settings.stopCreating = true;
+    if(m_threadRunning)
+    {
+      m_threadCV.wait(lock, [this] { return !m_threadRunning; });
+    }
+  }
+
+  //--------------------------------------------------------------------------------------------------
+  // Creates multiple mesh instances in parallel, monitoring memory budget
+  // @param toCreate - Vector of node indices for meshes to be created
+  //--------------------------------------------------------------------------------------------------
   void createMeshes(const std::vector<int>& toCreate)
   {
     LOGI("Creating %d meshes\n", static_cast<int>(toCreate.size()));
-    nvvk::CommandPool cmd_pool(m_device, m_app->getQueue(1).familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                               m_app->getQueue(1).queue);
+
+
+    VkCommandPool                 transientCmdPool;
+    const VkCommandPoolCreateInfo commandPoolCreateInfo{
+        .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags            = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,  // Hint that commands will be short-lived
+        .queueFamilyIndex = m_app->getQueue(1).familyIndex,
+    };
+    NVVK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, nullptr, &transientCmdPool));
+    NVVK_DBG_NAME(transientCmdPool);
+
 
     float progressInc   = 1.0F / static_cast<float>(toCreate.size());
     m_settings.progress = 0.0F;
@@ -454,27 +537,42 @@ private:
       }
 
       {  // Create the buffer for this mesh
-        VkCommandBuffer cmdBuffer = cmd_pool.createCommandBuffer();
+        VkCommandBuffer cmd;
+        nvvk::beginSingleTimeCommands(cmd, m_device, transientCmdPool);
+
+        nvvk::StagingUploader uploader;
+        uploader.init(&m_alloc);
+
 
         PrimitiveMeshVk& meshVk = m_meshVk[meshID];
-        meshVk.vertices = m_alloc->createBuffer(cmdBuffer, m_meshes[meshID].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        meshVk.indices  = m_alloc->createBuffer(cmdBuffer, m_meshes[meshID].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        m_dutil->DBG_NAME_IDX(meshVk.vertices.buffer, meshID);
-        m_dutil->DBG_NAME_IDX(meshVk.indices.buffer, meshID);
-        cmd_pool.submitAndWait(cmdBuffer);
+        NVVK_CHECK(m_alloc.createBuffer(meshVk.vertices, std::span(m_meshes[meshID].vertices).size_bytes(),
+                                        VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+        NVVK_CHECK(m_alloc.createBuffer(meshVk.indices, std::span(m_meshes[meshID].triangles).size_bytes(),
+                                        VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
+        NVVK_CHECK(uploader.appendBuffer(meshVk.vertices, 0, std::span(m_meshes[meshID].vertices)));
+        NVVK_CHECK(uploader.appendBuffer(meshVk.indices, 0, std::span(m_meshes[meshID].triangles)));
+        NVVK_DBG_NAME(meshVk.vertices.buffer);
+        NVVK_DBG_NAME(meshVk.indices.buffer);
+
+        uploader.cmdUploadAppended(cmd);
+        nvvk::endSingleTimeCommands(cmd, m_device, transientCmdPool, m_app->getQueue(1).queue);
+        uploader.deinit();
       }
 
       // Set the node to the new mesh
       m_nodes[nodeID].mesh     = meshID;
       m_nodes[nodeID].material = materialID;
     }
-    m_alloc->finalizeAndReleaseStaging();  // The create buffer uses staging and at this point, we know the buffers are uploaded
+
     m_settings.progress = 1.0F;
+
+    vkDestroyCommandPool(m_device, transientCmdPool, nullptr);
   }
 
-  // Create the meshes in parallel
+  //--------------------------------------------------------------------------------------------------
+  // Removes meshes from the scene when memory budget is exceeded
+  // @param toDestroy - Vector of node indices for meshes to be deleted
+  //--------------------------------------------------------------------------------------------------
   void deleteMeshes(std::vector<int>& toDestroy)
   {
     LOGI("Deleting %d meshes\n", static_cast<int>(toDestroy.size()));
@@ -487,30 +585,36 @@ private:
       m_nodes[nodeID].mesh     = 0;
       m_nodes[nodeID].material = 0;
 
-      m_alloc->destroy(m_meshVk[nodeID + 1].indices);
-      m_alloc->destroy(m_meshVk[nodeID + 1].vertices);
+      m_alloc.destroyBuffer(m_meshVk[nodeID + 1].indices);
+      m_alloc.destroyBuffer(m_meshVk[nodeID + 1].vertices);
     }
   }
 
   // Create the Menger Sponge mesh
-  nvh::PrimitiveMesh createMengerSpongeMesh(float probability, int seed)
+  nvutils::PrimitiveMesh createMengerSpongeMesh(float probability, int seed)
   {
-    nvh::PrimitiveMesh     cube         = nvh::createCube();
-    std::vector<nvh::Node> mengerNodes  = nvh::mengerSpongeNodes(MENGER_SUBDIV, probability, seed);
-    nvh::PrimitiveMesh     mengerSponge = nvh::mergeNodes(mengerNodes, {cube});
+    nvutils::PrimitiveMesh     cube         = nvutils::createCube();
+    std::vector<nvutils::Node> mengerNodes  = nvutils::mengerSpongeNodes(MENGER_SUBDIV, probability, seed);
+    nvutils::PrimitiveMesh     mengerSponge = nvutils::mergeNodes(mengerNodes, {cube});
     if(mengerSponge.triangles.empty())  // Don't allow empty result
       mengerSponge = cube;
     return mengerSponge;
   }
 
+  //--------------------------------------------------------------------------------------------------
+  // Renders all active meshes in the scene using shader objects
+  // @param cmd - Command buffer for recording render commands
+  // @param renderingInfo - Vulkan rendering information structure
+  //--------------------------------------------------------------------------------------------------
   void renderAllMeshes(VkCommandBuffer cmd, const VkRenderingInfoKHR& renderingInfo)
   {
     vkCmdBeginRendering(cmd, &renderingInfo);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0, 1, m_dset->getSets(), 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
 
     // #SHADER_OBJECT
-    m_shaderObjPipeline.setViewportScissor(m_app->getViewportSize());
-    m_shaderObjPipeline.cmdSetPipelineState(cmd);
+    m_graphicState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+    m_graphicState.cmdApplyAllStates(cmd);
+    vkCmdSetLineRasterizationModeEXT(cmd, VK_LINE_RASTERIZATION_MODE_BRESENHAM);
 
     const VkShaderStageFlagBits stages[2]       = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
     const VkShaderStageFlagBits unusedStages[3] = {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
@@ -523,7 +627,7 @@ private:
     m_settings.statNumMesh      = 0;
     const VkDeviceSize offsets  = 0;
     bool               fillMode = true;
-    for(const nvh::Node& n : m_nodes)
+    for(const nvutils::Node& n : m_nodes)
     {
       auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
       m_settings.statNumTriangles += static_cast<int>(m_meshes[n.mesh].triangles.size());
@@ -545,8 +649,8 @@ private:
       // Push constant information
       m_pushConst.transfo = n.localMatrix();
       m_pushConst.color   = m_materials[n.material];
-      vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(DH::PushConstant), &m_pushConst);
+      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                         sizeof(shaderio::PushConstant), &m_pushConst);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_meshVk[n.mesh].vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m_meshVk[n.mesh].indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -560,7 +664,7 @@ private:
   {
     return VkPushConstantRange{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                .offset     = 0,
-                               .size       = sizeof(DH::PushConstant)};
+                               .size       = sizeof(shaderio::PushConstant)};
   }
 
   //-------------------------------------------------------------------------------------------------
@@ -568,27 +672,35 @@ private:
   //
   void createDescriptorSetPipeline()
   {
-    m_dset->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->initLayout();
-    m_dset->initPool(1);
+    m_descriptorPack.bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.layout);
+    NVVK_DBG_NAME(m_descriptorPack.pool);
+    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
 
-    VkPushConstantRange push_constant_ranges = getPushConstantRange();
-    m_dset->initPipeLayout(1, &push_constant_ranges);
+    const VkPushConstantRange push_constant_ranges = getPushConstantRange();
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {push_constant_ranges}));
+    NVVK_DBG_NAME(m_pipelineLayout);
+
 
     // Writing to descriptors
-    const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    nvvk::WriteSetContainer writeContainer;
+    writeContainer.append(m_descriptorPack.bindings.getWriteSet(0, m_descriptorPack.sets[0]), m_frameInfo);
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
-    // Creation of the dynamic graphic pipeline
-    m_shaderObjPipeline.rasterizationState.cullMode = VK_CULL_MODE_NONE;
-    m_shaderObjPipeline.addBindingDescriptions({{0, sizeof(nvh::PrimitiveVertex)}});
-    m_shaderObjPipeline.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, p))},  // Position
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, n))},  // Normal
-    });
-    m_shaderObjPipeline.update();
+    // Creating the Pipeline
+    m_graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+    m_graphicState.vertexBindings              = {{.sType   = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT,
+                                                   .stride  = sizeof(nvutils::PrimitiveVertex),
+                                                   .divisor = 1}};
+    m_graphicState.vertexAttributes            = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                                   .location = 0,
+                                                   .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                                   .offset   = offsetof(nvutils::PrimitiveVertex, pos)},
+                                                  {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                                   .location = 1,
+                                                   .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                                   .offset   = offsetof(nvutils::PrimitiveVertex, nrm)}};
   }
 
   //-------------------------------------------------------------------------------------------------
@@ -600,35 +712,51 @@ private:
 
     // Vertex
     std::vector<VkShaderCreateInfoEXT> shaderCreateInfos;
-    shaderCreateInfos.push_back(VkShaderCreateInfoEXT {
-      .sType = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT, .pNext = NULL, .flags = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT,
-      .stage = VK_SHADER_STAGE_VERTEX_BIT, .nextStage = VK_SHADER_STAGE_FRAGMENT_BIT, .codeType = VK_SHADER_CODE_TYPE_SPIRV_EXT,
+    shaderCreateInfos.push_back(VkShaderCreateInfoEXT{
+        .sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
+        .pNext     = NULL,
+        .flags     = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT,
+        .stage     = VK_SHADER_STAGE_VERTEX_BIT,
+        .nextStage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
 #if(USE_SLANG)
-      .codeSize = sizeof(rasterSlang), .pCode = &rasterSlang[0], .pName = "vertexMain",
+        .codeSize = memory_budget_slang_sizeInBytes,
+        .pCode    = memory_budget_slang,
+        .pName    = "vertexMain",
 #else
-        .codeSize = vert_shd.size() * getBaseTypeSize(vert_shd),
-        .pCode    = vert_shd.data(),
-        .pName    = USE_HLSL ? "vertexMain" : "main",
+        .codeSize = std::span(memory_budget_vert_glsl).size_bytes(),
+        .pCode    = std::span(memory_budget_vert_glsl).data(),
+        .pName    = "main",
 #endif  // USE_SLANG
-      .setLayoutCount             = 1,
-      .pSetLayouts                = &m_dset->getLayout(),  // Descriptor set layout compatible with the shaders
-          .pushConstantRangeCount = 1, .pPushConstantRanges = &push_constant_ranges, .pSpecializationInfo = NULL,
+        .setLayoutCount         = 1,
+        .pSetLayouts            = &m_descriptorPack.layout,  // Descriptor set layout compatible with the shaders
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &push_constant_ranges,
+        .pSpecializationInfo    = NULL,
     });
 
     // Fragment
-    shaderCreateInfos.push_back(VkShaderCreateInfoEXT {
-      .sType = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT, .pNext = NULL, .flags = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT,
-      .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .nextStage = 0, .codeType = VK_SHADER_CODE_TYPE_SPIRV_EXT,
+    shaderCreateInfos.push_back(VkShaderCreateInfoEXT{
+        .sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
+        .pNext     = NULL,
+        .flags     = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT,
+        .stage     = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .nextStage = 0,
+        .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
 #if(USE_SLANG)
-      .codeSize = sizeof(rasterSlang), .pCode = &rasterSlang[0], .pName = "fragmentMain",
+        .codeSize = memory_budget_slang_sizeInBytes,
+        .pCode    = memory_budget_slang,
+        .pName    = "fragmentMain",
 #else
-        .codeSize = frag_shd.size() * getBaseTypeSize(frag_shd),
-        .pCode    = frag_shd.data(),
-        .pName    = USE_HLSL ? "fragmentMain" : "main",
+        .codeSize = std::span(memory_budget_frag_glsl).size_bytes(),
+        .pCode    = std::span(memory_budget_frag_glsl).data(),
+        .pName    = "main",
 #endif  // USE_SLANG
-      .setLayoutCount             = 1,
-      .pSetLayouts                = &m_dset->getLayout(),  // Descriptor set layout compatible with the shaders
-          .pushConstantRangeCount = 1, .pPushConstantRanges = &push_constant_ranges, .pSpecializationInfo = NULL,
+        .setLayoutCount         = 1,
+        .pSetLayouts            = &m_descriptorPack.layout,  // Descriptor set layout compatible with the shaders
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &push_constant_ranges,
+        .pSpecializationInfo    = NULL,
     });
 
     // Create the shaders
@@ -636,23 +764,13 @@ private:
   }
 
   //-------------------------------------------------------------------------------------------------
-  // G-Buffers, a color and a depth, which are used for rendering. The result color will be displayed
-  // and an image filling the ImGui Viewport window.
-  void createGbuffers(const VkExtent2D& size)
-  {
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
-  }
-
-  //-------------------------------------------------------------------------------------------------
   // Creating the Vulkan buffer that is holding the data for Frame information
   // The frame info contains the camera and other information changing at each frame.
   void createFrameInfoBuffer()
   {
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-    m_frameInfo         = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_app->submitAndWaitTempCmdBuffer(cmd);
-    m_dutil->DBG_NAME(m_frameInfo.buffer);
+    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT,
+                                    VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
+    NVVK_DBG_NAME(m_frameInfo.buffer);
   }
 
   void destroyResources()
@@ -662,93 +780,122 @@ private:
 
     for(PrimitiveMeshVk& m : m_meshVk)
     {
-      m_alloc->destroy(m.vertices);
-      m_alloc->destroy(m.indices);
+      m_alloc.destroyBuffer(m.vertices);
+      m_alloc.destroyBuffer(m.indices);
     }
     m_meshVk.clear();
-    m_alloc->destroy(m_frameInfo);
+    m_alloc.destroyBuffer(m_frameInfo);
 
-    m_dset->deinit();
-    m_gBuffers.reset();
+
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    m_descriptorPack.deinit();
+
+    m_gBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*              m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
-  //std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
+  nvapp::Application* m_app{nullptr};
 
-  VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
-  VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.7F, 0.7F, 0.7F, 1.0F}};     // Clear color
-  VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;                            // Descriptor set
-  nvvk::GraphicShaderObjectPipeline             m_shaderObjPipeline;               // Shader Object pipeline
+  VkFormat          m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
+  VkFormat          m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
+  VkClearColorValue m_clearColor  = {{0.7F, 0.7F, 0.7F, 1.0F}};     // Clear color
+  VkDevice          m_device      = VK_NULL_HANDLE;                 // Convenient
+
+  // Pipeline
+  VkPipelineLayout     m_pipelineLayout{};  // Pipeline layout
+  nvvk::DescriptorPack m_descriptorPack{};  // Descriptor bindings, layout, pool, and set
+
+  nvvk::GraphicsPipelineState m_graphicState;  // State of the graphic pipeline
+
+  // Frame information
+  nvvk::Buffer               m_frameInfo;
+  shaderio::PushConstant     m_pushConst{};  // Information sent to the shader
+  std::array<VkShaderEXT, 2> m_shaders{};
+
+  nvvk::SamplerPool m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
+
+  // Sample settings
+  Settings m_settings;
+
+  // Synchronization primitives for mesh creation thread
+  std::mutex              m_threadMutex;
+  std::condition_variable m_threadCV;
+  bool                    m_threadRunning = false;
+
+  // Resource management
+  nvvk::ResourceAllocator m_alloc;     // Vulkan memory allocator with budget tracking
+  nvvk::GBuffer           m_gBuffers;  // G-Buffer for deferred rendering
 
   // Resources
   struct PrimitiveMeshVk
   {
-    nvvk::Buffer vertices;  // Buffer of the vertices
-    nvvk::Buffer indices;   // Buffer of the indices
+    nvvk::Buffer vertices;  // Vertex buffer containing position and normal data
+    nvvk::Buffer indices;   // Index buffer for triangle indices
   };
-  std::vector<PrimitiveMeshVk> m_meshVk;
-  nvvk::Buffer                 m_frameInfo;
 
-  // Data and setting
-  std::vector<nvh::PrimitiveMesh> m_meshes;
-  std::vector<nvh::Node>          m_nodes;
-  std::vector<glm::vec3>          m_materials;
+  // Scene data
+  std::vector<PrimitiveMeshVk>        m_meshVk;     // Vulkan buffers for each mesh
+  std::vector<nvutils::PrimitiveMesh> m_meshes;     // CPU-side mesh data
+  std::vector<nvutils::Node>          m_nodes;      // Scene graph nodes
+  std::vector<glm::vec3>              m_materials;  // Material colors for each mesh
 
-  // Pipeline
-  DH::PushConstant           m_pushConst{};  // Information sent to the shader
-  std::array<VkShaderEXT, 2> m_shaders{};
-
-  Settings m_settings;
+  std::shared_ptr<nvutils::CameraManipulator> m_cameraManip{};
 };
 
 
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
+//--------------------------------------------------------------------------------------------------
+// Main application entry point
+// - Sets up Vulkan context with memory budget and shader object extensions
+// - Creates application window and UI elements
+// - Initializes scene and starts render loop
+//--------------------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;  // Base application information
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
-  cli.addArgument({"--frames"}, &appInfo.headlessFrameCount, "Number of frames to render in headless mode");
+  // Command line parsing
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
+  // Vulkan context creation
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-
-  // Vulkan creation context information
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup = {
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions =
+          {
+              {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature},
+              {VK_EXT_MEMORY_BUDGET_EXTENSION_NAME},
+          },
+      .queues     = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_TRANSFER_BIT},
+      .apiVersion = VK_API_VERSION_1_4,
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  // #MEMORY_BUDGET
-  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature});
-  vkSetup.deviceExtensions.push_back({VK_EXT_MEMORY_BUDGET_EXTENSION_NAME});
-  vkSetup.instanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-  vkSetup.queues.push_back(VK_QUEUE_TRANSFER_BIT);  // Used in other thread
 
-  // Creating the Vulkan Context
-  VulkanContext vkContext(vkSetup);
-  if(!vkContext.isValid())
-    std::exit(0);
-  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+
+  // Creation of the Vulkan context
+  nvvk::Context vkContext;  // Vulkan context
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // Application setup information
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
@@ -759,28 +906,32 @@ int main(int argc, char** argv)
   appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
   if(shaderObjFeature.shaderObject == VK_FALSE)
   {
-    nvprintf("ERROR: Shader Object is not supported");
+    LOGE("ERROR: Shader Object is not supported");
     std::exit(1);
   }
 
-  // Create the test framework
-  g_benchmark = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
+  auto cameraManip        = std::make_shared<nvutils::CameraManipulator>();
+  auto elemCamera         = std::make_shared<nvapp::ElementCamera>();
+  auto memoryBudgetSample = std::make_shared<MemoryBudget>();
+  elemCamera->setCameraManipulator(cameraManip);
+  memoryBudgetSample->setCamera(cameraManip);
 
   // Add all application elements
-  app->addElement(g_benchmark);
-  app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
-  app->addElement(std::make_shared<nvvkhl::ElementNvml>(true));
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
-  app->addElement(std::make_shared<MemoryBudget>());
+  app.addElement(elemCamera);
+  app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());
+  app.addElement(std::make_shared<nvgpu_monitor::ElementGpuMonitor>(true));
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
+  app.addElement(memoryBudgetSample);
 
-  app->run();
-  app.reset();
+  app.run();
+
+  app.deinit();
   vkContext.deinit();
 
-  return g_benchmark->errorCode();
+  return 0;
 }

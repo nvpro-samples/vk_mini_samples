@@ -31,61 +31,53 @@
 #include <glm/gtc/type_ptr.hpp>
 
 // clang-format off
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
-
-// clang-format on
-#include <array>
-#include <vulkan/vulkan_core.h>
-
 #define VMA_IMPLEMENTATION
 #define IMGUI_DEFINE_MATH_OPERATORS
+// clang-format on
 
-#include "common/vk_context.hpp"
-#include "imgui/imgui_camera_widget.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/extensions_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/renderpasses_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_gui.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
+#include <imgui/imgui.h>
 
-#include "common/utils.hpp"
+#include <array>
 
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"
-}  // namespace DH
+#include "shaders/shaderio.h"
+}  // namespace shaderio
 
-#include "nvvk/images_vk.hpp"
-#include "imgui/imgui_helper.h"
+// Shaders
+#include "_autogen/bary.frag.glsl.h"
+#include "_autogen/bary.slang.h"
+#include "_autogen/bary.vert.glsl.h"
 
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
+#include "nvvk/validation_settings.hpp"
+#include <nvapp/elem_camera.hpp>
+#include <nvapp/elem_default_menu.hpp>
+#include <nvapp/elem_default_title.hpp>
+#include <nvgui/camera.hpp>
+#include <nvgui/property_editor.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvutils/primitives.hpp>
+#include <nvutils/timers.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/formats.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
 
 
 // thickness;color;thicknessVar;smoothing;screenSpace;backFaceColor;enableDash;dashRepeats;dashLength;onlyWire;
-std::vector<DH::WireframeSettings> presets{
+std::vector<shaderio::WireframeSettings> presets{
     {1.0F, {0.8F, 0.F, 0.F}, {1.0F, 1.0F}, 1.0F, 1, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 0},       // default
     {1.0F, {0.F, 0.8F, 0.F}, {1.0F, 1.0F}, 0.5F, 1, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 1},       // Wire dot
     {0.1F, {0.9F, 0.9F, 0.F}, {0.0F, 1.0F}, 0.1F, 0, {0.5F, 0.5F, 0.5F}, 0, 5, 0.5F, 0},      // Star
@@ -98,30 +90,47 @@ std::vector<DH::WireframeSettings> presets{
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
-class BaryWireframe : public nvvkhl::IAppElement
+class BaryWireframe : public nvapp::IAppElement
 {
 public:
   BaryWireframe()           = default;
   ~BaryWireframe() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void setCameraManipulator(std::shared_ptr<nvutils::CameraManipulator> camera) { m_cameraManip = camera; }
+
+  void onAttach(nvapp::Application* app) override
   {
-    nvh::ScopedTimer st(__FUNCTION__);
+    nvutils::ScopedTimer st(__FUNCTION__);
 
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app->getPhysicalDevice(),
-        .device         = app->getDevice(),
-        .instance       = app->getInstance(),
-    });  // Allocator
-    m_dset  = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+    // Allocator
+    m_alloc.init(VmaAllocatorCreateInfo{
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
+    });
 
-    m_settings    = presets[0];
-    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    // Acquiring the sampler which will be used for displaying the GBuffer
+    m_samplerPool.init(app->getDevice());
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer
+    m_depthFmt = nvvk::findDepthFormat(app->getPhysicalDevice());
+    m_gBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFmt},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFmt,
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
+
+    m_settings = presets[0];
     createScene();
     createVkBuffers();
     createPipeline();
@@ -129,38 +138,38 @@ public:
 
   void onDetach() override
   {
-    vkDeviceWaitIdle(m_device);
+    NVVK_CHECK(vkDeviceWaitIdle(m_device));
     destroyResources();
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize) override { createGbuffers(viewportSize); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize) override
+  {
+    NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
+  }
 
   void onUIRender() override
   {
-    if(!m_gBuffers)
-      return;
-
     {  // Setting menu
       ImGui::Begin("Settings");
-      ImGuiH::CameraWidget();
+      nvgui::CameraWidget(m_cameraManip);
 
       // Objects
       const char* items[] = {"Sphere", "Cube", "Tetrahedron", "Octahedron", "Icosahedron", "Cone"};
       int         flag    = ImGuiSliderFlags_Logarithmic;
       float       maxT    = m_settings.screenSpace ? 10.0F : 0.3f;
-      namespace PE        = ImGuiH::PropertyEditor;
+      namespace PE        = nvgui::PropertyEditor;
       PE::begin();
-      PE::entry("Geometry", [&] { return ImGui::Combo("##1", &m_currentObject, items, IM_ARRAYSIZE(items)); });
-      PE::entry("Screen Space", [&] { return ImGui::Checkbox("##2", (bool*)&m_settings.screenSpace); });
-      PE::entry("Only Wire", [&] { return ImGui::Checkbox("##8", (bool*)&m_settings.onlyWire); });
-      PE::entry("Color", [&] { return ImGui::ColorEdit3("##3", &m_settings.color.x); });
-      PE::entry("Back Color", [&] { return ImGui::ColorEdit3("##4", &m_settings.backFaceColor.x); });
-      PE::entry("Thickness", [&] { return ImGui::SliderFloat("##5", &m_settings.thickness, 0.F, maxT, "%.3f", flag); });
-      PE::entry("Edge Variation", [&] { return ImGui::SliderFloat2("##6", &m_settings.thicknessVar.x, 0.F, 1.F); });
-      PE::entry("Smoothing", [&] { return ImGui::SliderFloat("##7", &m_settings.smoothing, 0.F, 2.F); });
-      PE::entry("Stipple", [&] { return ImGui::Checkbox("", (bool*)&m_settings.enableStipple); });
-      PE::entry("Repeats", [&] { return ImGui::SliderInt("##1", &m_settings.stippleRepeats, 0, 20); });
-      PE::entry("Length", [&] { return ImGui::SliderFloat("##2", &m_settings.stippleLength, 0.F, 1.F); });
+      PE::Combo("Geometry", &m_currentObject, items, IM_ARRAYSIZE(items));
+      PE::Checkbox("Screen Space", (bool*)&m_settings.screenSpace);
+      PE::Checkbox("Only Wire", (bool*)&m_settings.onlyWire);
+      PE::ColorEdit3("Color", &m_settings.color.x);
+      PE::ColorEdit3("Back Color", &m_settings.backFaceColor.x);
+      PE::SliderFloat("Thickness", &m_settings.thickness, 0.F, maxT, "%.3f", flag);
+      PE::SliderFloat2("Edge Variation", &m_settings.thicknessVar.x, 0.F, 1.F);
+      PE::SliderFloat("Smoothing", &m_settings.smoothing, 0.F, 2.F);
+      PE::Checkbox("Stipple", (bool*)&m_settings.enableStipple);
+      PE::SliderInt("Repeats", &m_settings.stippleRepeats, 0, 20);
+      PE::SliderFloat("Length", &m_settings.stippleLength, 0.F, 1.F);
       PE::end();
       PE::begin();
       {
@@ -174,13 +183,11 @@ public:
       ImGui::End();  // "Settings"
     }
 
-    {  // Rendering Viewport
+    {
+      // Display the G-Buffer image
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
-
-      // Display the G-Buffer image
-      ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
-
+      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -188,58 +195,60 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if(!m_gBuffers)
-      return;
-
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
-    const float aspect_ratio = m_gBuffers->getAspectRatio();
-    glm::vec3   eye;
-    glm::vec3   center;
-    glm::vec3   up;
-    CameraManip.getLookat(eye, center, up);
+    NVVK_DBG_SCOPE(cmd);
 
     // Update Frame buffer uniform buffer
-    DH::FrameInfo    finfo{};
-    const glm::vec2& clip = CameraManip.getClipPlanes();
-    finfo.view            = CameraManip.getMatrix();
-    finfo.proj            = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), aspect_ratio, clip.x, clip.y);
-    finfo.proj[1][1] *= -1;
-    finfo.camPos = eye;
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    shaderio::FrameInfo finfo{};
+    finfo.view   = m_cameraManip->getViewMatrix();
+    finfo.proj   = m_cameraManip->getPerspectiveMatrix();
+    finfo.camPos = m_cameraManip->getEye();
+    vkCmdUpdateBuffer(cmd, m_frameInfoBuf.buffer, 0, sizeof(shaderio::FrameInfo), &finfo);
 
     // Update the sample settings
-    vkCmdUpdateBuffer(cmd, m_bSettings.buffer, 0, sizeof(DH::WireframeSettings), &m_settings);
+    vkCmdUpdateBuffer(cmd, m_settingsBuf.buffer, 0, sizeof(shaderio::WireframeSettings), &m_settings);
 
     // Making sure the information is transfered
-    nvvk::memoryBarrier(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
 
     // Drawing the primitives in a G-Buffer
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView()},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    r_info.pStencilAttachment = nullptr;
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    colorAttachment.clearValue                = {m_clearColor};
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
 
-    vkCmdBeginRendering(cmd, &r_info);
-    m_app->setViewport(cmd);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_dset->getPipeLayout(), 0, 1, m_dset->getSets(), 0, nullptr);
+    // Create the rendering info
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
+    renderingInfo.pDepthAttachment     = &depthAttachment;
+
+    // Start the rendering
+    vkCmdBeginRendering(cmd, &renderingInfo);
+    // Set the viewport and scissor
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
+    // Bind the pipeline and descriptor set
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
     const VkDeviceSize offsets{0};
-    auto&              n = m_nodes[m_currentObject];
+    auto&              node = m_nodes[m_currentObject];
     {
-      PrimitiveMeshVk& m = m_meshVk[n.mesh];
+      VulkanMeshBuffers& mesh = m_meshBuffers[node.mesh];
       // Push constant information
-      m_pushConst.transfo    = n.localMatrix();
-      m_pushConst.color      = m_materials[n.material].color;
+      m_pushConst.transfo    = node.localMatrix();
+      m_pushConst.color      = m_materials[node.material].color;
       m_pushConst.clearColor = glm::make_vec4(m_clearColor.float32);
-      vkCmdPushConstants(cmd, m_dset->getPipeLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(DH::PushConstant), &m_pushConst);
+      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                         sizeof(shaderio::PushConstant), &m_pushConst);
 
-      vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
-      vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
-      vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
+      vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &offsets);
+      vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+      auto numIndices = static_cast<uint32_t>(m_meshes[node.mesh].triangles.size() * 3);
+      vkCmdDrawIndexed(cmd, numIndices, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
   }
@@ -247,18 +256,18 @@ public:
 private:
   void createScene()
   {
-    nvh::ScopedTimer st(__FUNCTION__);
+    nvutils::ScopedTimer st(__FUNCTION__);
     // Meshes
-    m_meshes.emplace_back(nvh::createSphereUv());
-    m_meshes.emplace_back(nvh::createCube());
-    m_meshes.emplace_back(nvh::createTetrahedron());
-    m_meshes.emplace_back(nvh::createOctahedron());
-    m_meshes.emplace_back(nvh::createIcosahedron());
-    m_meshes.emplace_back(nvh::createConeMesh());
-    const int num_meshes = static_cast<int>(m_meshes.size());
+    m_meshes.emplace_back(nvutils::createSphereUv());
+    m_meshes.emplace_back(nvutils::createCube());
+    m_meshes.emplace_back(nvutils::createTetrahedron());
+    m_meshes.emplace_back(nvutils::createOctahedron());
+    m_meshes.emplace_back(nvutils::createIcosahedron());
+    m_meshes.emplace_back(nvutils::createConeMesh());
+    const int numMeshes = static_cast<int>(m_meshes.size());
 
     // Materials (colorful)
-    for(int i = 0; i < num_meshes; i++)
+    for(int i = 0; i < numMeshes; i++)
     {
       const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
       const glm::vec3 v    = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
@@ -266,166 +275,171 @@ private:
     }
 
     // Instances
-    for(int i = 0; i < num_meshes; i++)
+    for(int i = 0; i < numMeshes; i++)
     {
-      nvh::Node& n = m_nodes.emplace_back();
-      n.mesh       = i;
-      n.material   = i;
+      nvutils::Node& node = m_nodes.emplace_back();
+      node.mesh           = i;
+      node.material       = i;
     }
 
-    CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({0.0F, 1.0F, 2.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    m_cameraManip->setClipPlanes({0.1F, 100.0F});
+    m_cameraManip->setLookat({0.0F, 1.0F, 2.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
   }
 
   void createPipeline()
   {
-    nvh::ScopedTimer st(__FUNCTION__);
-    m_dset->addBinding(BIND_FRAME_INFO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->addBinding(BIND_SETTINGS, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->initLayout();
-    m_dset->initPool(1);
+    nvutils::ScopedTimer st(__FUNCTION__);
 
-    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(DH::PushConstant)};
-    m_dset->initPipeLayout(1, &push_constant_ranges);
+    nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+    bindings.addBinding(BIND_FRAME_INFO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.addBinding(BIND_SETTINGS, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+
+    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.layout);
+    NVVK_DBG_NAME(m_descriptorPack.pool);
+    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+
+    const VkPushConstantRange pushConstant = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                              sizeof(shaderio::PushConstant)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {pushConstant}));
+    NVVK_DBG_NAME(m_pipelineLayout);
 
     // Writing to descriptors
-    const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorBufferInfo      dbi_setting{m_bSettings.buffer, 0, VK_WHOLE_SIZE};
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dset->makeWrite(0, BIND_FRAME_INFO, &dbi_unif));
-    writes.emplace_back(m_dset->makeWrite(0, BIND_SETTINGS, &dbi_setting));
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_colorFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
+    nvvk::WriteSetContainer writeContainer;
+    writeContainer.append(bindings.getWriteSet(BIND_FRAME_INFO, m_descriptorPack.sets[0]), m_frameInfoBuf);
+    writeContainer.append(bindings.getWriteSet(BIND_SETTINGS, m_descriptorPack.sets[0]), m_settingsBuf);
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     // Creating the Pipeline
-    nvvk::GraphicsPipelineState pstate;
-    pstate.rasterizationState.cullMode = VK_CULL_MODE_NONE;
-    pstate.addBindingDescriptions({{0, sizeof(nvh::PrimitiveVertex)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, p))},  // Position
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, n))},  // Normal
-    });
+    nvvk::GraphicsPipelineState graphicState;  // State of the graphic pipeline
+    graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+    graphicState.vertexBindings              = {{.stride = sizeof(nvutils::PrimitiveVertex), .divisor = 1}};
+    graphicState.vertexAttributes            = {
+        {.location = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(nvutils::PrimitiveVertex, pos)},
+        {.location = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(nvutils::PrimitiveVertex, nrm)}};
 
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_dset->getPipeLayout(), prend_info, pstate);
+    // Helper to create the graphic pipeline
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFmt};
+    creator.renderingState.depthAttachmentFormat = m_depthFmt;
+
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", std::span(bary_slang));
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", std::span(bary_slang));
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", std::span(bary_vert_glsl));
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", std::span(bary_frag_glsl));
 #endif
 
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
+    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, graphicState, &m_pipeline));
+    NVVK_DBG_NAME(m_pipeline);
   }
 
-  void createGbuffers(const VkExtent2D& size)
-  {
-    nvh::ScopedTimer st(std::string(__FUNCTION__) + std::string(": ") + std::to_string(size.width) + std::string(", ")
-                        + std::to_string(size.height));
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, m_colorFormat, m_depthFormat);
-  }
 
   void createVkBuffers()
   {
-    nvh::ScopedTimer st(__FUNCTION__);
-    VkCommandBuffer  cmd = m_app->createTempCmdBuffer();
-    m_meshVk.resize(m_meshes.size());
+    nvutils::ScopedTimer st(__FUNCTION__);
+    VkCommandBuffer      cmd = m_app->createTempCmdBuffer();
+
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_alloc);
+
+    m_meshBuffers.resize(m_meshes.size());
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
-      PrimitiveMeshVk& m = m_meshVk[i];
-      m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-      m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
-      m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
+      VulkanMeshBuffers& m = m_meshBuffers[i];
+      NVVK_CHECK(m_alloc.createBuffer(m.vertices, std::span(m_meshes[i].vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m.vertices, 0, std::span(m_meshes[i].vertices)));
+      NVVK_DBG_NAME(m.vertices.buffer);
+
+      NVVK_CHECK(m_alloc.createBuffer(m.indices, std::span(m_meshes[i].triangles).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
+      NVVK_CHECK(uploader.appendBuffer(m.indices, 0, std::span(m_meshes[i].triangles)));
+      NVVK_DBG_NAME(m.indices.buffer);
     }
 
-    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_frameInfo.buffer);
+    NVVK_CHECK(m_alloc.createBuffer(m_frameInfoBuf, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT));
+    NVVK_DBG_NAME(m_frameInfoBuf.buffer);
 
-    m_bSettings = m_alloc->createBuffer(sizeof(DH::WireframeSettings), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_bSettings.buffer);
-
+    NVVK_CHECK(m_alloc.createBuffer(m_settingsBuf, sizeof(shaderio::WireframeSettings), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT));
+    NVVK_DBG_NAME(m_settingsBuf.buffer);
+    uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
+    uploader.deinit();
   }
 
 
   void destroyResources()
   {
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-
-    for(PrimitiveMeshVk& m : m_meshVk)
+    for(VulkanMeshBuffers& mesh : m_meshBuffers)
     {
-      m_alloc->destroy(m.vertices);
-      m_alloc->destroy(m.indices);
+      m_alloc.destroyBuffer(mesh.vertices);
+      m_alloc.destroyBuffer(mesh.indices);
     }
-    m_alloc->destroy(m_frameInfo);
-    m_alloc->destroy(m_bSettings);
+    m_alloc.destroyBuffer(m_frameInfoBuf);
+    m_alloc.destroyBuffer(m_settingsBuf);
 
-    m_dset->deinit();
-    m_gBuffers.reset();
+    vkDestroyPipeline(m_device, m_pipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    m_descriptorPack.deinit();
+
+    m_gBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*              m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
+  nvapp::Application*     m_app{};          // Application
+  nvvk::ResourceAllocator m_alloc;          // Allocator
+  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
+  VkDevice                m_device{};       // Vulkan device
 
-  VkFormat                         m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
-  VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
-  VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_dset;                            // Descriptor set
+  std::shared_ptr<nvutils::CameraManipulator> m_cameraManip;  // Camera manipulator
+
+  // G-Buffers
+  nvvk::GBuffer     m_gBuffers;                                 // G-Buffers: color + depth
+  VkFormat          m_colorFmt   = VK_FORMAT_R8G8B8A8_UNORM;    // Color format of the image
+  VkFormat          m_depthFmt   = VK_FORMAT_UNDEFINED;         // Depth format of the depth buffer
+  VkClearColorValue m_clearColor = {{0.3F, 0.3F, 0.3F, 1.0F}};  // Clear color
+
+  // Pipeline
+  VkPipeline           m_pipeline{};        // Graphic pipeline to render
+  VkPipelineLayout     m_pipelineLayout{};  // Pipeline layout
+  nvvk::DescriptorPack m_descriptorPack{};  // Descriptor bindings, layout, pool, and set
 
   // Resources
-  struct PrimitiveMeshVk
+  struct VulkanMeshBuffers
   {
     nvvk::Buffer vertices;  // Buffer of the vertices
     nvvk::Buffer indices;   // Buffer of the indices
   };
-  std::vector<PrimitiveMeshVk> m_meshVk;
-  nvvk::Buffer                 m_frameInfo;
-
-  std::vector<VkSampler> m_samplers;
+  std::vector<VulkanMeshBuffers> m_meshBuffers;
+  nvvk::Buffer                   m_frameInfoBuf;
+  nvvk::Buffer                   m_settingsBuf;
 
   // Data and setting
   struct Material
   {
     glm::vec4 color{1.F};
   };
-  std::vector<nvh::PrimitiveMesh> m_meshes;
-  std::vector<nvh::Node>          m_nodes;
-  std::vector<Material>           m_materials;
+  std::vector<nvutils::PrimitiveMesh> m_meshes;
+  std::vector<nvutils::Node>          m_nodes;
+  std::vector<Material>               m_materials;
 
-  // Pipeline
-  DH::PushConstant m_pushConst{};                        // Information sent to the shader
-  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int              m_currentObject    = 0;
+  // Push constant
+  shaderio::PushConstant m_pushConst{};  // Information sent to the shader
+  int                    m_currentObject{};
 
-  DH::WireframeSettings m_settings = {};
-  nvvk::Buffer          m_bSettings;
+  // Settings
+  shaderio::WireframeSettings m_settings{};
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -433,54 +447,65 @@ private:
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  // Command parser
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);  // Restore this line
   cli.parse(argc, argv);
 
-  // Extension feature needed.
+  // Vulkan context and extension feature needed.
   VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
-
-  // Setting up how Vulkan context must be created
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, &baryFeature}},
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);  // WIN32, XLIB, ...
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, &baryFeature});
+
+  // Add the validation layer
+  nvvk::ValidationSettings validation;
+  vkSetup.instanceCreateInfoExt = validation.buildPNextChain();
 
   // Create the Vulkan context
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
-  if(!vkContext->isValid())
-    std::exit(0);
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
-  // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
+  // Camera manipulator (global)
+  auto cameraManip   = std::make_shared<nvutils::CameraManipulator>();
+  auto elemCamera    = std::make_shared<nvapp::ElementCamera>();
+  auto baryWireframe = std::make_shared<BaryWireframe>();
+  elemCamera->setCameraManipulator(cameraManip);
+  baryWireframe->setCameraManipulator(cameraManip);
 
-  // Add all application elements
-  app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultMenu>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
-  app->addElement(std::make_shared<BaryWireframe>());
+  app.addElement(elemCamera);
+  app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));
+  app.addElement(baryWireframe);
 
-  app->run();
-  app.reset();
-  vkContext.reset();
+  app.run();
+  app.deinit();
+  vkContext.deinit();
 
-  return test->errorCode();
+  return 0;
 }

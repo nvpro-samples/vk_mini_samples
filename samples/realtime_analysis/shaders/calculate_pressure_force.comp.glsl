@@ -12,7 +12,7 @@
 #define INSPECTOR_DESCRIPTOR_SET 0
 #define INSPECTOR_INSPECTION_DATA_BINDING eThreadInspection
 #define INSPECTOR_METADATA_BINDING eThreadMetadata
-#include "nvvkhl/shaders/dh_inspector.h"
+#include "nvshaders/inspector_io.h"
 
 #include "fluid_sim_2D.h"
 

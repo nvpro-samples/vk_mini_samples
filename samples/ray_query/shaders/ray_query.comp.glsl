@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,15 +32,14 @@
 const int GROUP_SIZE = 16;
 layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
 
-#include "device_host.h"
+#include "shaderio.h"
 #include "dh_bindings.h"
-#include "nvvkhl/shaders/random.h"
-#include "nvvkhl/shaders/constants.h"
-#include "nvvkhl/shaders/ggx.h"
-#include "nvvkhl/shaders/ray_util.h"
-#include "nvvkhl/shaders/pbr_mat_struct.h"
-#include "nvvkhl/shaders/bsdf_structs.h"
-#include "nvvkhl/shaders/bsdf_functions.h"
+#include "nvshaders/bsdf_functions.h.slang"
+#include "nvshaders/constants.h.slang"
+#include "nvshaders/functions.h.slang"
+#include "nvshaders/random.h.slang"
+#include "nvshaders/ray_utils.h.slang"
+#include "nvshaders/sky_functions.h.slang"
 
 // clang-format off
 layout(buffer_reference, scalar) readonly buffer Materials { Material m[]; };

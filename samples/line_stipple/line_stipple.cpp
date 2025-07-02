@@ -18,50 +18,49 @@
  */
 
 
-/*
-
+/*---------------------------------------------------------------------------------------------------------------------
  This sample shows how to use the VK_EXT_line_rasterization extension to enable line stippling.
+ ---------------------------------------------------------------------------------------------------------------------*/
 
-*/
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
+#define VMA_IMPLEMENTATION
 
 #include <glm/gtc/type_ptr.hpp>  // value_ptr
 
-#include "common/vk_context.hpp"                    // For the Vulkan context
-#include "imgui/imgui_helper.h"                     // Helper for UI, PropertyEditor
-#include "nvvk/debug_util_vk.hpp"                   // Utility to name objects
-#include "nvvk/extensions_vk.hpp"                   // For the Vulkan extensions
-#include "nvvk/images_vk.hpp"                       // For the image creation
-#include "nvvk/pipeline_vk.hpp"                     // For the pipeline creation
-#include "nvvkhl/element_benchmark_parameters.hpp"  // For the test/benchmark parameters
-#include "nvvkhl/element_gui.hpp"                   // For menu UI
-#include "nvvkhl/gbuffer.hpp"                       // For the G-Buffer
-#include "nvvk/shaders_vk.hpp"                      // For create shader module
-
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
+// Pre-compiled shaders
+#include "_autogen/line_stipple.slang.h"
+#include "_autogen/line_stipple.vert.glsl.h"
+#include "_autogen/line_stipple.frag.glsl.h"
 
 
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"
-}  // namespace DH
+#include "shaders/shaderio.h"
+}  // namespace shaderio
+
+#include <nvapp/application.hpp>
+#include <nvapp/elem_default_title.hpp>
+#include <nvgui/property_editor.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/formats.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/staging.hpp>
 
 constexpr int32_t numStripVertices = 300;
 
 
-class LineStippleElement : public nvvkhl::IAppElement
+class LineStippleElement : public nvapp::IAppElement
 {
   struct Settings
   {
@@ -74,8 +73,8 @@ class LineStippleElement : public nvvkhl::IAppElement
         {5, 0xE4E4},  // Complex pattern
     };
     float                      lineWidth{1.0f};
-    VkLineRasterizationModeKHR lineRasterizationMode{VK_LINE_RASTERIZATION_MODE_DEFAULT_KHR};
-    DH::Transform              transform{.color = {1, 1, 1}};
+    VkLineRasterizationModeKHR lineRasterizationMode{VK_LINE_RASTERIZATION_MODE_BRESENHAM};
+    shaderio::Transform        transform{.color = {1, 1, 1}};
     VkSampleCountFlagBits      msaaSamples{VK_SAMPLE_COUNT_1_BIT};
     bool                       crossLine{false};  // Make lines cross
     bool                       lineStrip{false};
@@ -86,12 +85,42 @@ public:
   LineStippleElement()           = default;
   ~LineStippleElement() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
     m_app    = app;
     m_device = m_app->getDevice();
-    m_dutil  = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc = std::make_unique<nvvk::ResourceAllocatorDma>(app->getDevice(), app->getPhysicalDevice());  // Allocator for buffer, images, acceleration structures
+    m_alloc.init({
+        .physicalDevice   = app->getPhysicalDevice(),
+        .device           = app->getDevice(),
+        .instance         = app->getInstance(),
+        .vulkanApiVersion = VK_API_VERSION_1_4,
+    });
+
+    // Acquiring the sampler which will be used for displaying the GBuffer
+    m_samplerPool.init(app->getDevice());
+    VkSampler linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+
+    // GBuffer
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    m_gBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFormat,
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
+
+    m_msaaGBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFormat,
+        .sampleCount    = m_settings.msaaSamples,  // <--- Super-sampling
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
+
 
     // Check which features are supported
     VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -100,12 +129,12 @@ public:
     vkGetPhysicalDeviceFeatures2(m_app->getPhysicalDevice(), &features2);
 
     // Find default (available) stipple pattern
-    if(m_lineFeature.stippledRectangularLines)
-      m_settings.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_RECTANGULAR_KHR;
-    else if(m_lineFeature.stippledBresenhamLines)
-      m_settings.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_BRESENHAM_KHR;
+    if(m_lineFeature.stippledBresenhamLines)
+      m_settings.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_BRESENHAM;
+    else if(m_lineFeature.stippledRectangularLines)
+      m_settings.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_RECTANGULAR;
     else
-      m_settings.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_DEFAULT_KHR;
+      m_settings.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_DEFAULT;
 
     createGraphicsPipeline();
     createGeometry();
@@ -114,33 +143,39 @@ public:
   void onDetach() override
   {
     NVVK_CHECK(vkDeviceWaitIdle(m_device));
-    destroyResources();
+    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
+    m_alloc.destroyBuffer(m_vertexBuffer);
+    m_gBuffers.deinit();
+    m_msaaGBuffers.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onRender(VkCommandBuffer cmd) override
   {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    NVVK_DBG_SCOPE(cmd);
 
     VkRenderingAttachmentInfoKHR colorAttachment{
-        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-        .imageView   = m_gBuffers->getColorImageView(),
-        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView   = m_gBuffers.getColorImageView(),
+        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
         .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue  = {{0.2f, 0.2f, 0.3f, 1.0f}},
     };
 
     VkRenderingAttachmentInfoKHR depthAttachment{
-        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-        .imageView   = m_gBuffers->getDepthImageView(),
-        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView   = m_gBuffers.getDepthImageView(),
+        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
         .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue  = {1.0f, 0},
     };
 
     VkRenderingInfoKHR renderingInfo{
-        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .renderArea           = {{0, 0}, m_app->getViewportSize()},
         .layerCount           = 1,
         .colorAttachmentCount = 1,
@@ -148,33 +183,34 @@ public:
         .pDepthAttachment     = &depthAttachment,
     };
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
 
     // Render to MSAA image and resolve to G-Buffer
     if(m_settings.msaaSamples != VK_SAMPLE_COUNT_1_BIT)
     {
-      colorAttachment.imageView          = m_msaaGBuffers->getColorImageView();
+      colorAttachment.imageView          = m_msaaGBuffers.getColorImageView();
       colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-      colorAttachment.resolveImageView   = m_gBuffers->getColorImageView();
+      colorAttachment.resolveImageView   = m_gBuffers.getColorImageView();
       colorAttachment.resolveMode        = VK_RESOLVE_MODE_AVERAGE_BIT;
-      depthAttachment.imageView          = m_msaaGBuffers->getDepthImageView();
+      depthAttachment.imageView          = m_msaaGBuffers.getDepthImageView();
     }
 
     vkCmdBeginRendering(cmd, &renderingInfo);
     {
       const VkDeviceSize offsets{0};
-      m_app->setViewport(cmd);
+
+      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
       drawStippledLines(cmd);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   }
 
-  void onResize(uint32_t width, uint32_t height) override
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), VkExtent2D{width, height}, m_colorFormat, m_depthFormat);
-    createMsaaImage();
+    m_gBuffers.update(cmd, size);
+    createMsaaImage(cmd);
   }
 
   void onUIMenu() override
@@ -207,7 +243,7 @@ private:
   void createGraphicsPipeline()
   {
     // Push constant accessible to the vertex shaders
-    VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(DH::Transform)};
+    VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(shaderio::Transform)};
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{
         .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -217,62 +253,50 @@ private:
 
     NVVK_CHECK(vkCreatePipelineLayout(m_device, &pipelineLayoutCreateInfo, nullptr, &m_pipelineLayout));
 
-    VkPipelineRenderingCreateInfo prend_info{
-        .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
-        .colorAttachmentCount    = 1,
-        .pColorAttachmentFormats = &m_colorFormat,
-        .depthAttachmentFormat   = m_depthFormat,
-    };
+    nvvk::GraphicsPipelineState graphicState;                                     // State of the graphic pipeline
+    graphicState.multisampleState.rasterizationSamples = m_settings.msaaSamples;  // #MSAA
 
-    nvvk::GraphicsPipelineState pstate;
-    pstate.multisampleState.rasterizationSamples = m_settings.msaaSamples;  // #MSAA
-    pstate.addBindingDescriptions({{0, sizeof(glm::vec3)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},  // Position
-    });
-    pstate.rasterizationState.lineWidth   = 1.0F;  // Width of the line : can be overridden
-    pstate.rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
-    pstate.inputAssemblyState.topology    = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    graphicState.vertexBindings = {
+        {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, .stride = sizeof(glm::vec3), .divisor = 1}};
+    graphicState.vertexAttributes = {
+        {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT, .format = VK_FORMAT_R32G32B32_SFLOAT}};
+
+
+    graphicState.rasterizationState.lineWidth   = 1.0F;  // Width of the line : can be overridden
+    graphicState.rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
+    graphicState.inputAssemblyState.topology    = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 
     // Depth test
-    pstate.depthStencilState.depthTestEnable  = VK_FALSE;  // VK_TRUE;
-    pstate.depthStencilState.depthWriteEnable = VK_TRUE;
-    pstate.depthStencilState.depthCompareOp   = VK_COMPARE_OP_ALWAYS;  // VK_COMPARE_OP_LESS_OR_EQUAL;
+    graphicState.depthStencilState.depthTestEnable  = VK_FALSE;  // VK_TRUE;
+    graphicState.depthStencilState.depthWriteEnable = VK_TRUE;
+    graphicState.depthStencilState.depthCompareOp   = VK_COMPARE_OP_ALWAYS;  // VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_colorFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
 
     // Enable dynamic state
-    pstate.addDynamicStateEnable(VK_DYNAMIC_STATE_LINE_STIPPLE_KHR);
-    pstate.addDynamicStateEnable(VK_DYNAMIC_STATE_LINE_WIDTH);
-    pstate.addDynamicStateEnable(VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY);
+    creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_LINE_STIPPLE);
+    creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
+    creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY);
+    creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_LINE_STIPPLE_ENABLE_EXT);
     if(m_dynamicFeature.extendedDynamicState3LineRasterizationMode)
-      pstate.addDynamicStateEnable(VK_DYNAMIC_STATE_LINE_RASTERIZATION_MODE_EXT);
-
-    // Enable line stipple
-    VkPipelineRasterizationLineStateCreateInfoEXT lineRasterizationStateInfo{
-        .sType                 = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT,
-        .lineRasterizationMode = m_settings.lineRasterizationMode,  // Maybe dynamically changeable
-        .stippledLineEnable    = VK_TRUE,
-        .lineStippleFactor     = 1,       // Dynamically changeable
-        .lineStipplePattern    = 0xF0FF,  // Dynamically changeable
-    };
-    pstate.rasterizationState.pNext = &lineRasterizationStateInfo;
-
+    {
+      creator.dynamicStateValues.push_back(VK_DYNAMIC_STATE_LINE_RASTERIZATION_MODE_EXT);
+    }
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", std::span(line_stipple_slang));
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", std::span(line_stipple_slang));
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", std::span(line_stipple_vert_glsl));
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", std::span(line_stipple_frag_glsl));
 #endif
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
+
+    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, graphicState, &m_graphicsPipeline));
+    NVVK_DBG_NAME(m_graphicsPipeline);
   }
 
   // Creating all the lines and store in a buffer
@@ -294,10 +318,15 @@ private:
       vertices.emplace_back(x, y, 0.5f);
     }
 
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_alloc);
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-    m_vertexBuffer      = m_alloc->createBuffer(cmd, vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    NVVK_CHECK(m_alloc.createBuffer(m_vertexBuffer, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+    NVVK_CHECK(uploader.appendBuffer(m_vertexBuffer, 0, std::span(vertices)));
+    NVVK_DBG_NAME(m_vertexBuffer.buffer);
+    uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
-    m_dutil->setObjectName(m_vertexBuffer.buffer, "Vertex Buffer");
+    uploader.deinit();
   }
 
   //-------------------------------------------------------------------------------------------------
@@ -309,12 +338,13 @@ private:
     VkDeviceSize offsets[]  = {0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertexBuffer.buffer, offsets);
 
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(DH::Transform), &m_settings.transform);
+    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(shaderio::Transform), &m_settings.transform);
     vkCmdSetLineWidth(cmd, m_settings.lineWidth);  // Width of the line
 
     if(m_dynamicFeature.extendedDynamicState3LineRasterizationMode)
       vkCmdSetLineRasterizationModeEXT(cmd, m_settings.lineRasterizationMode);
 
+    vkCmdSetLineStippleEnableEXT(cmd, VK_TRUE);  // Enable line stipple
     if(!m_settings.lineStrip)
     {
       // Show segment of lines with different stipple patterns
@@ -323,14 +353,14 @@ private:
       {
         if(m_settings.crossLine)
         {
-          DH::Transform transform = m_settings.transform;
+          shaderio::Transform transform = m_settings.transform;
           transform.rotation += glm::radians(rotation[i]);
           transform.translation.y += 0.5f - 0.25f * i;
           const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(i);
           transform.color      = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
-          vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(DH::Transform), &transform);
+          vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(shaderio::Transform), &transform);
         }
-        vkCmdSetLineStippleEXT(cmd, m_settings.stipplePatterns[i].first, m_settings.stipplePatterns[i].second);
+        vkCmdSetLineStipple(cmd, m_settings.stipplePatterns[i].first, m_settings.stipplePatterns[i].second);
         vkCmdDraw(cmd, 2, 1, uint32_t(i * 2), 0);
       }
     }
@@ -338,8 +368,8 @@ private:
     {
       // Show a line strip with a stipple patterns
       vkCmdSetPrimitiveTopology(cmd, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
-      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(DH::Transform), &m_settings.transform);
-      vkCmdSetLineStippleEXT(cmd, m_settings.stipplePatterns[4].first, m_settings.stipplePatterns[4].second);
+      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(shaderio::Transform), &m_settings.transform);
+      vkCmdSetLineStipple(cmd, m_settings.stipplePatterns[4].first, m_settings.stipplePatterns[4].second);
       uint32_t offset = uint32_t(m_settings.stipplePatterns.size() * 2);
       vkCmdDraw(cmd, numStripVertices, 1, offset, 0);
     }
@@ -350,7 +380,7 @@ private:
   // UI to change the settings
   void settingUI()
   {
-    namespace PE = ImGuiH::PropertyEditor;
+    namespace PE = nvgui::PropertyEditor;
 
     if(ImGui::Begin("Settings"))
     {
@@ -359,7 +389,7 @@ private:
         ImGui::Separator();
         ImGui::Text("MSAA Settings");
         VkImageFormatProperties image_format_properties;
-        NVVK_CHECK(vkGetPhysicalDeviceImageFormatProperties(m_app->getPhysicalDevice(), m_gBuffers->getColorFormat(),
+        NVVK_CHECK(vkGetPhysicalDeviceImageFormatProperties(m_app->getPhysicalDevice(), m_gBuffers.getColorFormat(),
                                                             VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
                                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &image_format_properties));
         // sampleCounts is 3, 7 or 15, following line find n, in 2^n == sampleCounts+1
@@ -380,7 +410,11 @@ private:
           vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
           vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
 
-          createMsaaImage();
+          {
+            VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+            createMsaaImage(cmd);
+            m_app->submitAndWaitTempCmdBuffer(cmd);
+          }
           createGraphicsPipeline();
         }
       }
@@ -394,16 +428,16 @@ private:
 
       ImGui::BeginDisabled(!m_dynamicFeature.extendedDynamicState3LineRasterizationMode);
       PE::entry("Rasterization Mode", [&] {
-        return ImGui::RadioButton("Default", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_DEFAULT_KHR);
+        return ImGui::RadioButton("Default", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_DEFAULT);
       });
       PE::entry("", [&] {
-        return ImGui::RadioButton("Rectangular", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_RECTANGULAR_KHR);
+        return ImGui::RadioButton("Rectangular", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_RECTANGULAR);
       });
       PE::entry("", [&] {
-        return ImGui::RadioButton("Bresenham", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_BRESENHAM_KHR);
+        return ImGui::RadioButton("Bresenham", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_BRESENHAM);
       });
       PE::entry("", [&] {
-        return ImGui::RadioButton("Smooth", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_KHR);
+        return ImGui::RadioButton("Smooth", (int*)&m_settings.lineRasterizationMode, VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH);
       });
       ImGui::EndDisabled();
 
@@ -436,119 +470,123 @@ private:
     }
   }
 
-  void createMsaaImage()
+  void createMsaaImage(VkCommandBuffer cmd)
   {
     VkExtent2D viewSize = m_app->getViewportSize();
-    m_msaaGBuffers      = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get());
-    m_msaaGBuffers->create(viewSize, {m_colorFormat}, m_depthFormat, m_settings.msaaSamples);
-  }
+    VkSampler  linearSampler{};
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
 
+    m_msaaGBuffers.deinit();
+    m_msaaGBuffers.init({
+        .allocator      = &m_alloc,
+        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat    = m_depthFormat,
+        .sampleCount    = m_settings.msaaSamples,
+        .imageSampler   = linearSampler,
+        .descriptorPool = m_app->getTextureDescriptorPool(),
+    });
+
+    m_msaaGBuffers.update(cmd, m_app->getViewportSize());
+  }
 
   // Display the G-Buffer image in Viewport
   void displayGbuffer()
   {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
     ImGui::Begin("Viewport");
-    ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+    ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
     ImGui::End();
     ImGui::PopStyleVar();
   }
 
-  void destroyResources()
-  {
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-    m_alloc->destroy(m_vertexBuffer);
-    m_gBuffers.reset();
-    m_msaaGBuffers.reset();
-  }
-
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //-------------------------------------------------------------------------------------------------
-  nvvkhl::Application* m_app{nullptr};
-  VkDevice             m_device = VK_NULL_HANDLE;  // Convenient
+  nvapp::Application*     m_app{};          // Application
+  nvvk::GBuffer           m_gBuffers;       // G-Buffers: color + depth
+  nvvk::GBuffer           m_msaaGBuffers;   // Multi-sample G-Buffers: color + depth
+  nvvk::ResourceAllocator m_alloc;          // Allocator
+  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
 
-  std::unique_ptr<nvvkhl::GBuffer>            m_gBuffers;
-  std::unique_ptr<nvvkhl::GBuffer>            m_msaaGBuffers;
-  std::unique_ptr<nvvk::DebugUtil>            m_dutil;
-  std::shared_ptr<nvvk::ResourceAllocatorDma> m_alloc;
 
+  VkDevice         m_device           = VK_NULL_HANDLE;            // Convenient
   VkFormat         m_colorFormat      = VK_FORMAT_B8G8R8A8_UNORM;  // Color format of the image
+  VkFormat         m_depthFormat      = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
   VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;            // The description of the pipeline
   VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;            // The graphic pipeline to render
 
-  VkFormat m_depthFormat = VK_FORMAT_D32_SFLOAT;  // Depth format of the depth buffer
-
   nvvk::Buffer m_vertexBuffer;  // Buffer of the vertices
-  VkPhysicalDeviceLineRasterizationFeaturesKHR m_lineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_KHR};
+  VkPhysicalDeviceLineRasterizationFeaturesKHR m_lineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES};
   VkPhysicalDeviceExtendedDynamicState3FeaturesEXT m_dynamicFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
 };
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;  // Base application information
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  // Command line parsing
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
-  VkPhysicalDeviceLineRasterizationFeaturesKHR lineRasterizationFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_KHR};
+
   VkPhysicalDeviceExtendedDynamicState3FeaturesEXT extendedDynamicStateFeature{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
-
-
-  // Vulkan creation context information
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup = {
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions =
+          {
+              {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+              {VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &extendedDynamicStateFeature, false},
+          },
+      .apiVersion = VK_API_VERSION_1_4,
+  };
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
-    vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  vkSetup.deviceExtensions.push_back({VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME, &lineRasterizationFeature});  // To enable line rasterization mode
-  vkSetup.deviceExtensions.push_back({VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &extendedDynamicStateFeature, false});  // [optional] To enable dynamic line rasterization mode
 
-  // Create Vulkan context
-  auto vkContext = std::make_unique<VulkanContext>(vkSetup);
-  if(!vkContext->isValid())
-    std::exit(0);
-
-  // Check if line rasterization is supported
-  if(lineRasterizationFeature.bresenhamLines == VK_FALSE && lineRasterizationFeature.stippledRectangularLines == VK_FALSE
-     && lineRasterizationFeature.stippledSmoothLines == VK_FALSE)
+  // Creation of the Vulkan context
+  nvvk::Context vkContext;  // Vulkan context
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
-    LOGE("Line rasterization is not supported by the device");
+    LOGE("Error in Vulkan context creation\n");
     return 1;
   }
 
-  // Loading the Vulkan extensions
-  load_VK_EXTENSIONS(vkContext->getInstance(), vkGetInstanceProcAddr, vkContext->getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+  // Check if line rasterization is supported
+  if(extendedDynamicStateFeature.extendedDynamicState3LineStippleEnable == VK_FALSE)
+  {
+    LOGE("Missing dynamic feature to enable line stipple");
+    return 1;
+  }
 
   // Application setup
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
   appInfo.windowSize     = {800, 600};
-  appInfo.instance       = vkContext->getInstance();
-  appInfo.device         = vkContext->getDevice();
-  appInfo.physicalDevice = vkContext->getPhysicalDevice();
-  appInfo.queues         = vkContext->getQueueInfos();
+  appInfo.instance       = vkContext.getInstance();
+  appInfo.device         = vkContext.getDevice();
+  appInfo.physicalDevice = vkContext.getPhysicalDevice();
+  appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
-  app->addElement(test);
-  app->addElement(std::make_shared<LineStippleElement>());
-  app->addElement(std::make_shared<nvvkhl::ElementDefaultWindowTitle>());
+  app.addElement(std::make_shared<LineStippleElement>());
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
 
-  app->run();
-  app.reset();
-  vkContext.reset();
+  app.run();
+  app.deinit();
+  vkContext.deinit();
 
-  return test->errorCode();
+  return 0;
 }

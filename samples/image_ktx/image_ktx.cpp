@@ -35,82 +35,98 @@
 
 */
 //////////////////////////////////////////////////////////////////////////
+#define USE_SLANG 1
+#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
+
+#include <imgui/imgui.h>
 
 #include <array>
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
+
 
 #define VMA_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
 
-#include "fileformats/nv_ktx.h"
-#include "imgui/imgui_camera_widget.h"
-#include "nvh/fileoperations.hpp"
-#include "nvh/primitives.hpp"
-#include "nvvk/commands_vk.hpp"
-#include "nvvk/debug_util_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/dynamicrendering_vk.hpp"
-#include "nvvk/images_vk.hpp"
-#include "nvvk/pipeline_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#include "nvvkhl/alloc_vma.hpp"
-#include "nvvkhl/application.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-#include "nvvkhl/tonemap_postprocess.hpp"
-#include "nvvk/renderpasses_vk.hpp"
 
-#include "common/vk_context.hpp"
-#include "common/utils.hpp"
-#include "nvvk/extensions_vk.hpp"
+// Pre-compiled shaders
+#include "_autogen/image_ktx.frag.glsl.h"
+#include "_autogen/image_ktx.slang.h"
+#include "_autogen/image_ktx.vert.glsl.h"
+#include "_autogen/tonemapper.slang.h"
 
-#if USE_HLSL
-#include "_autogen/raster_vertexMain.spirv.h"
-#include "_autogen/raster_fragmentMain.spirv.h"
-const auto& vert_shd = std::vector<uint8_t>{std::begin(raster_vertexMain), std::end(raster_vertexMain)};
-const auto& frag_shd = std::vector<uint8_t>{std::begin(raster_fragmentMain), std::end(raster_fragmentMain)};
-#elif USE_SLANG
-#include "_autogen/raster_slang.h"
-#else
-#include "_autogen/raster.frag.glsl.h"
-#include "_autogen/raster.vert.glsl.h"
-const auto& vert_shd = std::vector<uint32_t>{std::begin(raster_vert_glsl), std::end(raster_vert_glsl)};
-const auto& frag_shd = std::vector<uint32_t>{std::begin(raster_frag_glsl), std::end(raster_frag_glsl)};
-#endif  // USE_HLSL
 
-namespace DH {
+namespace shaderio {
 using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "nvshaders/tonemap_functions.h.slang"
+#include "shaders/shaderio.h"  // Shared between host and device
+}  // namespace shaderio
+
+#include "common/utils.hpp"
+
+#include <nvvk/staging.hpp>
+#include <nvvk/sampler_pool.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/helpers.hpp>
+#include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/gbuffers.hpp>
+#include <nvvk/descriptors.hpp>
+#include <nvvk/default_structs.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvutils/primitives.hpp>
+#include <nvutils/parameter_parser.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/camera_manipulator.hpp>
+#include <nvshaders_host/tonemapper.hpp>
+#include <nvimageformats/nv_ktx.h>
+#include <nvgui/tonemapper.hpp>
+#include <nvgui/camera.hpp>
+#include <nvapp/elem_camera.hpp>
+#include <nvapp/application.hpp>
+#include <nvvk/formats.hpp>
+
+std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
 
 
 //--
-static std::string g_img_file = R"(media/fruit.ktx2)";
+static std::string g_imgFile = "fruit.ktx2";
 //--
-
-constexpr bool g_use_tm_compute = true;
 
 // Texture wrapper class which load an KTX image
 struct TextureKtx
 {
 
-  TextureKtx(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t queueIndex, nvvkhl::AllocVma* a, const std::string& filename)
+  TextureKtx(VkDevice                     device,
+             VkPhysicalDevice             physicalDevice,
+             nvvk::QueueInfo              queueInfo,
+             nvvk::ResourceAllocator*     allocator,
+             const std::filesystem::path& filename)
       : m_device(device)
       , m_physicalDevice(physicalDevice)
-      , m_queueIndex(queueIndex)
-      , m_alloc(a)
+      , m_queueInfo(queueInfo)
+      , m_alloc(allocator)
+  {
+  }
+
+  ~TextureKtx()
+  {  // Destroying in next frame, avoid deleting while using
+    m_alloc->destroyImage(m_image);
+  }
+
+  void create(VkCommandBuffer cmd, nvvk::StagingUploader& uploader, const std::filesystem::path& filename)
   {
     nv_ktx::KTXImage           ktx_image;
     const nv_ktx::ReadSettings ktx_read_settings;
-    nv_ktx::ErrorWithText      maybe_error = ktx_image.readFromFile(filename.c_str(), ktx_read_settings);
+    std::ifstream              ktx_file(filename, std::ios::binary);
+    nv_ktx::ErrorWithText      maybe_error = ktx_image.readFromStream(ktx_file, ktx_read_settings);
     if(maybe_error.has_value())
     {
       LOGE("KTX Error: %s\n", maybe_error->c_str());
+      return;
     }
-    m_dutil = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
 
     // Check if format is supported
     VkImageFormatProperties prop{};
@@ -118,126 +134,132 @@ struct TextureKtx
                                              VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, 0, &prop);
     assert(prop.maxResourceSize != 0);
 
-    create(ktx_image);
+    create(cmd, uploader, ktx_image);
   }
 
-  ~TextureKtx()
-  {  // Destroying in next frame, avoid deleting while using
-    m_alloc->destroy(m_texture);
-  }
 
   // Create the image, the sampler and the image view + generate the mipmap level for all
-  void create(nv_ktx::KTXImage& ktximage)
+  void create(VkCommandBuffer cmd, nvvk::StagingUploader& uploader, nv_ktx::KTXImage& ktximage)
   {
     const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     const VkFormat            format = ktximage.format;
 
-    nvvk::CommandPool cpool(m_device, m_queueIndex);
-    auto*             cmd = cpool.createCommandBuffer();
 
+    auto              img_size   = VkExtent2D{ktximage.mip_0_width, ktximage.mip_0_height};
+    VkImageCreateInfo createInfo = DEFAULT_VkImageCreateInfo;
+    createInfo.mipLevels         = ktximage.num_mips;
+    createInfo.extent            = {img_size.width, img_size.height, 1};
+    createInfo.format            = ktximage.format;
+    createInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
-    auto              img_size        = VkExtent2D{ktximage.mip_0_width, ktximage.mip_0_height};
-    VkImageCreateInfo img_create_info = nvvk::makeImage2DCreateInfo(img_size, format, VK_IMAGE_USAGE_SAMPLED_BIT, true);
-    img_create_info.mipLevels         = ktximage.num_mips;
 
     // Creating image level 0
-    std::vector<char>& data         = ktximage.subresource();
-    const VkDeviceSize buffer_size  = data.size();
-    const nvvk::Image  result_image = m_alloc->createImage(cmd, buffer_size, data.data(), img_create_info);
+    const VkOffset3D         offset{};
+    std::vector<char>&       data = ktximage.subresource();
+    VkImageSubresourceLayers subresource{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1};
+    NVVK_CHECK(m_alloc->createImage(m_image, createInfo, DEFAULT_VkImageViewCreateInfo));
+    NVVK_CHECK(uploader.appendImage(m_image, std::span(data), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
 
-    // Create all mip-levels
-    nvvk::cmdBarrierImageLayout(cmd, result_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    auto* staging = m_alloc->getStaging();
     for(uint32_t mip = 1; mip < ktximage.num_mips; mip++)
     {
-      img_create_info.extent.width  = std::max(1U, ktximage.mip_0_width >> mip);
-      img_create_info.extent.height = std::max(1U, ktximage.mip_0_height >> mip);
+      createInfo.extent.width  = std::max(1U, ktximage.mip_0_width >> mip);
+      createInfo.extent.height = std::max(1U, ktximage.mip_0_height >> mip);
 
-      const VkOffset3D         offset{};
-      VkImageSubresourceLayers subresource{};
-      subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      subresource.layerCount = 1;
-      subresource.mipLevel   = mip;
+      subresource.mipLevel = mip;
 
       std::vector<char>& mipresource = ktximage.subresource(mip, 0, 0);
       const VkDeviceSize buffer_size = mipresource.size();
-      if(img_create_info.extent.width > 0 && img_create_info.extent.height > 0)
+      if(createInfo.extent.width > 0 && createInfo.extent.height > 0)
       {
-        staging->cmdToImage(cmd, result_image.image, offset, img_create_info.extent, subresource, buffer_size,
-                            mipresource.data());
+        uploader.appendImageSub(m_image, offset, createInfo.extent, subresource, buffer_size, mipresource.data(),
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
       }
     }
-    nvvk::cmdBarrierImageLayout(cmd, result_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-    // Texture
-    const VkImageViewCreateInfo iv_info = nvvk::makeImageViewCreateInfo(result_image.image, img_create_info);
-    m_texture                           = m_alloc->createTexture(result_image, iv_info, sampler_info);
-    m_dutil->DBG_NAME(m_texture.image);
-    m_dutil->DBG_NAME(m_texture.descriptor.sampler);
+    NVVK_DBG_NAME(m_image.image);
+    NVVK_DBG_NAME(m_image.descriptor.imageView);
+    uploader.cmdUploadAppended(cmd);
 
-    cpool.submitAndWait(cmd);
+    // Transition image layout to shader read
+    m_image.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    nvvk::cmdImageMemoryBarrier(cmd, {m_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, m_image.descriptor.imageLayout});
   }
 
-  [[nodiscard]] bool                         valid() const { return m_texture.image != VK_NULL_HANDLE; }
-  [[nodiscard]] const VkDescriptorImageInfo& descriptorImage() const { return m_texture.descriptor; }
+  [[nodiscard]] bool                         valid() const { return m_image.image != VK_NULL_HANDLE; }
+  [[nodiscard]] const VkDescriptorImageInfo& descriptorImage() const { return m_image.descriptor; }
+  void setSampler(const VkSampler& sampler) { m_image.descriptor.sampler = sampler; }
+
+
+  nvvk::QueueInfo          m_queueInfo{};
+  nvvk::ResourceAllocator* m_alloc{};
+  nvvk::Image              m_image;
+  VkDevice                 m_device{};
+  VkPhysicalDevice         m_physicalDevice{};
+  VkExtent2D               m_size{0, 0};
 
 private:
-  VkDevice                         m_device{};
-  VkPhysicalDevice                 m_physicalDevice{};
-  uint32_t                         m_queueIndex{0};
-  nvvkhl::AllocVma*                m_alloc{nullptr};
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-
-  VkExtent2D    m_size{0, 0};
-  nvvk::Texture m_texture;
 };
 
 
 //////////////////////////////////////////////////////////////////////////
-class ImageKtx : public nvvkhl::IAppElement
+class ImageKtx : public nvapp::IAppElement
 {
 public:
   ImageKtx()           = default;
   ~ImageKtx() override = default;
 
-  void onAttach(nvvkhl::Application* app) override
+  void onAttach(nvapp::Application* app) override
   {
     m_app    = app;
     m_device = m_app->getDevice();
 
-    m_dutil      = std::make_unique<nvvk::DebugUtil>(m_device);  // Debug utility
-    m_alloc      = std::make_unique<nvvkhl::AllocVma>(VmaAllocatorCreateInfo{
-             .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-             .physicalDevice = app->getPhysicalDevice(),
-             .device         = app->getDevice(),
-             .instance       = app->getInstance(),
+    m_alloc.init(VmaAllocatorCreateInfo{
+        .flags          = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app->getPhysicalDevice(),
+        .device         = app->getDevice(),
+        .instance       = app->getInstance(),
     });  // Allocator
-    m_tonemapper = std::make_unique<nvvkhl::TonemapperPostProcess>(m_device, m_alloc.get());
-    m_dset       = std::make_unique<nvvk::DescriptorSetContainer>(m_device);
+
+    {
+      auto code = std::span<const uint32_t>(tonemapper_slang);
+      m_tonemapper.init(&m_alloc, code);
+    }
 
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
+    // Creating the G-Buffer, a single color attachment, no depth-stencil
+    VkSampler linearSampler;
+    m_samplerPool.init(m_device);
+    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
+    NVVK_DBG_NAME(linearSampler);
+    m_gBuffers.init({.allocator      = &m_alloc,
+                     .colorFormats   = {m_colorFormat, m_srgbFormat},
+                     .depthFormat    = m_depthFormat,
+                     .imageSampler   = linearSampler,
+                     .descriptorPool = m_app->getTextureDescriptorPool()});
+
 
     // Find image file
-    const std::vector<std::string> default_search_paths = {".", "..", "../..", "../../.."};
-    const std::string              img_file             = nvh::findFile(g_img_file, default_search_paths, true);
-    assert(!img_file.empty());
+    const std::vector<std::filesystem::path> defaultSearchPaths = nvsamples::getResourcesDirs();
+    const std::filesystem::path              imageFile          = nvutils::findFile(g_imgFile, defaultSearchPaths);
+    assert(!imageFile.empty());
 
-    uint32_t queueIndex = app->getQueue(0).familyIndex;
-    m_texture = std::make_shared<TextureKtx>(m_app->getDevice(), m_app->getPhysicalDevice(), queueIndex, m_alloc.get(), img_file);
-    assert(m_texture->valid());
+    m_texture = std::make_shared<TextureKtx>(m_app->getDevice(), m_app->getPhysicalDevice(), app->getQueue(0), &m_alloc, imageFile);
+    {
+      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+      m_app->createTempCmdBuffer();
+      nvvk::StagingUploader uploader;
+      uploader.init(&m_alloc, true);
+      m_texture->create(cmd, uploader, imageFile);
+      m_app->submitAndWaitTempCmdBuffer(cmd);
+      uploader.deinit();
+      assert(m_texture->valid());
+      m_texture->setSampler(linearSampler);  // Default to nearest
+    }
+
 
     createScene();
     createVkBuffers();
     createPipeline();
-
-    if(g_use_tm_compute)
-    {
-      m_tonemapper->createComputePipeline();
-    }
-    else
-    {
-      m_tonemapper->createGraphicPipeline(m_gBuffers->getColorFormat(0), m_gBuffers->getDepthFormat());
-    }
   }
 
   void onDetach() override
@@ -276,29 +298,16 @@ public:
     }
   }
 
-  void onResize(uint32_t width, uint32_t height) override
-  {
-    createGbuffers({width, height});
-
-    // Tonemapper is using GBuffer1 as input
-    if(g_use_tm_compute)
-    {
-      m_tonemapper->updateComputeDescriptorSets(m_gBuffers->getDescriptorImageInfo(1), m_gBuffers->getDescriptorImageInfo(0));
-    }
-    else
-    {
-      m_tonemapper->updateGraphicDescriptorSets(m_gBuffers->getDescriptorImageInfo(1));
-    }
-  }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
 
   void onUIRender() override
   {
     {  // Setting menu
       ImGui::Begin("Settings");
-      ImGuiH::CameraWidget();
+      nvgui::CameraWidget(g_cameraManip);
       if(ImGui::CollapsingHeader("Tonemapper", ImGuiTreeNodeFlags_DefaultOpen))
       {
-        m_tonemapper->onUI();
+        nvgui::tonemapperWidget(m_tonemapperData);
       }
       ImGui::End();
     }
@@ -308,8 +317,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer0 image
-      if(m_gBuffers)
-        ImGui::Image(m_gBuffers->getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(0), ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -318,23 +326,17 @@ public:
 
   void onRender(VkCommandBuffer cmd) override
   {
-    if(!m_gBuffers)
-      return;
-
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
-
-    const float view_aspect_ratio = m_viewSize.x / m_viewSize.y;
+    NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
     // Update Frame buffer uniform buffer
-    DH::FrameInfo    finfo{};
-    const glm::vec2& clip = CameraManip.getClipPlanes();
-    finfo.view            = CameraManip.getMatrix();
-    finfo.proj = glm::perspectiveRH_ZO(glm::radians(CameraManip.getFov()), view_aspect_ratio, clip.x, clip.y);
-    finfo.proj[1][1] *= -1;
-    finfo.camPos = CameraManip.getEye();
-    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(DH::FrameInfo), &finfo);
+    shaderio::FrameInfo finfo{};
+    finfo.view   = g_cameraManip->getViewMatrix();
+    finfo.proj   = g_cameraManip->getPerspectiveMatrix();
+    finfo.camPos = g_cameraManip->getEye();
+    vkCmdUpdateBuffer(cmd, m_frameInfo.buffer, 0, sizeof(shaderio::FrameInfo), &finfo);
     // Barrier to make sure the information is transfered
-    nvvk::memoryBarrier(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
 
     renderScene(cmd);  // Render to GBuffer-1
@@ -345,167 +347,161 @@ public:
 private:
   void createScene()
   {
-    m_meshes.emplace_back(nvh::createSphereUv());
+    m_meshes.emplace_back(nvutils::createSphereUv());
     m_materials.push_back({glm::vec4(1)});
-    nvh::Node& n = m_nodes.emplace_back();
-    n.mesh       = 0;
-    n.material   = 0;
+    nvutils::Node& node = m_nodes.emplace_back();
+    node.mesh           = 0;
+    node.material       = 0;
 
-    CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({0.0F, 0.0F, 1.5F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    g_cameraManip->setClipPlanes({0.1F, 100.0F});
+    g_cameraManip->setLookat({0.0F, 0.0F, 1.5F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
 
     // Set clear color in sRgb space
-    glm::vec3 c = nvvkhl_shaders::toLinear({0.3F, 0.3F, 0.3F});
+    glm::vec3 c = shaderio::toLinear(glm::vec3{.3F, 0.3F, 0.3F});
     memcpy(m_clearColor.float32, &c.x, sizeof(glm::vec3));
   }
 
 
   void renderScene(VkCommandBuffer cmd)
   {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
     // Drawing the scene in GBuffer-1
-    nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(1)},
-                                     m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                     VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-    r_info.pStencilAttachment = nullptr;
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView(1);
+    colorAttachment.clearValue                = {m_clearColor};
 
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(1), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    vkCmdBeginRendering(cmd, &r_info);
-    m_app->setViewport(cmd);
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+
+
+    // Create the rendering info
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
+    renderingInfo.pDepthAttachment     = &depthAttachment;
+
+
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(1), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+    vkCmdBeginRendering(cmd, &renderingInfo);
+
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_dset->getSets(m_frame), 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
     const VkDeviceSize offsets{0};
-    for(const nvh::Node& n : m_nodes)
+    for(const nvutils::Node& node : m_nodes)
     {
-      const PrimitiveMeshVk& m = m_meshVk[n.mesh];
+      const PrimitiveMeshVk& m = m_meshVk[node.mesh];
       // Push constant information
-      m_pushConst.transfo = n.localMatrix();
-      m_pushConst.color   = m_materials[n.material].color;
+      m_pushConst.transfo = node.localMatrix();
+      m_pushConst.color   = m_materials[node.material].color;
       vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(DH::PushConstant), &m_pushConst);
+                         sizeof(shaderio::PushConstant), &m_pushConst);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      auto num_indices = static_cast<uint32_t>(m_meshes[n.mesh].triangles.size() * 3);
+      auto num_indices = static_cast<uint32_t>(m_meshes[node.mesh].triangles.size() * 3);
       vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
     }
 
     vkCmdEndRendering(cmd);
-    nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(1), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(1), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   }
 
   void renderPost(VkCommandBuffer cmd)
   {
-    const nvvk::DebugUtil::ScopedCmdLabel sdbg = m_dutil->DBG_SCOPE(cmd);
+    NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-    if(g_use_tm_compute)
-    {
-      // Compute
-      auto size = VkExtent2D{static_cast<uint32_t>(m_viewSize.x), static_cast<uint32_t>(m_viewSize.y)};
-      m_tonemapper->runCompute(cmd, size);
-    }
-    else
-    {
-      // Graphic
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
 
-      // Tonemapping GBuffer-1 to GBuffer-0
-      nvvk::createRenderingInfo r_info({{0, 0}, m_gBuffers->getSize()}, {m_gBuffers->getColorImageView(0)},
-                                       m_gBuffers->getDepthImageView(), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                       VK_ATTACHMENT_LOAD_OP_CLEAR, m_clearColor);
-      r_info.pStencilAttachment = nullptr;
-
-      nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-      vkCmdBeginRendering(cmd, &r_info);
-      m_tonemapper->runGraphic(cmd);
-      vkCmdEndRendering(cmd);
-      nvvk::cmdBarrierImageLayout(cmd, m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
-    }
+    // Tonemapping GBuffer-1 to GBuffer-0
+    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData, m_gBuffers.getDescriptorImageInfo(1),
+                            m_gBuffers.getDescriptorImageInfo(0));
   }
 
   void createPipeline()
   {
-    m_dset->addBinding(DH::BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->addBinding(DH::BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
-    m_dset->initLayout();
-    m_dset->initPool(2);  // two frames - allow to change on the fly
+    nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+    bindings.addBinding(shaderio::BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.addBinding(shaderio::BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.layout);
+    NVVK_DBG_NAME(m_descriptorPack.pool);
+    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
 
     // Writing to descriptors
-    const VkDescriptorBufferInfo      dbi_unif{m_frameInfo.buffer, 0, VK_WHOLE_SIZE};
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.emplace_back(m_dset->makeWrite(0, 0, &dbi_unif));
-    writes.emplace_back(m_dset->makeWrite(0, DH::BKtxTex, &m_texture->descriptorImage()));
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    nvvk::WriteSetContainer writeContainer;
+    writeContainer.append(bindings.getWriteSet(shaderio::BKtxFrameInfo, m_descriptorPack.sets[0]), m_frameInfo);
+    writeContainer.append(bindings.getWriteSet(shaderio::BKtxTex, m_descriptorPack.sets[0]), m_texture->descriptorImage());
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
-    const VkPushConstantRange push_constant_ranges = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                      sizeof(DH::PushConstant)};
-
-    VkPipelineLayoutCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    create_info.pushConstantRangeCount = 1;
-    create_info.pPushConstantRanges    = &push_constant_ranges;
-    create_info.setLayoutCount         = 1;
-    create_info.pSetLayouts            = &m_dset->getLayout();
-    NVVK_CHECK(vkCreatePipelineLayout(m_device, &create_info, nullptr, &m_pipelineLayout));
-
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_srgbFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
+    const VkPushConstantRange pushConstant = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                              sizeof(shaderio::PushConstant)};
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {pushConstant}));
 
     // Creating the Pipeline
-    nvvk::GraphicsPipelineState pstate;
-    pstate.rasterizationState.cullMode = VK_CULL_MODE_NONE;
-    pstate.addBindingDescriptions({{0, sizeof(nvh::PrimitiveVertex)}});
-    pstate.addAttributeDescriptions({
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, p))},  // Position
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, n))},  // Normal
-        {2, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(nvh::PrimitiveVertex, t))},     // TexCoord
-    });
+    nvvk::GraphicsPipelineState m_graphicState;
+    m_graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+    m_graphicState.vertexBindings              = {{.sType   = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT,
+                                                   .stride  = sizeof(nvutils::PrimitiveVertex),
+                                                   .divisor = 1}};
+    m_graphicState.vertexAttributes            = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                                   .location = 0,
+                                                   .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                                   .offset   = static_cast<uint32_t>(offsetof(nvutils::PrimitiveVertex, pos))},
+                                                  {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                                   .location = 1,
+                                                   .format   = VK_FORMAT_R32G32B32_SFLOAT,
+                                                   .offset   = static_cast<uint32_t>(offsetof(nvutils::PrimitiveVertex, nrm))},
+                                                  {.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                                   .location = 2,
+                                                   .format   = VK_FORMAT_R32G32_SFLOAT,
+                                                   .offset   = static_cast<uint32_t>(offsetof(nvutils::PrimitiveVertex, tex))}};
 
+    nvvk::GraphicsPipelineCreator creator;
+    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.colorFormats                         = {m_srgbFormat};
+    creator.renderingState.depthAttachmentFormat = m_depthFormat;
 
-    nvvk::GraphicsPipelineGenerator pgen(m_device, m_pipelineLayout, prend_info, pstate);
 #if USE_SLANG
-    VkShaderModule shaderModule = nvvk::createShaderModule(m_device, &rasterSlang[0], sizeof(rasterSlang));
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_VERTEX_BIT, "vertexMain");
-    pgen.addShader(shaderModule, VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", image_ktx_slang);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", image_ktx_slang);
 #else
-    pgen.addShader(vert_shd, VK_SHADER_STAGE_VERTEX_BIT, USE_HLSL ? "vertexMain" : "main");
-    pgen.addShader(frag_shd, VK_SHADER_STAGE_FRAGMENT_BIT, USE_HLSL ? "fragmentMain" : "main");
+    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", image_ktx_vert_glsl);
+    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", image_ktx_frag_glsl);
 #endif
-    m_graphicsPipeline = pgen.createPipeline();
-    m_dutil->setObjectName(m_graphicsPipeline, "Graphics");
-    pgen.clearShaders();
-#if USE_SLANG
-    vkDestroyShaderModule(m_device, shaderModule, nullptr);
-#endif
-  }
 
-  void createGbuffers(const VkExtent2D& size)
-  {
-    m_viewSize = {size.width, size.height};
-    // Create two color GBuffers: 0-final result, 1-scene in sRGB
-    const std::vector<VkFormat> color_buffers = {m_colorFormat, m_srgbFormat};
-    m_gBuffers = std::make_unique<nvvkhl::GBuffer>(m_device, m_alloc.get(), size, color_buffers, m_depthFormat);
+    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, m_graphicState, &m_graphicsPipeline));
+    NVVK_DBG_NAME(m_graphicsPipeline);
   }
 
   void createVkBuffers()
   {
-    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+    VkCommandBuffer       cmd = m_app->createTempCmdBuffer();
+    nvvk::StagingUploader uploader;
+    uploader.init(&m_alloc);
+
     m_meshVk.resize(m_meshes.size());
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
       PrimitiveMeshVk& m = m_meshVk[i];
-      m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-      m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
-      m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
+      m_alloc.createBuffer(m.vertices, std::span(m_meshes[i].vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      m_alloc.createBuffer(m.indices, std::span(m_meshes[i].triangles).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      uploader.appendBuffer(m.vertices, 0, std::span(m_meshes[i].vertices));
+      uploader.appendBuffer(m.indices, 0, std::span(m_meshes[i].triangles));
+      NVVK_DBG_NAME(m.vertices.buffer);
+      NVVK_DBG_NAME(m.indices.buffer);
     }
 
-    m_frameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    m_dutil->DBG_NAME(m_frameInfo.buffer);
-
+    m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    NVVK_DBG_NAME(m_frameInfo.buffer);
+    uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
+    uploader.deinit();
   }
 
 
@@ -518,36 +514,41 @@ private:
 
     for(PrimitiveMeshVk& m : m_meshVk)
     {
-      m_alloc->destroy(m.vertices);
-      m_alloc->destroy(m.indices);
+      m_alloc.destroyBuffer(m.vertices);
+      m_alloc.destroyBuffer(m.indices);
     }
-    m_alloc->destroy(m_frameInfo);
+    m_alloc.destroyBuffer(m_frameInfo);
 
-    m_dset->deinit();
-    m_gBuffers.reset();
-    m_tonemapper.reset();
+    m_descriptorPack.deinit();
+
+
+    m_gBuffers.deinit();
+    m_tonemapper.deinit();
+    m_samplerPool.deinit();
+    m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
-                           nvh::getExecutablePath().replace_extension(".jpg").string());
+    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+                           nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvvkhl::Application*              m_app{nullptr};
-  std::unique_ptr<nvvk::DebugUtil>  m_dutil;
-  std::shared_ptr<nvvkhl::AllocVma> m_alloc;
+  nvapp::Application*      m_app{nullptr};
+  nvvk::ResourceAllocator  m_alloc;
+  nvvk::GBuffer            m_gBuffers;  // G-Buffers: color + depth
+  nvvk::SamplerPool        m_samplerPool;
+  nvshaders::Tonemapper    m_tonemapper{};
+  shaderio::TonemapperData m_tonemapperData;
 
-  glm::vec2                        m_viewSize    = {0, 0};
-  VkFormat                         m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
-  VkFormat                         m_srgbFormat  = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
-  VkFormat                         m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue                m_clearColor  = {{0.0F, 0.0F, 0.0F, 1.0F}};     // Clear color
-  VkDevice                         m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvkhl::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
+  VkFormat          m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image (tonemapper)
+  VkFormat          m_srgbFormat  = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image (rendering)
+  VkFormat          m_depthFormat = VK_FORMAT_UNDEFINED;            // Depth format of the depth buffer
+  VkClearColorValue m_clearColor  = {};                             // Clear color
+  VkDevice          m_device      = VK_NULL_HANDLE;                 // Convenient
 
   // Resources
   struct PrimitiveMeshVk
@@ -565,19 +566,19 @@ private:
   {
     glm::vec4 color{1.F};
   };
-  std::vector<nvh::PrimitiveMesh>                m_meshes;
-  std::vector<nvh::Node>                         m_nodes;
-  std::vector<Material>                          m_materials;
-  std::shared_ptr<TextureKtx>                    m_texture;
-  std::unique_ptr<nvvk::DescriptorSetContainer>  m_dset;  // Descriptor set
-  std::unique_ptr<nvvkhl::TonemapperPostProcess> m_tonemapper;
+  std::vector<nvutils::PrimitiveMesh> m_meshes;
+  std::vector<nvutils::Node>          m_nodes;
+  std::vector<Material>               m_materials;
+  std::shared_ptr<TextureKtx>         m_texture;
 
 
   // Pipeline
-  DH::PushConstant m_pushConst{};                        // Information sent to the shader
-  VkPipelineLayout m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
-  VkPipeline       m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
-  int              m_frame{0};
+  shaderio::PushConstant m_pushConst{};                        // Information sent to the shader
+  VkPipelineLayout       m_pipelineLayout   = VK_NULL_HANDLE;  // The description of the pipeline
+  VkPipeline             m_graphicsPipeline = VK_NULL_HANDLE;  // The graphic pipeline to render
+  nvvk::DescriptorPack   m_descriptorPack{};                   // Descriptor bindings, layout, pool, and set
+
+  int m_frame{0};
 };
 
 
@@ -585,28 +586,35 @@ private:
 
 int main(int argc, char** argv)
 {
-  nvvkhl::ApplicationCreateInfo appInfo;
+  nvapp::ApplicationCreateInfo appInfo;  // Base application information
 
-  nvh::CommandLineParser cli(PROJECT_NAME);
-  cli.addArgument({"--headless"}, &appInfo.headless, "Run in headless mode");
+  // Command line parsing
+  nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
+  nvutils::ParameterRegistry reg;
+  reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  cli.add(reg);
   cli.parse(argc, argv);
 
-
   // Setting up what's needed for the Vulkan context creation
-  VkContextSettings vkSetup;
+  nvvk::ContextInitInfo vkSetup;
   if(!appInfo.headless)
   {
-    nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
     vkSetup.deviceExtensions.push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
   }
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+
   vkSetup.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
+  vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures});
 
-  // Create the Vulkan context
-  VulkanContext vkContext(vkSetup);
-  if(!vkContext.isValid())
-    std::exit(0);
-  load_VK_EXTENSIONS(vkContext.getInstance(), vkGetInstanceProcAddr, vkContext.getDevice(), vkGetDeviceProcAddr);  // Loading the Vulkan extension pointers
+  // Creation of the Vulkan context
+  nvvk::Context vkContext;  // Vulkan context
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return 1;
+  }
 
   // How we want the application
   appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
@@ -617,19 +625,21 @@ int main(int argc, char** argv)
   appInfo.queues         = vkContext.getQueueInfos();
 
   // Create the application
-  auto app = std::make_unique<nvvkhl::Application>(appInfo);
+  nvapp::Application app;
+  app.init(appInfo);
 
-  // Create the test framework
-  auto test = std::make_shared<nvvkhl::ElementBenchmarkParameters>(argc, argv);
 
   // Add all application elements
-  app->addElement(test);
-  app->addElement(std::make_shared<nvvkhl::ElementCamera>());
-  app->addElement(std::make_shared<ImageKtx>());
+  auto elemCamera = std::make_shared<nvapp::ElementCamera>();
+  g_cameraManip   = std::make_shared<nvutils::CameraManipulator>();
+  elemCamera->setCameraManipulator(g_cameraManip);
+  app.addElement(elemCamera);
 
-  app->run();
-  app.reset();
+  app.addElement(std::make_shared<ImageKtx>());
+
+  app.run();
+  app.deinit();
   vkContext.deinit();
 
-  return test->errorCode();
+  return 0;
 }
