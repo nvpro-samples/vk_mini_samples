@@ -93,8 +93,6 @@ using namespace glm;
 #include <nvvk/sbt_generator.hpp>
 #include <nvvk/validation_settings.hpp>
 
-#include "common/utils.hpp"
-
 
 // The camera for the scene
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};

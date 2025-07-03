@@ -17,12 +17,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   nvpro2::nvutils
   nvpro2::nvvk
   tinygltf
+  vk_mini_samples_common
 )
 
 add_project_definitions(${PROJECT_NAME})
 
 # Include directory for generated files
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR})
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
 #------------------------------------------------------------------------------------------------------------------------------
 # Compile shaders

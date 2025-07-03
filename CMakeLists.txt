@@ -44,8 +44,8 @@ add_subdirectory(samples/tiny_shader_toy)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ray_trace)
 
 # Install the resources and nvshaders folders
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources" DESTINATION ${CMAKE_INSTALL_PREFIX})
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/common/common_shaders" DESTINATION ${CMAKE_INSTALL_PREFIX})
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources" DESTINATION ${CMAKE_INSTALL_PREFIX})
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/common/common_shaders" DESTINATION ${CMAKE_INSTALL_PREFIX})
 install(DIRECTORY "${NVSHADERS_DIR}/nvshaders" DESTINATION ${CMAKE_INSTALL_PREFIX})
 
 

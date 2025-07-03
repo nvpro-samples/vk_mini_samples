@@ -11,12 +11,13 @@ add_executable(${PROJECT_NAME} ${EXE_SOURCES})
 # Link libraries and include directories
 target_link_libraries(${PROJECT_NAME} PRIVATE
   nvpro2::nvapp
+  vk_mini_samples_common
 )
 
 add_project_definitions(${PROJECT_NAME})
 
 # Include directory for generated files
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR})
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
 #------------------------------------------------------------------------------------------------------------------------------
 # Compile shaders
