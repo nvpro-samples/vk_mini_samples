@@ -38,7 +38,7 @@ list(APPEND SHADER_SLANG_FILES ${NVSHADERS_DIR}/nvshaders/tonemapper.slang)
 
 compile_slang(
     "${SHADER_SLANG_FILES}"
-    "${CMAKE_BINARY_DIR}/_autogen"
+    "${CMAKE_CURRENT_LIST_DIR}/_autogen"
     GENERATED_SHADER_HEADERS
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
 )
