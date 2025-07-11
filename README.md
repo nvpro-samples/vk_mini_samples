@@ -7,14 +7,14 @@ Each sample is accompanied by its own documentation detailing functionality and 
 
 ## Dependencies
 
-* [nvpro_core](https://github.com/nvpro-samples/nvpro_core): A collection of Vulkan helper classes and utilities.
+* [nvpro_core2](https://github.com/nvpro-samples/nvpro_core2): A collection of Vulkan helper classes and utilities.
 
 ## Build Instructions
 
 ### Cloning Repositories
 
 ```bash
-git clone --recursive --shallow-submodules https://github.com/nvpro-samples/nvpro_core.git
+git clone --recursive --shallow-submodules https://github.com/nvpro-samples/nvpro_core2.git
 git clone https://github.com/nvpro-samples/vk_mini_samples.git
 ```
 
@@ -77,7 +77,7 @@ Those samples demonstrates an indirect rendering approach, diverging from direct
 
 1. **Off-screen Rendering**: The sample renders its content to an off-screen image buffer rather than directly to the swapchain image.
 2. **GUI Integration**: The rendered off-screen image is incorporated as an element within the GUI layout.
-3. **Composite Rendering**: The `nvvkhl::Application` framework manages the final composition step. It combines the GUI elements (including the embedded rendered image) into a unified layout.
+3. **Composite Rendering**: The `nvapp::Application` framework manages the final composition step. It combines the GUI elements (including the embedded rendered image) into a unified layout.
 4. **Swapchain Presentation**: The composite result from step 3 is then rendered to the swapchain image for final presentation.
 
 This architecture provides several advantages:
@@ -85,11 +85,11 @@ This architecture provides several advantages:
 - Allows for flexible GUI integration of rendered content
 - Facilitates additional post-processing or compositing operations
 
-Developers should note that the actual swapchain image rendering is abstracted away within the `nvvkhl::Application` class, providing a clean separation of concerns between sample-specific rendering and final frame composition.
+Developers should note that the actual swapchain image rendering is abstracted away within the `nvapp::Application` class, providing a clean separation of concerns between sample-specific rendering and final frame composition.
 
 ## Application Architecture
 
-The examples in this repository leverage various utilities from the [nvpro_core](https://github.com/nvpro-samples/nvpro_core) framework. Central to each sample's implementation is the [`Application`](https://github.com/nvpro-samples/nvpro_core/blob/master/nvvkhl/application.hpp) class, which provides core functionality for:
+The examples in this repository leverage various utilities from the [nvpro_core2](https://github.com/nvpro-samples/nvpro_core2) framework. Central to each sample's implementation is the [`Application`](https://github.com/nvpro-samples/nvpro_core2/blob/master/nvapp/application.hpp) class, which provides core functionality for:
 
 - Window creation and management
 - User interface (UI) initialization
