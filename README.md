@@ -14,7 +14,7 @@ Each sample is accompanied by its own documentation detailing functionality and 
 ### Cloning Repositories
 
 ```bash
-git clone --recursive --shallow-submodules https://github.com/nvpro-samples/nvpro_core.git
+git clone --recursive --shallow-submodules https://github.com/nvpro-samples/nvpro_core2.git
 git clone https://github.com/nvpro-samples/vk_mini_samples.git
 ```
 
