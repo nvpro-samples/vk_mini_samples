@@ -41,6 +41,8 @@ compile_slang(
     "${CMAKE_CURRENT_LIST_DIR}/_autogen"
     GENERATED_SHADER_HEADERS
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+    DEBUG_LEVEL 1
+    OPTIMIZATION_LEVEL 1
 )
 
 # Add shader files to the project
@@ -56,7 +58,7 @@ target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_SHADER_HEADERS} ${SHADER_H_FI
 
 # Copy .jpg images next to the executable
 copy_to_runtime_and_install( ${PROJECT_NAME}
-    FILES ${NsightAftermath_DLLS}
+    FILES ${NsightAftermath_DLLS} ${Slang_GLSLANG}
     LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
     AUTO
 )

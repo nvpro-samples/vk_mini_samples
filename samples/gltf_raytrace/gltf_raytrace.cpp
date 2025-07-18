@@ -157,7 +157,7 @@ public:
 
     // Tonemapper
     {
-      auto code = std::span<const uint32_t>(tonemapper_slang);
+      auto code = std::span<const uint32_t>(tonemapper_slang);  // Pre-compiled
       m_tonemapper.init(&m_allocator, code);
     }
 
@@ -170,8 +170,9 @@ public:
       m_slangCompiler.addSearchPaths(nvsamples::getShaderDirs());
       m_slangCompiler.defaultTarget();
       m_slangCompiler.defaultOptions();
-      m_slangCompiler.addOption({CompilerOptionName::DebugInformation, {CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_MAXIMAL}});
-      m_slangCompiler.addOption({CompilerOptionName::Optimization, {CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_NONE}});
+      m_slangCompiler.addOption(
+          {CompilerOptionName::DebugInformation, {CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_STANDARD}});
+      m_slangCompiler.addOption({CompilerOptionName::Optimization, {CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_DEFAULT}});
 
 #if defined(AFTERMATH_AVAILABLE)
       // This aftermath callback is used to report the shader hash (Spirv) to the Aftermath library.
