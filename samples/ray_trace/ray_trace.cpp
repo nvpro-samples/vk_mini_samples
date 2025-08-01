@@ -220,7 +220,7 @@ public:
       sceneBB.insert(m.bbox);
     }
     g_cameraManip->fit(sceneBB.min(), sceneBB.max());
-    g_cameraManip->setSceneSize(sceneBB.radius() * 2.0f);
+    g_cameraManip->setSpeed(sceneBB.radius());
   }
 
   //---------------------------------------------------------------------------------------------------------------
