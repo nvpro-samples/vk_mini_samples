@@ -161,7 +161,7 @@ public:
       m_tonemapper.init(&m_allocator, code);
     }
 
-    m_sceneVk.init(&m_allocator);
+    m_sceneVk.init(&m_allocator, &m_samplerPool);
     m_sceneRtx.init(&m_allocator);
 
     // Slang compiler
