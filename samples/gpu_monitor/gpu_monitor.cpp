@@ -45,7 +45,7 @@ int main(int argc, char** argv)
 
   // Set how the application should be
   nvapp::ApplicationCreateInfo appSetup;
-  appSetup.name                  = fmt::format("{}", PROJECT_NAME);
+  appSetup.name                  = TARGET_NAME;
   appSetup.vSync                 = true;
   appSetup.hasUndockableViewport = false;
   appSetup.windowSize            = {750, 400};

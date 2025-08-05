@@ -963,7 +963,7 @@ private:
 int main(int argc, char** argv)
 {
   nvapp::ApplicationCreateInfo appInfo;
-  appInfo.name                  = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.name                  = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
   appInfo.windowSize            = {1700, 900};
   appInfo.hasUndockableViewport = true;
 

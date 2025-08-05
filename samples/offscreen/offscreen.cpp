@@ -264,10 +264,6 @@ private:
 
 int main(int argc, char** argv)
 {
-  // Logging to file
-  const std::filesystem::path logfile = std::string("log_") + std::string(PROJECT_NAME) + std::string(".txt");
-  nvutils::Logger::getInstance().setOutputFile(logfile);
-
   float                 animTime{0.0F};
   glm::uvec2            renderSize{800, 600};
   std::filesystem::path outputFile = nvutils::getExecutablePath().replace_extension("jpg");

@@ -557,7 +557,7 @@ int main(int argc, char** argv)
   }
 
   // Application information
-  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.name           = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();

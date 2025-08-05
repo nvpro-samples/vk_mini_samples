@@ -245,7 +245,7 @@ int main(int argc, char** argv)
   }
 
   // Setting up how the the application must be created
-  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.name           = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
   appInfo.useMenu        = SHOW_MENU ? true : false;
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();

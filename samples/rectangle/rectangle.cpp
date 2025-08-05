@@ -144,7 +144,7 @@ public:
       {
         std::array<char, 256> buf{};
 
-        const int ret = snprintf(buf.data(), buf.size(), "%s | %d FPS / %.3fms", PROJECT_NAME,
+        const int ret = snprintf(buf.data(), buf.size(), "%s | %d FPS / %.3fms", TARGET_NAME,
                                  static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         assert(ret > 0);
         glfwSetWindowTitle(m_app->getWindowHandle(), buf.data());
@@ -351,7 +351,7 @@ int main(int argc, char** argv)
   }
 
 
-  appInfo.name           = fmt::format("{} ({})", PROJECT_NAME, SHADER_LANGUAGE_STR);
+  appInfo.name           = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
   appInfo.vSync          = true;
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();

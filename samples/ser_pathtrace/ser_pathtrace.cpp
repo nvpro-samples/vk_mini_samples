@@ -947,7 +947,7 @@ auto main(int argc, char** argv) -> int
   }
 
   // Application setup
-  appInfo.name           = fmt::format("{}", PROJECT_NAME);
+  appInfo.name           = TARGET_NAME;
   appInfo.vSync          = false;
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();
