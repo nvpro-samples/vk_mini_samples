@@ -42,10 +42,7 @@
 
 #include <array>
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"
-}  // namespace shaderio
 
 // Shaders
 #include "_autogen/bary.frag.glsl.h"

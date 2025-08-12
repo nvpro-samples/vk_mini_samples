@@ -16,6 +16,12 @@
  * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
+#include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
 
 #define WORKGROUP_SIZE 32
 
@@ -26,3 +32,7 @@ struct PushConstant
   int   iter;
   float time;
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

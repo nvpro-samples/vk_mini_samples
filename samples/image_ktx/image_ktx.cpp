@@ -55,12 +55,8 @@
 #include "_autogen/image_ktx.vert.glsl.h"
 #include "_autogen/tonemapper.slang.h"
 
-
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/tonemap_functions.h.slang"
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 #include "common/utils.hpp"
 

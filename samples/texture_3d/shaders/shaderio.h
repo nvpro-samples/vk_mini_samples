@@ -17,8 +17,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define WORKGROUP_SIZE 16
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
 #include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
+#define WORKGROUP_SIZE 16
 
 struct PushConstant
 {
@@ -44,3 +50,7 @@ struct PerlinSettings
   float power     SLANG_DEFAULT(1.0f);
   float frequency SLANG_DEFAULT(1.0f);
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

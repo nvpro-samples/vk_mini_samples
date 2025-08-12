@@ -17,7 +17,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
 #include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
 
 struct FrameInfo
 {
@@ -29,3 +34,7 @@ struct FrameInfo
   int      _pad2;
   uint64_t bufferAddr;
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

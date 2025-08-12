@@ -22,6 +22,8 @@
 
 #include "nvshaders/slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   float metallic;
@@ -56,5 +58,6 @@ struct SceneDescription
   uint64_t instInfoAddress;
 };
 
+NAMESPACE_SHADERIO_END()
 
 #endif  // HOST_DEVICE_H

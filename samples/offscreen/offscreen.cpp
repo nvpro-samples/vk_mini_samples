@@ -34,10 +34,7 @@
 #include <vulkan/vulkan_core.h>
 
 // Shaders
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 #include "_autogen/offscreen.frag.glsl.h"
 #include "_autogen/offscreen.slang.h"

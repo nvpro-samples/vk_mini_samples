@@ -21,6 +21,9 @@
 #define DEVICE_HOST_H
 
 #include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   float4x4 transfo;
@@ -33,5 +36,7 @@ struct FrameInfo
   float4x4 view;
   float3   camPos;
 };
+
+NAMESPACE_SHADERIO_END()
 
 #endif

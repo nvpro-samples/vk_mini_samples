@@ -17,6 +17,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
+#include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   mat4 transfo;
@@ -29,3 +36,7 @@ struct FrameInfo
   mat4 view;
   vec3 camPos;
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

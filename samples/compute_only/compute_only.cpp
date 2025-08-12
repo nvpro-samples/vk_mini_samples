@@ -25,10 +25,7 @@
 #include <vector>
 
 
-namespace shaderio {
-using namespace glm;
-#include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
+#include "shaders/shaderio.h"                 // Shared between host and device
 #include "_autogen/compute_only.comp.glsl.h"  // Generated compiled shader
 #include "_autogen/compute_only.slang.h"
 

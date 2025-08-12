@@ -22,6 +22,8 @@
 
 #include "nvshaders/slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   float  metallic;
@@ -78,5 +80,8 @@ struct HeatStats
 {
   uint maxDuration[2];
 };
+
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // HOST_DEVICE_H

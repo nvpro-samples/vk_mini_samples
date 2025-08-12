@@ -46,10 +46,7 @@ Note: The amount of compute frame it can do per display iteration depends on the
 #include <glm/glm.hpp>
 #undef APIENTRY
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 #include "_autogen/shader.comp.glsl.h"
 #include "_autogen/shader.slang.h"
 

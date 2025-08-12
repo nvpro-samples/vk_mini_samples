@@ -51,10 +51,7 @@
 
 #include <imgui/imgui.h>
 
-namespace shaderio {  // Shader IO namespace - use to share code between device and host
-using namespace glm;  // Allow to use GLSL type, without glm:: prefix and without leaking in global namespace
 #include "shaders/shaderio_rt_gltf.h"
-}  // namespace shaderio
 
 #include <filesystem>
 

@@ -46,10 +46,7 @@
 
 #include <glm/glm.hpp>
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 
 #include "_autogen/memory_budget.frag.glsl.h"
@@ -719,7 +716,7 @@ private:
         .stage     = VK_SHADER_STAGE_VERTEX_BIT,
         .nextStage = VK_SHADER_STAGE_FRAGMENT_BIT,
         .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-#if(USE_SLANG)
+#if (USE_SLANG)
         .codeSize = memory_budget_slang_sizeInBytes,
         .pCode    = memory_budget_slang,
         .pName    = "vertexMain",
@@ -743,7 +740,7 @@ private:
         .stage     = VK_SHADER_STAGE_FRAGMENT_BIT,
         .nextStage = 0,
         .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-#if(USE_SLANG)
+#if (USE_SLANG)
         .codeSize = memory_budget_slang_sizeInBytes,
         .pCode    = memory_budget_slang,
         .pName    = "fragmentMain",

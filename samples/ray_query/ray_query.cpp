@@ -40,12 +40,8 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
 
-
-namespace shaderio {
-using namespace glm;
 #include "shaders/dh_bindings.h"
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 
 #include "_autogen/ray_query.comp.glsl.h"

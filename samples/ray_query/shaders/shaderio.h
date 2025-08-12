@@ -24,6 +24,8 @@
 
 #include "nvshaders/slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 struct Light
 {
   float3 position;
@@ -90,5 +92,7 @@ struct SceneInfo
   uint64_t primInfoAddress;
   Light    light;
 };
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // HOST_DEVICE_H

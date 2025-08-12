@@ -17,8 +17,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
 #include "nvshaders/slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
 
 struct PushConstant
 {
@@ -50,3 +54,7 @@ struct WireframeSettings
   float  stippleLength;   // Length of each dash [0,1]
   int    onlyWire;        // Discard everything except wire
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

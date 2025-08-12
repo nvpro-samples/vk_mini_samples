@@ -37,10 +37,7 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 #include <fmt/format.h>
 

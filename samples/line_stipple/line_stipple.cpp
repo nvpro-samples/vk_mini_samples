@@ -34,11 +34,7 @@
 #include "_autogen/line_stipple.vert.glsl.h"
 #include "_autogen/line_stipple.frag.glsl.h"
 
-
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"
-}  // namespace shaderio
 
 #include <nvapp/application.hpp>
 #include <nvapp/elem_default_title.hpp>

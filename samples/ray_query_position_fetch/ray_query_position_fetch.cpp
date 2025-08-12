@@ -37,10 +37,7 @@
 
 #include <glm/glm.hpp>
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/dh_bindings.h"
-}  // namespace shaderio
 
 
 #include "_autogen/ray_query_pos_fetch.comp.glsl.h"

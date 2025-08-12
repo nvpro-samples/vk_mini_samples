@@ -22,6 +22,8 @@
 
 #include "nvshaders/slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   float metallic;
@@ -57,5 +59,7 @@ struct InstanceInfo
   int      materialID;
 };
 
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // HOST_DEVICE_H

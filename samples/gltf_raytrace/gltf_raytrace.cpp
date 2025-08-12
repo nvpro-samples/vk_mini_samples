@@ -50,10 +50,7 @@
 #undef APIENTRY
 
 // Shader Input/Output
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 // Pre-compiled shaders
 #include "_autogen/gltf_pathtrace.slang.h"

@@ -17,7 +17,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
+#include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   vec2 mouseCoord;
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

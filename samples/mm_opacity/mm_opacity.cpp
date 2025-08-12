@@ -50,11 +50,8 @@
 
 
 #include "shaders/dh_bindings.h"
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/sky_io.h.slang"
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 #include "bird_curve_helper.hpp"
 #include "common/utils.hpp"
@@ -894,7 +891,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
 
 
-#if(VK_HEADER_VERSION >= 283)
+#if (VK_HEADER_VERSION >= 283)
   // To enable ray tracing validation, set the NV_ALLOW_RAYTRACING_VALIDATION=1 environment variable
   // https://developer.nvidia.com/blog/ray-tracing-validation-at-the-driver-level/
   // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_NV_ray_tracing_validation.html

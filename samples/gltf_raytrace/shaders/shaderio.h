@@ -25,6 +25,8 @@
 #include "nvshaders/sky_io.h.slang"
 #include "nvshaders/gltf_scene_io.h.slang"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 #define WORKGROUP_SIZE 32
 
 #define B_tlas 0
@@ -52,5 +54,7 @@ struct PushConstant
   GltfScene*             gltfScene;                       // GLTF sceneF
 };
 
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // HOST_DEVICE_H

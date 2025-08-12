@@ -50,11 +50,7 @@
 
 #define VMA_IMPLEMENTATION
 
-
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 
 #include "_autogen/shader_printf.slang.h"
@@ -263,7 +259,7 @@ private:
     creator.renderingState.depthAttachmentFormat = m_depthFormat;
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-#if(USE_SLANG)
+#if (USE_SLANG)
     creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", shader_printf_slang);
     creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", shader_printf_slang);
 #else

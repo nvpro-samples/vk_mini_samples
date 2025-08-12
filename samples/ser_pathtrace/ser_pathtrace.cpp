@@ -41,12 +41,8 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
 
-
-namespace shaderio {
-using namespace glm;
 #include "shaders/dh_bindings.h"
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 #include "_autogen/ser_pathtrace.rchit.glsl.h"
 #include "_autogen/ser_pathtrace.rgen.glsl.h"
@@ -635,7 +631,7 @@ private:
     for(auto& s : stages)
       s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 
-#if(USE_SLANG)
+#if (USE_SLANG)
     const VkShaderModuleCreateInfo moduleInfo = nvsamples::getShaderModuleCreateInfo(ser_pathtrace_slang);
     stages[eRaygen].pNext                     = &moduleInfo;
     stages[eRaygen].pName                     = "rgenMain";

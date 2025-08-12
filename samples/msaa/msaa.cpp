@@ -40,12 +40,7 @@
 #include <volk.h>
 #undef APIENTRY
 
-
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio_msaa.h"  // Shared between host and device
-}  // namespace shaderio
-
 
 #include "common/utils.hpp"
 

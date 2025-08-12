@@ -38,12 +38,8 @@
 
 #include <glm/glm.hpp>
 
-
-namespace shaderio {
-using namespace glm;
 #include "shaders/dh_bindings.h"
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 
 #include "_autogen/raytrace_position_fetch.rchit.glsl.h"

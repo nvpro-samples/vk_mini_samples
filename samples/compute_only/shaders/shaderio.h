@@ -17,8 +17,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define WORKGROUP_SIZE 32
+#ifndef SHADERIO_H
+#define SHADERIO_H
+
 #include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
+#define WORKGROUP_SIZE 32
 
 // Shared between Host and Device
 struct PushConstant
@@ -27,3 +33,7 @@ struct PushConstant
   int   iter;
   float time;
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

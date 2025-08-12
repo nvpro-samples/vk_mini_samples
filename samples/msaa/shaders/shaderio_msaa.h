@@ -17,7 +17,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifndef SHADERIO_MSAA_H
+#define SHADERIO_MSAA_H
+
 #include "nvshaders/slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
 
 #if defined(GL_core_profile)  // GLSL
 #define eFrameInfo 0
@@ -40,3 +45,7 @@ struct FrameInfo
   float4x4 view;
   float3   camPos;
 };
+
+NAMESPACE_SHADERIO_END()
+
+#endif

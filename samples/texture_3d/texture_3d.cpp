@@ -35,10 +35,7 @@
 #include <GLFW/glfw3.h>  // Windowing
 #undef APIENTRY
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"  // Shared between host and device
-}  // namespace shaderio
 
 #include "_autogen/perlin.comp.glsl.h"
 #include "_autogen/perlin.slang.h"

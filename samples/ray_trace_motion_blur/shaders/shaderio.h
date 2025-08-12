@@ -22,6 +22,8 @@
 
 #include "nvshaders/slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 struct PushConstant
 {
   float4 clearColor;
@@ -54,5 +56,7 @@ struct InstanceInfo
 {
   float4x4 transform;
 };
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // HOST_DEVICE_H

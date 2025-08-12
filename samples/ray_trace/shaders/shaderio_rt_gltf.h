@@ -2,9 +2,10 @@
 #ifndef SHADERIO_RT_GLTF_H
 #define SHADERIO_RT_GLTF_H
 
-#include <nvshaders/slang_types.h>
-
+#include "nvshaders/slang_types.h"
 #include "nvshaders/sky_io.h.slang"
+
+NAMESPACE_SHADERIO_BEGIN()
 
 enum BindingIndex
 {
@@ -65,5 +66,6 @@ struct RtGltfPushConstant
   uint32_t maxDepth  = 3;
 };
 
+NAMESPACE_SHADERIO_END()
 
 #endif  // SHADERIO_RT_GLTF_H

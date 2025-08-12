@@ -33,10 +33,7 @@
 #include <fmt/format.h>
 #include <glm/glm.hpp>
 
-namespace shaderio {
-using namespace glm;
 #include "shaders/shaderio.h"
-}  // namespace shaderio
 
 #include "_autogen/crash_aftermath.frag.glsl.h"
 #include "_autogen/crash_aftermath.slang.h"
