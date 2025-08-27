@@ -228,7 +228,7 @@ public:
     // Ray trace
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1,
-                            &m_descriptorPack.sets[0], 0, nullptr);
+                            m_descriptorPack.getSetPtr(0), 0, nullptr);
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant), &m_pushConst);
 
     // Ray trace
@@ -416,19 +416,20 @@ private:
   {
     // This descriptor set, holds the top level acceleration structure and the output image
     // Create Binding Set
-    m_descriptorPack.bindings.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(B_materials, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(B_instances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    nvvk::DescriptorBindings bindings;
+    bindings.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(B_materials, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(B_instances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
 
     // Create descriptor layout, pool, and 1 set
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
-    NVVK_DBG_NAME(m_descriptorPack.pool);
-    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_descriptorPack.getPool());
+    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
 
     // Creating all shaders
     enum StageIndices
@@ -506,7 +507,7 @@ private:
 
     // Descriptor sets: one specific to ray tracing, and one shared with the rasterization pipeline
     pipeline_layout_create_info.setLayoutCount = 1;
-    pipeline_layout_create_info.pSetLayouts    = &m_descriptorPack.layout;
+    pipeline_layout_create_info.pSetLayouts    = m_descriptorPack.getLayoutPtr();
     vkCreatePipelineLayout(m_device, &pipeline_layout_create_info, nullptr, &m_pipelineLayout);
     NVVK_DBG_NAME(m_pipelineLayout);
 
@@ -538,15 +539,13 @@ private:
   void writeRtDesc()
   {
     // Write to descriptors
-    nvvk::WriteSetContainer         writes{};
-    const nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
-    const VkDescriptorSet           set      = m_descriptorPack.sets[0];
-    writes.append(bindings.getWriteSet(B_tlas, set), m_asHelper.tlas);
-    writes.append(bindings.getWriteSet(B_outImage, set), m_gBuffers.getColorImageView(), VK_IMAGE_LAYOUT_GENERAL);
-    writes.append(bindings.getWriteSet(B_frameInfo, set), m_bFrameInfo);
-    writes.append(bindings.getWriteSet(B_materials, set), m_bMaterials);
-    writes.append(bindings.getWriteSet(B_instances, set), m_bInstInfoBuffer);
-    writes.append(bindings.getWriteSet(B_skyParam, set), m_bSkyParams);
+    nvvk::WriteSetContainer writes{};
+    writes.append(m_descriptorPack.makeWrite(B_tlas), m_asHelper.tlas);
+    writes.append(m_descriptorPack.makeWrite(B_outImage), m_gBuffers.getColorImageView(), VK_IMAGE_LAYOUT_GENERAL);
+    writes.append(m_descriptorPack.makeWrite(B_frameInfo), m_bFrameInfo);
+    writes.append(m_descriptorPack.makeWrite(B_materials), m_bMaterials);
+    writes.append(m_descriptorPack.makeWrite(B_instances), m_bInstInfoBuffer);
+    writes.append(m_descriptorPack.makeWrite(B_skyParam), m_bSkyParams);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 

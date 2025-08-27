@@ -386,7 +386,7 @@ private:
     nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
     const VkDeviceSize offsets{0};
     for(const nvutils::Node& node : m_nodes)
     {
@@ -420,24 +420,24 @@ private:
 
   void createPipeline()
   {
-    nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+    nvvk::DescriptorBindings bindings;
     bindings.addBinding(shaderio::BKtxFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
     bindings.addBinding(shaderio::BKtxTex, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
-    NVVK_DBG_NAME(m_descriptorPack.pool);
-    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_descriptorPack.getPool());
+    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
 
     // Writing to descriptors
     nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(bindings.getWriteSet(shaderio::BKtxFrameInfo, m_descriptorPack.sets[0]), m_frameInfo);
-    writeContainer.append(bindings.getWriteSet(shaderio::BKtxTex, m_descriptorPack.sets[0]), m_texture->descriptorImage());
+    writeContainer.append(m_descriptorPack.makeWrite(shaderio::BKtxFrameInfo), m_frameInfo);
+    writeContainer.append(m_descriptorPack.makeWrite(shaderio::BKtxTex), m_texture->descriptorImage());
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     const VkPushConstantRange pushConstant = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                               sizeof(shaderio::PushConstant)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {pushConstant}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}, {pushConstant}));
 
     // Creating the Pipeline
     nvvk::GraphicsPipelineState m_graphicState;

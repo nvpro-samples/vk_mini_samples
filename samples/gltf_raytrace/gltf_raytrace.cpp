@@ -327,7 +327,7 @@ public:
     vkCmdBindShadersEXT(cmd, 1, &stage, &m_shader);
 
     // Bind the descriptor set: TLAS, output image, textures, etc. (Set: 0)
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorPack[0].sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, m_descriptorPack[0].getSetPtr(), 0, nullptr);
 
     // Set the Descriptor for HDR (Set: 2)
     VkDescriptorSet hdrDescSet = m_hdrIbl.getDescriptorSet();
@@ -495,28 +495,30 @@ private:
     uint32_t maxTextures = std::min(500U, deviceProperties.limits.maxDescriptorSetSampledImages - 1);
 
     // 0: Descriptor SET: all textures
-    m_descriptorPack[0].bindings.addBinding(B_textures, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, maxTextures,
-                                            VK_SHADER_STAGE_ALL, nullptr,
-                                            VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT
-                                                | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
-    NVVK_CHECK(m_descriptorPack[0].initFromBindings(m_device, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-                                                    VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT |  // allows descriptor sets to be updated after they have been bound to a command buffer
-                                                        VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT));  // individual descriptor sets can be freed from the descriptor pool
-    NVVK_DBG_NAME(m_descriptorPack[0].layout);
-    NVVK_DBG_NAME(m_descriptorPack[0].pool);
-    NVVK_DBG_NAME(m_descriptorPack[0].sets[0]);
+    nvvk::DescriptorBindings bindings0;
+    bindings0.addBinding(B_textures, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, maxTextures, VK_SHADER_STAGE_ALL, nullptr,
+                         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT
+                             | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    NVVK_CHECK(m_descriptorPack[0].init(bindings0, m_device, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+                                        VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT |  // allows descriptor sets to be updated after they have been bound to a command buffer
+                                            VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT));  // individual descriptor sets can be freed from the descriptor pool
+    NVVK_DBG_NAME(m_descriptorPack[0].getLayout());
+    NVVK_DBG_NAME(m_descriptorPack[0].getPool());
+    NVVK_DBG_NAME(m_descriptorPack[0].getSet(0));
 
     // 1: Descriptor PUSH: top level acceleration structure and the output image
-    m_descriptorPack[1].bindings.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack[1].bindings.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    NVVK_CHECK(m_descriptorPack[1].initFromBindings(m_device, 0,  // 0 == Don't allocate pool or sets
-                                                    VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
-    NVVK_DBG_NAME(m_descriptorPack[1].layout);
+    nvvk::DescriptorBindings bindings1;
+    bindings1.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
+    bindings1.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+    NVVK_CHECK(m_descriptorPack[1].init(bindings1, m_device, 0,  // 0 == Don't allocate pool or sets
+                                        VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
+    NVVK_DBG_NAME(m_descriptorPack[1].getLayout());
 
     // Creating the pipeline layout
     const VkPushConstantRange pushConstant{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(shaderio::PushConstant)};
     NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout,
-                                          {m_descriptorPack[0].layout, m_descriptorPack[1].layout, m_hdrIbl.getDescriptorSetLayout()},  //
+                                          {m_descriptorPack[0].getLayout(), m_descriptorPack[1].getLayout(),
+                                           m_hdrIbl.getDescriptorSetLayout()},  //
                                           {pushConstant}));
     NVVK_DBG_NAME(m_pipelineLayout);
   }
@@ -527,7 +529,7 @@ private:
 
     VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant)};
 
-    std::array<VkDescriptorSetLayout, 3> descriptorSetLayouts{m_descriptorPack[0].layout, m_descriptorPack[1].layout,
+    std::array<VkDescriptorSetLayout, 3> descriptorSetLayouts{m_descriptorPack[0].getLayout(), m_descriptorPack[1].getLayout(),
                                                               m_hdrIbl.getDescriptorSetLayout()};
 
     VkShaderCreateInfoEXT shaderInfo{
@@ -561,9 +563,8 @@ private:
   void pushDescriptorSet(VkCommandBuffer cmd)
   {
     nvvk::WriteSetContainer write{};
-    write.append(m_descriptorPack[1].bindings.getWriteSet(B_tlas), m_sceneRtx.tlas());
-    write.append(m_descriptorPack[1].bindings.getWriteSet(B_outImage), m_gBuffers.getColorImageView(eImgRendered),
-                 VK_IMAGE_LAYOUT_GENERAL);
+    write.append(m_descriptorPack[1].makeWrite(B_tlas), m_sceneRtx.tlas());
+    write.append(m_descriptorPack[1].makeWrite(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 1, write.size(), write.data());
   }
 
@@ -572,8 +573,8 @@ private:
   {
     // Now do the textures
     nvvk::WriteSetContainer write{};
-    VkWriteDescriptorSet    allTextures = m_descriptorPack[0].bindings.getWriteSet(B_textures);
-    allTextures.dstSet                  = m_descriptorPack[0].sets[0];
+    VkWriteDescriptorSet    allTextures = m_descriptorPack[0].makeWrite(B_textures);
+    allTextures.dstSet                  = m_descriptorPack[0].getSet(0);
     allTextures.descriptorCount         = m_sceneVk.nbTextures();
     if(allTextures.descriptorCount == 0)
       return;

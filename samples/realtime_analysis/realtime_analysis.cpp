@@ -274,21 +274,19 @@ public:
     }
 
     ImGui::SeparatorText("Controls");
-    ImGui::PushFont(nvgui::getIconicFont());
-    if(ImGui::Button(m_settings.play ? nvgui::icon_media_pause : nvgui::icon_media_play) || ImGui::IsKeyPressed(ImGuiKey_Space))
+    if(ImGui::Button(m_settings.play ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW) || ImGui::IsKeyPressed(ImGuiKey_Space))
       m_settings.play = !m_settings.play;
     ImGui::SameLine();
-    if(ImGui::Button(nvgui::icon_media_step_forward) || ImGui::IsKeyPressed(ImGuiKey_RightArrow))
+    if(ImGui::Button(ICON_MS_SKIP_NEXT) || ImGui::IsKeyPressed(ImGuiKey_RightArrow))
     {
       m_settings.runOnce = true;
       m_settings.play    = false;
     }
     ImGui::SameLine();
-    if(ImGui::Button(nvgui::icon_media_skip_backward) || ImGui::IsKeyPressed(ImGuiKey_R))
+    if(ImGui::Button(ICON_MS_REPLAY) || ImGui::IsKeyPressed(ImGuiKey_R))
     {
       initParticles();
     }
-    ImGui::PopFont();
     ImGui::End();
 
     // Rendered image displayed fully in 'Viewport' window
@@ -391,22 +389,22 @@ private:
 
   void createRasterPipeline()
   {
-    nvvk::DescriptorBindings& bindings = m_rasterPipeline.descriptorPack.bindings;
+    nvvk::DescriptorBindings bindings;
     bindings.addBinding(DH::eFrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(DH::eParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(DH::eFragInspectorData, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
     bindings.addBinding(DH::eFragInspectorMeta, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
 
-    NVVK_CHECK(m_rasterPipeline.descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.layout);
-    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.pool);
-    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.sets[0]);
+    NVVK_CHECK(m_rasterPipeline.descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.getPool());
+    NVVK_DBG_NAME(m_rasterPipeline.descriptorPack.getSet(0));
 
     const VkPushConstantRange push_constant_ranges{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                                    .offset = 0,
                                                    .size   = sizeof(DH::PushConstant)};
     NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_rasterPipeline.pipelineLayout,
-                                          {m_rasterPipeline.descriptorPack.layout}, {push_constant_ranges}));
+                                          {m_rasterPipeline.descriptorPack.getLayout()}, {push_constant_ranges}));
     NVVK_DBG_NAME(m_rasterPipeline.pipelineLayout);
 
     // Writing to descriptors
@@ -414,9 +412,8 @@ private:
     const VkDescriptorBufferInfo dbi_particles{m_bParticles.buffer, 0, VK_WHOLE_SIZE};
     // #INSPECTOR : Inspector bindings are done in inspectorViewportResize()
     nvvk::WriteSetContainer writeContainer;
-    VkDescriptorSet         set = m_rasterPipeline.descriptorPack.sets[0];
-    writeContainer.append(bindings.getWriteSet(DH::eFrameInfo, set), m_bFrameInfo);
-    writeContainer.append(bindings.getWriteSet(DH::eParticles, set), m_bParticles);
+    writeContainer.append(m_rasterPipeline.descriptorPack.makeWrite(DH::eFrameInfo), m_bFrameInfo);
+    writeContainer.append(m_rasterPipeline.descriptorPack.makeWrite(DH::eParticles), m_bParticles);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -474,20 +471,20 @@ private:
   void createComputeShaderObjectAndLayout()
   {
     // Create the layout used by the shader
-    nvvk::DescriptorBindings& bindings = m_computePipeline.descriptorPack.bindings;
+    nvvk::DescriptorBindings bindings;
     bindings.addBinding(DH::eCompParticles, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(DH::eCompSort, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(DH::eCompSetting, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(DH::eThreadInspection, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
     bindings.addBinding(DH::eThreadMetadata, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // #INSPECTOR
 
-    NVVK_CHECK(m_computePipeline.descriptorPack.initFromBindings(m_device, 0, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
-    NVVK_DBG_NAME(m_computePipeline.descriptorPack.layout);
+    NVVK_CHECK(m_computePipeline.descriptorPack.init(bindings, m_device, 0, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
+    NVVK_DBG_NAME(m_computePipeline.descriptorPack.getLayout());
 
 
     const VkPushConstantRange push_constant_ranges = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(DH::PushConstant)};
     NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_computePipeline.pipelineLayout,
-                                          {m_computePipeline.descriptorPack.layout}, {push_constant_ranges}));
+                                          {m_computePipeline.descriptorPack.getLayout()}, {push_constant_ranges}));
     NVVK_DBG_NAME(m_computePipeline.pipelineLayout);
 
 
@@ -500,7 +497,7 @@ private:
         .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
         .pName                  = "main",
         .setLayoutCount         = 1,
-        .pSetLayouts            = &m_computePipeline.descriptorPack.layout,
+        .pSetLayouts            = m_computePipeline.descriptorPack.getLayoutPtr(),
         .pushConstantRangeCount = 1,
         .pPushConstantRanges    = &push_constant_ranges,
         .pSpecializationInfo    = NULL,
@@ -637,13 +634,13 @@ private:
       const VkDescriptorBufferInfo in_desc3{g_inspectorElement->getComputeInspectionBuffer(0), 0, VK_WHOLE_SIZE};
       const VkDescriptorBufferInfo in_desc4{g_inspectorElement->getComputeMetadataBuffer(0), 0, VK_WHOLE_SIZE};
 
-      nvvk::WriteSetContainer         writeContainer;
-      const nvvk::DescriptorBindings& computeBindings = m_computePipeline.descriptorPack.bindings;
-      writeContainer.append(computeBindings.getWriteSet(DH::eCompParticles), m_bParticles);
-      writeContainer.append(computeBindings.getWriteSet(DH::eCompSort), m_bSpatialInfo);
-      writeContainer.append(computeBindings.getWriteSet(DH::eCompSetting), m_bParticleSetting);
-      writeContainer.append(computeBindings.getWriteSet(DH::eThreadInspection), g_inspectorElement->getComputeInspectionBuffer(0));
-      writeContainer.append(computeBindings.getWriteSet(DH::eThreadMetadata), g_inspectorElement->getComputeMetadataBuffer(0));
+      nvvk::WriteSetContainer     writeContainer;
+      const nvvk::DescriptorPack& computePack = m_computePipeline.descriptorPack;
+      writeContainer.append(computePack.makeWrite(DH::eCompParticles), m_bParticles);
+      writeContainer.append(computePack.makeWrite(DH::eCompSort), m_bSpatialInfo);
+      writeContainer.append(computePack.makeWrite(DH::eCompSetting), m_bParticleSetting);
+      writeContainer.append(computePack.makeWrite(DH::eThreadInspection), g_inspectorElement->getComputeInspectionBuffer(0));
+      writeContainer.append(computePack.makeWrite(DH::eThreadMetadata), g_inspectorElement->getComputeMetadataBuffer(0));
 
       vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline.pipelineLayout, 0,
                                 static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
@@ -742,7 +739,7 @@ private:
     // Bind the graphics pipeline and descriptor sets, which contain shader resources
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_rasterPipeline.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_rasterPipeline.pipelineLayout, 0, 1,
-                            &m_rasterPipeline.descriptorPack.sets[0], 0, nullptr);
+                            m_rasterPipeline.descriptorPack.getSetPtr(), 0, nullptr);
 
     // Push constant information to the shaders
     vkCmdPushConstants(cmd, m_rasterPipeline.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -849,12 +846,10 @@ private:
     const VkDescriptorBufferInfo inspectorInspection{g_inspectorElement->getFragmentInspectionBuffer(0), 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo inspectorMetadata{g_inspectorElement->getFragmentMetadataBuffer(0), 0, VK_WHOLE_SIZE};
 
-    nvvk::WriteSetContainer         writeContainer;
-    const nvvk::DescriptorBindings& rasterBindings = m_rasterPipeline.descriptorPack.bindings;
-    writeContainer.append(rasterBindings.getWriteSet(DH::eFragInspectorData, m_rasterPipeline.descriptorPack.sets[0]),
-                          g_inspectorElement->getFragmentInspectionBuffer(0));
-    writeContainer.append(rasterBindings.getWriteSet(DH::eFragInspectorMeta, m_rasterPipeline.descriptorPack.sets[0]),
-                          g_inspectorElement->getFragmentMetadataBuffer(0));
+    nvvk::WriteSetContainer     writeContainer;
+    const nvvk::DescriptorPack& rasterPack = m_rasterPipeline.descriptorPack;
+    writeContainer.append(rasterPack.makeWrite(DH::eFragInspectorData), g_inspectorElement->getFragmentInspectionBuffer(0));
+    writeContainer.append(rasterPack.makeWrite(DH::eFragInspectorMeta), g_inspectorElement->getFragmentMetadataBuffer(0));
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
 

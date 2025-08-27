@@ -271,7 +271,7 @@ public:
     vkCmdBeginRendering(cmd, &renderingInfo);
     nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
 
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline[m_currentPipe]);
     VkDeviceSize offsets{0};
@@ -290,16 +290,17 @@ public:
 private:
   void createPipeline()
   {
-    m_descriptorPack.bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_descriptorPack.bindings.addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
+    nvvk::DescriptorBindings bindings;
+    bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+    bindings.addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
 
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
-    NVVK_DBG_NAME(m_descriptorPack.pool);
-    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_descriptorPack.getPool());
+    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
 
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}));
     NVVK_DBG_NAME(m_pipelineLayout);
 
     m_graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
@@ -362,12 +363,10 @@ private:
     const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo dbi_val{m_bValues.buffer, 0, VK_WHOLE_SIZE};
 
-    nvvk::WriteSetContainer         writeContainer;
-    const nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
-    const VkDescriptorSet           set      = m_descriptorPack.sets[0];
-    writeContainer.append(bindings.getWriteSet(0, set), m_bFrameInfo);
-    writeContainer.append(bindings.getWriteSet(1, set), m_bValues);
-    writeContainer.append(bindings.getWriteSet(2, set), m_image);
+    nvvk::WriteSetContainer writeContainer;
+    writeContainer.append(m_descriptorPack.makeWrite(0), m_bFrameInfo);
+    writeContainer.append(m_descriptorPack.makeWrite(1), m_bValues);
+    writeContainer.append(m_descriptorPack.makeWrite(2), m_image);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
 
@@ -377,7 +376,7 @@ private:
     VkDescriptorBufferInfo dbi_unif{nullptr, 0, VK_WHOLE_SIZE};
     dbi_unif.buffer = VkBuffer(0xDEADBEEFDEADBEEF);
     nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(m_descriptorPack.bindings.getWriteSet(1, m_descriptorPack.sets[0]), dbi_unif);
+    writeContainer.append(m_descriptorPack.makeWrite(1), dbi_unif);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
 

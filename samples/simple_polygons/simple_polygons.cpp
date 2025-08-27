@@ -209,7 +209,7 @@ public:
     m_graphicState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
 
     VkBuffer lastVertexBuffer = {};
     VkBuffer lastIndexBuffer  = {};
@@ -298,17 +298,18 @@ private:
   void createPipeline()
   {
     // There is only one resource in the shader
-    m_descriptorPack.bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    nvvk::DescriptorBindings bindings;
+    bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
 
     // Create the descriptor layout, pool, and 1 set
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
-    NVVK_DBG_NAME(m_descriptorPack.pool);
-    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_descriptorPack.getPool());
+    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
 
     // Writing to the descriptors
     nvvk::WriteSetContainer writes{};
-    writes.append(m_descriptorPack.bindings.getWriteSet(0, m_descriptorPack.sets[0]), m_frameInfo);
+    writes.append(m_descriptorPack.makeWrite(0), m_frameInfo);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
     VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
@@ -321,7 +322,7 @@ private:
                                                 .offset     = 0,
                                                 .size       = sizeof(shaderio::PushConstant)};
     // Create PipelineLayout
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {pushConstantRange}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}, {pushConstantRange}));
     NVVK_DBG_NAME(m_pipelineLayout);
 
     // Creating the Pipeline

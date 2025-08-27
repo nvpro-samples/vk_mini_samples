@@ -606,7 +606,7 @@ private:
   void renderAllMeshes(VkCommandBuffer cmd, const VkRenderingInfoKHR& renderingInfo)
   {
     vkCmdBeginRendering(cmd, &renderingInfo);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
 
     // #SHADER_OBJECT
     m_graphicState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
@@ -669,20 +669,21 @@ private:
   //
   void createDescriptorSetPipeline()
   {
-    m_descriptorPack.bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
-    NVVK_DBG_NAME(m_descriptorPack.pool);
-    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+    nvvk::DescriptorBindings bindings;
+    bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_descriptorPack.getPool());
+    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
 
     const VkPushConstantRange push_constant_ranges = getPushConstantRange();
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {push_constant_ranges}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}, {push_constant_ranges}));
     NVVK_DBG_NAME(m_pipelineLayout);
 
 
     // Writing to descriptors
     nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(m_descriptorPack.bindings.getWriteSet(0, m_descriptorPack.sets[0]), m_frameInfo);
+    writeContainer.append(m_descriptorPack.makeWrite(0), m_frameInfo);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     // Creating the Pipeline
@@ -726,7 +727,7 @@ private:
         .pName    = "main",
 #endif  // USE_SLANG
         .setLayoutCount         = 1,
-        .pSetLayouts            = &m_descriptorPack.layout,  // Descriptor set layout compatible with the shaders
+        .pSetLayouts            = m_descriptorPack.getLayoutPtr(),  // Descriptor set layout compatible with the shaders
         .pushConstantRangeCount = 1,
         .pPushConstantRanges    = &push_constant_ranges,
         .pSpecializationInfo    = NULL,
@@ -750,7 +751,7 @@ private:
         .pName    = "main",
 #endif  // USE_SLANG
         .setLayoutCount         = 1,
-        .pSetLayouts            = &m_descriptorPack.layout,  // Descriptor set layout compatible with the shaders
+        .pSetLayouts            = m_descriptorPack.getLayoutPtr(),  // Descriptor set layout compatible with the shaders
         .pushConstantRangeCount = 1,
         .pPushConstantRanges    = &push_constant_ranges,
         .pSpecializationInfo    = NULL,

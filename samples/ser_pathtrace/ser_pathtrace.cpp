@@ -602,7 +602,7 @@ private:
 
 
     // Create Binding Set
-    nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+    nvvk::DescriptorBindings bindings;
     bindings.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(B_outHeatmap, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
@@ -614,8 +614,8 @@ private:
     bindings.addBinding(B_vertex, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
     bindings.addBinding(B_index, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
 
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 0, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 0, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
 
 
     // Creating all shaders
@@ -692,7 +692,7 @@ private:
 
     // Push constant: we want to be able to update constants used by the shaders
     const VkPushConstantRange pushConstant{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(shaderio::PushConstant)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {pushConstant}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}, {pushConstant}));
     NVVK_DBG_NAME(m_pipelineLayout);
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
@@ -735,19 +735,17 @@ private:
       index_desc.push_back({m.indices.buffer, 0, VK_WHOLE_SIZE});
     }
 
-    nvvk::WriteSetContainer         writeContainer;
-    const nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
-    writeContainer.append(bindings.getWriteSet(B_tlas), m_tlas);
-    writeContainer.append(bindings.getWriteSet(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
-    writeContainer.append(bindings.getWriteSet(B_outHeatmap), m_gBuffers.getColorImageView(eImgHeatmap), VK_IMAGE_LAYOUT_GENERAL);
-    writeContainer.append(bindings.getWriteSet(B_frameInfo), m_bFrameInfo);
-    writeContainer.append(bindings.getWriteSet(B_skyParam), m_bSkyParams);
-    writeContainer.append(bindings.getWriteSet(B_heatStats), m_bHeatStats);
-    writeContainer.append(bindings.getWriteSet(B_materials), m_bMaterials);
-    writeContainer.append(bindings.getWriteSet(B_instances), m_bInstInfoBuffer);
-
-    writeContainer.append(bindings.getWriteSet(B_vertex), vertex_desc.data());
-    writeContainer.append(bindings.getWriteSet(B_index), index_desc.data());
+    nvvk::WriteSetContainer writeContainer;
+    writeContainer.append(m_descriptorPack.makeWrite(B_tlas), m_tlas);
+    writeContainer.append(m_descriptorPack.makeWrite(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_descriptorPack.makeWrite(B_outHeatmap), m_gBuffers.getColorImageView(eImgHeatmap), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_descriptorPack.makeWrite(B_frameInfo), m_bFrameInfo);
+    writeContainer.append(m_descriptorPack.makeWrite(B_skyParam), m_bSkyParams);
+    writeContainer.append(m_descriptorPack.makeWrite(B_heatStats), m_bHeatStats);
+    writeContainer.append(m_descriptorPack.makeWrite(B_materials), m_bMaterials);
+    writeContainer.append(m_descriptorPack.makeWrite(B_instances), m_bInstInfoBuffer);
+    writeContainer.append(m_descriptorPack.makeWrite(B_vertex), vertex_desc.data());
+    writeContainer.append(m_descriptorPack.makeWrite(B_index), index_desc.data());
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0,
                               static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
   }

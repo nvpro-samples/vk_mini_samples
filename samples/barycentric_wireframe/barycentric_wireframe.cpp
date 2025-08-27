@@ -230,7 +230,7 @@ public:
     nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
     // Bind the pipeline and descriptor set
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorPack.sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
     const VkDeviceSize offsets{0};
     auto&              node = m_nodes[m_currentObject];
     {
@@ -287,24 +287,24 @@ private:
   {
     nvutils::ScopedTimer st(__FUNCTION__);
 
-    nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+    nvvk::DescriptorBindings bindings;
     bindings.addBinding(BIND_FRAME_INFO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
     bindings.addBinding(BIND_SETTINGS, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-    NVVK_CHECK(m_descriptorPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.layout);
-    NVVK_DBG_NAME(m_descriptorPack.pool);
-    NVVK_DBG_NAME(m_descriptorPack.sets[0]);
+    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(m_descriptorPack.getLayout());
+    NVVK_DBG_NAME(m_descriptorPack.getPool());
+    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
 
     const VkPushConstantRange pushConstant = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                               sizeof(shaderio::PushConstant)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.layout}, {pushConstant}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}, {pushConstant}));
     NVVK_DBG_NAME(m_pipelineLayout);
 
     // Writing to descriptors
     nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(bindings.getWriteSet(BIND_FRAME_INFO, m_descriptorPack.sets[0]), m_frameInfoBuf);
-    writeContainer.append(bindings.getWriteSet(BIND_SETTINGS, m_descriptorPack.sets[0]), m_settingsBuf);
+    writeContainer.append(m_descriptorPack.makeWrite(BIND_FRAME_INFO), m_frameInfoBuf);
+    writeContainer.append(m_descriptorPack.makeWrite(BIND_SETTINGS), m_settingsBuf);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     // Creating the Pipeline
