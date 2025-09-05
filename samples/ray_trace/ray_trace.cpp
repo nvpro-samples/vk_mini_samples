@@ -362,7 +362,8 @@ public:
 
     // Create a buffer (UBO) to store the scene information
     NVVK_CHECK(m_allocator.createBuffer(m_bSceneInfo, sizeof(shaderio::RtGltfSceneInfo),
-                                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO));
+                                        VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
+                                        VMA_MEMORY_USAGE_AUTO));
     NVVK_DBG_NAME(m_bSceneInfo.buffer);
 
     assert(m_stagingUploader.isAppendedEmpty());
@@ -476,10 +477,10 @@ public:
     VkDeviceSize hintScratchBudget = 2'000'000;  // Limiting the size of the scratch buffer to 2MB
     VkDeviceSize scratchSize       = blasBuilder.getScratchSize(hintScratchBudget, blasBuildData);
 
-    const VkDeviceSize alignment = m_accelStructProps.minAccelerationStructureScratchOffsetAlignment;
-    nvvk::Buffer       scratchBuffer;
-    NVVK_CHECK(m_allocator.createBuffer(scratchBuffer, scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                                        VMA_MEMORY_USAGE_AUTO_PREFER_HOST, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, alignment));
+    nvvk::Buffer scratchBuffer;
+    NVVK_CHECK(m_allocator.createBuffer(scratchBuffer, scratchSize,
+                                        VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                            | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
 
     // Start the build and compaction of the BLAS
     VkDeviceSize hintBuildBudget = 2'000'000;  // Limiting the size of the scratch buffer to 2MB
@@ -565,8 +566,8 @@ public:
     // Create the instances buffer, add a barrier to ensure the data is copied before the TLAS build
     nvvk::Buffer instancesBuffer;
     NVVK_CHECK(m_allocator.createBuffer(instancesBuffer, std::span<VkAccelerationStructureInstanceKHR>(tlasInstances).size_bytes(),
-                                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                                            | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                        VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                            | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(m_stagingUploader.appendBuffer(instancesBuffer, 0, std::span<VkAccelerationStructureInstanceKHR>(tlasInstances)));
     NVVK_DBG_NAME(instancesBuffer.buffer);
     m_stagingUploader.cmdUploadAppended(cmd);
@@ -583,7 +584,7 @@ public:
     // Create the scratch buffer
     nvvk::Buffer scratchBuffer;
     NVVK_CHECK(m_allocator.createBuffer(scratchBuffer, sizeInfo.buildScratchSize,
-                                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
                                         VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
                                         m_accelStructProps.minAccelerationStructureScratchOffsetAlignment));
 
@@ -916,7 +917,7 @@ public:
     {
       NVVK_CHECK(m_allocator.createBuffer(gltfMesh.gltfBuffer, std::span<const unsigned char>(model.buffers[0].data).size_bytes(),
                                           VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
-                                              | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+                                              | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
       NVVK_CHECK(m_stagingUploader.appendBuffer(gltfMesh.gltfBuffer, 0, std::span<const unsigned char>(model.buffers[0].data)));
       NVVK_DBG_NAME(gltfMesh.gltfBuffer.buffer);
 

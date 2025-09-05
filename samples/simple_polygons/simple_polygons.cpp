@@ -368,7 +368,7 @@ private:
     nvvk::BufferSubAllocator::InitInfo bufferSubInitInfo;
     bufferSubInitInfo.resourceAllocator = m_allocator.get();
     bufferSubInitInfo.debugName         = "meshAllocator";
-    bufferSubInitInfo.usageFlags        = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    bufferSubInitInfo.usageFlags        = VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT;
     bufferSubInitInfo.blockSize         = 1 * 1024 * 1024;  // this scene is very small 1 MB is known to be enough
 
     NVVK_CHECK(m_meshAllocator.init(bufferSubInitInfo));
@@ -388,11 +388,11 @@ private:
       NVVK_CHECK(uploader.appendBufferRange(m_meshAllocator.subRange(m.indices), std::span(m_meshes[i].triangles)));
     }
 
-    NVVK_CHECK(m_allocator->createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    NVVK_CHECK(m_allocator->createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT,
                                          VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
     NVVK_DBG_NAME(m_frameInfo.buffer);
 
-    NVVK_CHECK(m_allocator->createBuffer(m_pixelBuffer, sizeof(float) * 4, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+    NVVK_CHECK(m_allocator->createBuffer(m_pixelBuffer, sizeof(float) * 4, VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                                          VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT));
     NVVK_DBG_NAME(m_pixelBuffer.buffer);
 

@@ -388,12 +388,12 @@ private:
     }
 
     NVVK_CHECK(m_alloc.createBuffer(m_bInstInfoBuffer, std::span(inst_info).size_bytes(),
-                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bInstInfoBuffer, 0, std::span(inst_info)));
     NVVK_DBG_NAME(m_bInstInfoBuffer.buffer);
 
     NVVK_CHECK(m_alloc.createBuffer(m_bMaterials, std::span(m_materials).size_bytes(),
-                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bMaterials, 0, std::span(m_materials)));
     NVVK_DBG_NAME(m_bMaterials.buffer);
 
@@ -490,8 +490,9 @@ private:
     VkDeviceSize maxScratchSize = nvvk::getMaxScratchSize(blasBuildData);
     // Scratch buffer
     nvvk::Buffer scratchBuffer;
-    NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, maxScratchSize, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
-                                    VMA_MEMORY_USAGE_AUTO, {}, m_asProperties.minAccelerationStructureScratchOffsetAlignment));
+    NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, maxScratchSize,
+                                    VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
+                                        | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
     NVVK_DBG_NAME(scratchBuffer.buffer);
 
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
@@ -559,8 +560,8 @@ private:
     // Scratch buffer
     nvvk::Buffer scratchBuffer;
     NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, sizeInfo.buildScratchSize,
-                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
-                                    VMA_MEMORY_USAGE_AUTO, {}, m_asProperties.minAccelerationStructureScratchOffsetAlignment));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
     NVVK_DBG_NAME(scratchBuffer.buffer);
 
     VkAccelerationStructureCreateInfoKHR createInfo = tlasBuildData.makeCreateInfo();
@@ -888,7 +889,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
 
 
-#if (VK_HEADER_VERSION >= 283)
+#if(VK_HEADER_VERSION >= 283)
   // To enable ray tracing validation, set the NV_ALLOW_RAYTRACING_VALIDATION=1 environment variable
   // https://developer.nvidia.com/blog/ray-tracing-validation-at-the-driver-level/
   // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_NV_ray_tracing_validation.html

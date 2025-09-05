@@ -404,8 +404,8 @@ private:
     nvvk::StagingUploader uploader;
     uploader.init(&m_alloc);
 
-    auto rtUsageFlag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    auto rtUsageFlag = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
     m_bMeshes.resize(m_meshes.size());
@@ -421,15 +421,15 @@ private:
     }
 
     // Create the buffer of the current frame, changing at each frame
-    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT));
     NVVK_DBG_NAME(m_bFrameInfo.buffer);
 
     // Create the buffer of sky parameters, updated at each frame
-    NVVK_CHECK(m_alloc.createBuffer(m_bSkyParams, sizeof(shaderio::SkySimpleParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_bSkyParams, sizeof(shaderio::SkySimpleParameters), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT));
     NVVK_DBG_NAME(m_bSkyParams.buffer);
 
     // Create the buffer for the heatmap statistics
-    NVVK_CHECK(m_alloc.createBuffer(m_bHeatStats, sizeof(uint32_t) * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_bHeatStats, sizeof(uint32_t) * 2, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
     NVVK_DBG_NAME(m_bHeatStats.buffer);
 
     // Primitive instance information
@@ -443,12 +443,12 @@ private:
     }
 
     NVVK_CHECK(m_alloc.createBuffer(m_bInstInfoBuffer, std::span(instInfo).size_bytes(),
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bInstInfoBuffer, 0, std::span(instInfo)));
     NVVK_DBG_NAME(m_bInstInfoBuffer.buffer);
 
     NVVK_CHECK(m_alloc.createBuffer(m_bMaterials, std::span(m_materials).size_bytes(),
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bMaterials, 0, std::span(m_materials)));
     NVVK_DBG_NAME(m_bMaterials.buffer);
 
@@ -558,8 +558,8 @@ private:
 
     nvvk::Buffer instanceBuffer;
     NVVK_CHECK(m_alloc.createBuffer(instanceBuffer, std::span(tlasInstances).size_bytes(),
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+                                    VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
     NVVK_CHECK(uploader.appendBuffer(instanceBuffer, 0, std::span(tlasInstances)));
     NVVK_DBG_NAME(instanceBuffer.buffer);
     uploader.cmdUploadAppended(cmd);
@@ -631,7 +631,7 @@ private:
     for(auto& s : stages)
       s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 
-#if (USE_SLANG)
+#if(USE_SLANG)
     const VkShaderModuleCreateInfo moduleInfo = nvsamples::getShaderModuleCreateInfo(ser_pathtrace_slang);
     stages[eRaygen].pNext                     = &moduleInfo;
     stages[eRaygen].pName                     = "rgenMain";

@@ -485,15 +485,15 @@ private:
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
       PrimitiveMeshVk& m = m_meshVk[i];
-      m_alloc.createBuffer(m.vertices, std::span(m_meshes[i].vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-      m_alloc.createBuffer(m.indices, std::span(m_meshes[i].triangles).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      m_alloc.createBuffer(m.vertices, std::span(m_meshes[i].vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT);
+      m_alloc.createBuffer(m.indices, std::span(m_meshes[i].triangles).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
       uploader.appendBuffer(m.vertices, 0, std::span(m_meshes[i].vertices));
       uploader.appendBuffer(m.indices, 0, std::span(m_meshes[i].triangles));
       NVVK_DBG_NAME(m.vertices.buffer);
       NVVK_DBG_NAME(m.indices.buffer);
     }
 
-    m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT);
     NVVK_DBG_NAME(m_frameInfo.buffer);
     uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);

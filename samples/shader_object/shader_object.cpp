@@ -351,7 +351,7 @@ private:
         .stage     = VK_SHADER_STAGE_VERTEX_BIT,
         .nextStage = VK_SHADER_STAGE_FRAGMENT_BIT,
         .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-#if (USE_SLANG)
+#if(USE_SLANG)
         .codeSize = shader_object_slang_sizeInBytes,
         .pCode    = shader_object_slang,
         .pName    = "vertexMain",
@@ -375,7 +375,7 @@ private:
         .stage     = VK_SHADER_STAGE_FRAGMENT_BIT,
         .nextStage = 0,
         .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-#if (USE_SLANG)
+#if(USE_SLANG)
         .codeSize = shader_object_slang_sizeInBytes,
         .pCode    = shader_object_slang,
         .pName    = "fragmentMain",
@@ -409,8 +409,8 @@ private:
     for(size_t i = 0; i < m_meshes.size(); i++)
     {
       PrimitiveMeshVk& mesh = m_meshVk[i];
-      NVVK_CHECK(m_alloc.createBuffer(mesh.vertices, std::span(m_meshes[i].vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
-      NVVK_CHECK(m_alloc.createBuffer(mesh.indices, std::span(m_meshes[i].triangles).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(mesh.vertices, std::span(m_meshes[i].vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(mesh.indices, std::span(m_meshes[i].triangles).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
       NVVK_CHECK(uploader.appendBuffer(mesh.vertices, 0, std::span(m_meshes[i].vertices)));
       NVVK_CHECK(uploader.appendBuffer(mesh.indices, 0, std::span(m_meshes[i].triangles)));
       NVVK_DBG_NAME(mesh.vertices.buffer);
@@ -426,7 +426,7 @@ private:
   // The frame info contains the camera and other information changing at each frame.
   void createFrameInfoBuffer()
   {
-    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT));
     NVVK_DBG_NAME(m_frameInfo.buffer);
   }
 

@@ -564,9 +564,9 @@ private:
     {
       // Buffer for the raster particles (square)
       NVVK_CHECK(m_alloc.createBuffer(m_bParticle.vertices, std::span(m_rasterParticle.vertices).size_bytes(),
-                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+                                      VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
       NVVK_CHECK(m_alloc.createBuffer(m_bParticle.indices, std::span(m_rasterParticle.triangles).size_bytes(),
-                                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+                                      VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
       NVVK_CHECK(uploader.appendBuffer(m_bParticle.vertices, 0, std::span(m_rasterParticle.vertices)));
       NVVK_CHECK(uploader.appendBuffer(m_bParticle.indices, 0, std::span(m_rasterParticle.triangles)));
       NVVK_DBG_NAME(m_bParticle.vertices.buffer);
@@ -574,23 +574,23 @@ private:
     }
 
     // Buffer used by raster with updated information at each frame
-    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(DH::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT));
     NVVK_DBG_NAME(m_bFrameInfo.buffer);
 
     // Buffer holding the particle settings
     NVVK_CHECK(m_alloc.createBuffer(m_bParticleSetting, sizeof(DH::ParticleSetting),
-                                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                    VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT));
     NVVK_DBG_NAME(m_bParticleSetting.buffer);
 
     // Buffer of the particles, used for the simulation
     NVVK_CHECK(m_alloc.createBuffer(m_bParticles, std::span(m_particles).size_bytes(),
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bParticles, 0, std::span(m_particles)));
     NVVK_DBG_NAME(m_bParticles.buffer);
 
     // Buffer used for sorting particles spatially
     NVVK_CHECK(m_alloc.createBuffer(m_bSpatialInfo, m_particles.size() * sizeof(DH::SpatialInfo),
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT));
     NVVK_DBG_NAME(m_bSpatialInfo.buffer);
 
     uploader.cmdUploadAppended(cmd);

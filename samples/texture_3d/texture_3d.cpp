@@ -432,7 +432,7 @@ private:
         .mipLevels   = 1,
         .arrayLayers = 1,
         .samples     = VK_SAMPLE_COUNT_1_BIT,
-        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
         .sharingMode           = VK_SHARING_MODE_CONCURRENT,
         .queueFamilyIndexCount = 2,
         .pQueueFamilyIndices   = queueFamilies.data(),
@@ -625,8 +625,8 @@ private:
 
     // Creating the Cube on the GPU
     nvutils::PrimitiveMesh mesh = nvutils::createCube();
-    NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(mesh.vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
-    NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(mesh.triangles).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(mesh.vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+    NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(mesh.triangles).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
     NVVK_DBG_NAME(m_vertices.buffer);
     NVVK_DBG_NAME(m_indices.buffer);
     NVVK_CHECK(m_stagingUploader.appendBuffer(m_vertices, 0, std::span(mesh.vertices)));
@@ -637,7 +637,8 @@ private:
     m_stagingUploader.releaseStaging();
 
     // Frame information: camera matrix
-    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo),
+                                    VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
                                     VMA_MEMORY_USAGE_CPU_TO_GPU));
     NVVK_DBG_NAME(m_frameInfo.buffer);
   }

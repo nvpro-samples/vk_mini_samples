@@ -259,7 +259,7 @@ private:
     creator.renderingState.depthAttachmentFormat = m_depthFormat;
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-#if (USE_SLANG)
+#if(USE_SLANG)
     creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", shader_printf_slang);
     creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", shader_printf_slang);
 #else
@@ -283,8 +283,8 @@ private:
       nvvk::StagingUploader uploader;
       uploader.init(&m_alloc);
 
-      NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
-      NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(indices).size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+      NVVK_CHECK(m_alloc.createBuffer(m_indices, std::span(indices).size_bytes(), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
       NVVK_CHECK(uploader.appendBuffer(m_vertices, 0, std::span(vertices)));
       NVVK_CHECK(uploader.appendBuffer(m_indices, 0, std::span(indices)));
       NVVK_DBG_NAME(m_vertices.buffer);

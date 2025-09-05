@@ -262,8 +262,8 @@ private:
     uploader.init(&m_alloc);
 
     // Usage flags for the different buffers
-    const VkBufferUsageFlags rt_usage_flag = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                             | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    const VkBufferUsageFlags rt_usage_flag = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                             | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
     // Create a buffer of Vertex and Index per mesh
     m_bMeshes.resize(m_meshes.size());
@@ -282,7 +282,7 @@ private:
     }
 
     // Create the buffer of the current frame, changing at each frame
-    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT,
                                     VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
     NVVK_DBG_NAME(m_bFrameInfo.buffer);
 
@@ -297,13 +297,13 @@ private:
     }
 
     NVVK_CHECK(m_alloc.createBuffer(m_bInstInfoBuffer, std::span(inst_info).size_bytes(),
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bInstInfoBuffer, 0, std::span(inst_info)));
     NVVK_DBG_NAME(m_bInstInfoBuffer.buffer);
 
 
     NVVK_CHECK(m_alloc.createBuffer(m_bMaterials, std::span(m_materials).size_bytes(),
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_bMaterials, 0, std::span(m_materials)));
     NVVK_DBG_NAME(m_bMaterials.buffer);
 
@@ -397,7 +397,7 @@ private:
     }
 
     nvvk::Buffer scratchBuffer;
-    NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, maxScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, maxScratchSize, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
                                     VMA_MEMORY_USAGE_AUTO, {}, m_asProperties.minAccelerationStructureScratchOffsetAlignment));
     NVVK_DBG_NAME(scratchBuffer.buffer);
 
@@ -521,8 +521,8 @@ private:
     // Create the instances buffer, add a barrier to ensure the data is copied before the TLAS build
     nvvk::Buffer instancesBuffer;
     NVVK_CHECK(m_alloc.createBuffer(instancesBuffer, std::span(tlas).size_bytes(),
-                                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                                        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                    VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                        | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(instancesBuffer, 0, std::span(tlas)));
     NVVK_DBG_NAME(instancesBuffer.buffer);
     uploader.cmdUploadAppended(cmd);
@@ -538,7 +538,7 @@ private:
     // Create the scratch buffer
     nvvk::Buffer scratchBuffer;
     NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, sizeInfo.buildScratchSize,
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                    VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
                                     VMA_MEMORY_USAGE_AUTO, {}, m_asProperties.minAccelerationStructureScratchOffsetAlignment));
 
     // Create the TLAS with motionblur support
