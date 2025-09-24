@@ -104,30 +104,116 @@ Samples are implemented as `Elements` and attached to the `Application` instance
 1. Separation of concerns between core application logic and sample-specific code
 2. Consistent handling of UI rendering and frame operations across different samples
 
+### Application Lifecycle
+
+The following diagram illustrates the complete application lifecycle, from initialization through the main rendering loop:
+
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart LR
+    subgraph s1["Application Element"]
+        O["onAttach: Initialize"]
+        P["onUIMenu: Menu Items"]
+        Q["onUIRender: UI Widgets"]
+        R["onPreRender: Pre-frame Setup"]
+        S["onRender: GPU Commands"]
+        T["onPostRender: Post-frame Setup"]
+        U["onDetach: Cleanup"]
+    end
+    
+    A["Constructor"] --> B["init: Setup Window, Vulkan, ImGui"]
+    B --> C["run: Main Loop"]
+    C --> D["Frame Setup: Events, ImGui, Viewport"]
+    D --> E["prepareFrameResources"]
+    E -- Success --> F["beginCommandRecording"]
+    E -- Fail --> C
+    F --> I["drawFrame: Element Processing"]
+    I --> J["renderToSwapchain: ImGui"]
+    J --> L["endFrame: Submit Commands"]
+    L --> M["presentFrame"]
+    M --> N["advanceFrame"]
+    N --> C
+    
+    B -. addElement .-> O
+    D -. Menu Bar .-> P
+    I -. UI Phase .-> Q
+    I -. "Pre-Render" .-> R
+    I -. Render Phase .-> S
+    I -. "Post-Render" .-> T
+    
+    C -->|Exit Event| V["shutdown()"]
+    V -. onDetach .-> U
+    
+    E@{ shape: decision}
+    style O fill:#f1f8e9
+    style P fill:#f1f8e9
+    style Q fill:#f1f8e9
+    style R fill:#f1f8e9
+    style S fill:#f1f8e9
+    style T fill:#f1f8e9
+    style U fill:#f1f8e9
+    style A fill:#e1f5fe
+    style C fill:#f3e5f5
+    style I fill:#FFE0B2
+    style M fill:#FFE0B2
+    style V fill:#ffebee
+```
+
 ### Initialization Process
 
 The `init()` method orchestrates the following setup procedures:
 
-1. GLFW window initialization
-2. Swapchain setup through `ImplVulkanH_CreateOrResizeWindow`
+1. **GLFW Initialization**: `glfwInit()` sets up the windowing system
+2. **Vulkan Context**: `nvvk::Context::init()` creates the Vulkan instance, device, and queues
+3. **Window Creation**: `ImGui_ImplVulkanH_CreateOrResizeWindow()` creates the window and swapchain
+4. **ImGui Setup**: `ImGui_ImplVulkan_Init()` initializes the ImGui Vulkan backend
+5. **Swapchain**: Manages presentation images
+
+During initialization, core Vulkan resources are provided by the framework:
+- **VkInstance**: Connection between application and Vulkan library
+- **VkPysicalDevice**: Representation of the physical GPU
+- **VkDevice**: Logical representation of the physical GPU
+- **VkQueue**: Command submission queue for GPU operations
 
 ### Execution Cycle
 
-The `run()` method implements the main application loop, continuing until a termination event is triggered. Each iteration of this loop invokes the following methods on attached `Elements`, in sequence:
+The `run()` method implements the main application loop, continuing until a termination event is triggered. Each iteration follows this sequence:
 
-1. `onResize`: Handles viewport dimension changes
-2. `onUIMenu`: Facilitates additions to the menu bar
-3. `onUIRender`: Manages UI-related rendering tasks
-4. `onRender`: Executes sample-specific rendering operations within the current frame's command buffer
+#### Frame Preparation
+1. **Frame Setup**: Process events, update ImGui, handle viewport changes
+2. **Resource Management**: `prepareFrameResources()` acquires swapchain image
+3. **Cleanup**: `freeResourcesQueue()` releases previous frame resources
+4. **Synchronization**: `prepareFrameToSignal()` sets up frame synchronization
 
-Post-element processing, each frame concludes with:
+#### Command Recording
+5. **Command Buffer**: `beginCommandRecording()` starts recording GPU commands
+6. **Element Processing**: `drawFrame()` invokes element callbacks in sequence:
+   - `onUIRender`: UI widget rendering
+   - `onPreRender`: Pre-frame setup operations
+   - `onRender`: Sample-specific GPU commands
+   - `onPostRender`: Post-frame cleanup operations
 
-- `frameRender()`: Finalizes the frame's rendering operations
-- `framePresent()`: Submits the completed frame for presentation
+#### Frame Completion
+7. **ImGui Rendering**: `renderToSwapchain()` renders UI to swapchain image
+8. **Synchronization**: `addSwapchainSemaphores()` sets up presentation synchronization
+9. **Submission**: `endFrame()` submits command buffers to GPU
+10. **Presentation**: `presentFrame()` presents the completed frame
+11. **Advancement**: `advanceFrame()` moves to next frame resources
 
-This architecture provides a robust and flexible framework for implementing diverse Vulkan-based graphical samples while maintaining a consistent application structure.
+### Element Lifecycle
 
-![application-loop](docs/Application-loop.png)
+Elements attached to the application follow a well-defined lifecycle:
+
+- **`onAttach`**: Called during `addElement()`, used for initialization
+- **`onUIMenu`**: Called during frame setup, adds menu items to the menu bar
+- **`onUIRender`**: Called during UI phase, renders ImGui widgets
+- **`onPreRender`**: Called before main rendering, handles pre-frame setup
+- **`onRender`**: Called during render phase, records GPU commands
+- **`onPostRender`**: Called after main rendering, handles post-frame cleanup
+- **`onDetach`**: Called during shutdown, used for cleanup and resource deallocation
 
 
 ## Shader Language Support
