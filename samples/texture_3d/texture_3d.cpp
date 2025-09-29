@@ -214,7 +214,7 @@ public:
       PE::SliderFloat("Threshold", &m_settings.threshold, -1.0F, 1.0, "%.3f", {},
                       "Values below the threshold are ignored. High Power value is needed, for the threshold to be "
                       "effective.");
-      PE::SliderInt("Steps", (int*)&m_settings.steps, 1, 500, "%.3f", {}, "Number of maximum steps.");
+      PE::SliderInt("Steps", (int*)&m_settings.steps, 1, 500, "%d", {}, "Number of maximum steps.");
       PE::end();
       /// ----
       ImGui::Text("Presets");
