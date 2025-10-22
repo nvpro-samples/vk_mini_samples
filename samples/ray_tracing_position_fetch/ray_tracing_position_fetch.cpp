@@ -76,6 +76,7 @@
 #include "nvvk/helpers.hpp"
 #include "nvvk/staging.hpp"
 #include "teapot_tris.h"
+#include <nvvk/formats.hpp>
 
 using TriangulatedMesh = std::vector<glm::vec3>;
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
@@ -104,12 +105,13 @@ public:
     // Uploader for staging data to GPU
     m_stagingUploader.init(&m_alloc);
 
-
     // The texture sampler to use
     m_samplerPool.init(m_device);
     VkSampler linearSampler{};
     NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
     NVVK_DBG_NAME(linearSampler);
+
+    m_depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice());
 
     // GBuffer for the ray tracing
     m_gBuffers.init({.allocator      = &m_alloc,
@@ -240,28 +242,17 @@ public:
 private:
   void createScene()
   {
-    // Adding Teapot
-    m_meshes.emplace_back(triangulatedTeapot);
-    m_materials.push_back({{0.5F, 0.5F, 0.5F, 1.0F}});
-
-    // Teapot instance
-    {
-      nvutils::Node& node = m_nodes.emplace_back();
-      node.mesh           = 0;
-      node.material       = 0;
-      node.translation    = {0.0F, 0.F, 0.F};
-    }
 
     // Adding Plane
     {
       TriangulatedMesh planeMesh;
       const float      planeSize = 50.0F;
-      planeMesh.push_back({-planeSize, 0, planeSize});
-      planeMesh.push_back({planeSize, 0, planeSize});
-      planeMesh.push_back({-planeSize, 0, -planeSize});
-      planeMesh.push_back({planeSize, 0, planeSize});
-      planeMesh.push_back({planeSize, 0, -planeSize});
-      planeMesh.push_back({-planeSize, 0, -planeSize});
+      planeMesh.emplace_back(-planeSize, 0, planeSize);
+      planeMesh.emplace_back(planeSize, 0, planeSize);
+      planeMesh.emplace_back(-planeSize, 0, -planeSize);
+      planeMesh.emplace_back(planeSize, 0, planeSize);
+      planeMesh.emplace_back(planeSize, 0, -planeSize);
+      planeMesh.emplace_back(-planeSize, 0, -planeSize);
       m_meshes.emplace_back(planeMesh);
     }
     m_materials.push_back({{0.6F, 0.6F, 0.6F, 1.0F}});
@@ -272,6 +263,19 @@ private:
       node.material       = static_cast<int>(m_materials.size()) - 1;
       node.translation    = {0, -1, 0};
     }
+
+    // Adding Teapot
+    m_meshes.emplace_back(triangulatedTeapot);
+    m_materials.push_back({{0.5F, 0.5F, 0.5F, 1.0F}});
+
+    // Teapot instance
+    {
+      nvutils::Node& node = m_nodes.emplace_back();
+      node.mesh           = static_cast<int>(m_meshes.size()) - 1;
+      node.material       = static_cast<int>(m_materials.size()) - 1;
+      node.translation    = {0.0F, 0.F, 0.F};
+    }
+
 
     // Setting camera to see the scene
     g_cameraManip->setClipPlanes({0.1F, 100.0F});
@@ -443,7 +447,7 @@ private:
     for(auto& s : stages)
       s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 
-#if(USE_SLANG)
+#if (USE_SLANG)
     const VkShaderModuleCreateInfo createInfo = nvsamples::getShaderModuleCreateInfo(raytrace_position_fetch_slang);
     stages[eRaygen].pNext                     = &createInfo;
     stages[eRaygen].pName                     = "rgenMain";
@@ -481,50 +485,50 @@ private:
     group.generalShader      = VK_SHADER_UNUSED_KHR;
     group.intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    std::vector<VkRayTracingShaderGroupCreateInfoKHR> shader_groups;
+    std::vector<VkRayTracingShaderGroupCreateInfoKHR> shaderGroups;
     // Raygen
     group.type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
     group.generalShader = eRaygen;
-    shader_groups.push_back(group);
+    shaderGroups.push_back(group);
 
     // Miss
     group.type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
     group.generalShader = eMiss;
-    shader_groups.push_back(group);
+    shaderGroups.push_back(group);
 
     // closest hit shader
     group.type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     group.generalShader    = VK_SHADER_UNUSED_KHR;
     group.closestHitShader = eClosestHit;
-    shader_groups.push_back(group);
+    shaderGroups.push_back(group);
 
     // Push constant: we want to be able to update constants used by the shaders
-    const VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant)};
+    const VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant)};
 
-    VkPipelineLayoutCreateInfo pipeline_layout_create_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipeline_layout_create_info.pushConstantRangeCount = 1;
-    pipeline_layout_create_info.pPushConstantRanges    = &push_constant;
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+    pipelineLayoutCreateInfo.pPushConstantRanges    = &pushConstant;
 
     // Descriptor sets: one specific to ray tracing, and one shared with the rasterization pipeline
-    pipeline_layout_create_info.setLayoutCount = 1;
-    pipeline_layout_create_info.pSetLayouts    = m_descriptorPack.getLayoutPtr();
-    vkCreatePipelineLayout(m_device, &pipeline_layout_create_info, nullptr, &m_pipelineLayout);
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts    = m_descriptorPack.getLayoutPtr();
+    vkCreatePipelineLayout(m_device, &pipelineLayoutCreateInfo, nullptr, &m_pipelineLayout);
     NVVK_DBG_NAME(m_pipelineLayout);
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
-    VkRayTracingPipelineCreateInfoKHR ray_pipeline_info{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
-    ray_pipeline_info.stageCount                   = static_cast<uint32_t>(stages.size());  // Stages are shaders
-    ray_pipeline_info.pStages                      = stages.data();
-    ray_pipeline_info.groupCount                   = static_cast<uint32_t>(shader_groups.size());
-    ray_pipeline_info.pGroups                      = shader_groups.data();
-    ray_pipeline_info.maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH;  // Ray depth
-    ray_pipeline_info.layout                       = m_pipelineLayout;
-    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &ray_pipeline_info, nullptr, &m_pipeline);
+    VkRayTracingPipelineCreateInfoKHR rayPipelineInfo{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
+    rayPipelineInfo.stageCount                   = static_cast<uint32_t>(stages.size());  // Stages are shaders
+    rayPipelineInfo.pStages                      = stages.data();
+    rayPipelineInfo.groupCount                   = static_cast<uint32_t>(shaderGroups.size());
+    rayPipelineInfo.pGroups                      = shaderGroups.data();
+    rayPipelineInfo.maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH;  // Ray depth
+    rayPipelineInfo.layout                       = m_pipelineLayout;
+    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &rayPipelineInfo, nullptr, &m_pipeline);
     NVVK_DBG_NAME(m_pipeline);
 
     // Creating the SBT
     // Prepare SBT data from ray pipeline
-    size_t bufferSize = m_sbt.calculateSBTBufferSize(m_pipeline, ray_pipeline_info);
+    size_t bufferSize = m_sbt.calculateSBTBufferSize(m_pipeline, rayPipelineInfo);
 
     // Create SBT buffer using the size from above
     NVVK_CHECK(m_alloc.createBuffer(m_sbtBuffer, bufferSize, VK_BUFFER_USAGE_2_SHADER_BINDING_TABLE_BIT_KHR, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
@@ -565,6 +569,7 @@ private:
     m_alloc.destroyBuffer(m_bSkyParams);
     m_alloc.destroyBuffer(m_sbtBuffer);
 
+    m_asHelper.deinitAccelerationStructures();
     m_asHelper.deinit();
 
     m_gBuffers.deinit();
@@ -590,9 +595,9 @@ private:
   nvvk::StagingUploader   m_stagingUploader{};
 
 
-  VkFormat                      m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
-  VkFormat                      m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkDevice                      m_device      = VK_NULL_HANDLE;                 // Convenient
+  VkFormat                      m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
+  VkFormat                      m_depthFormat = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
+  VkDevice                      m_device      = VK_NULL_HANDLE;            // Convenient
   shaderio::SkySimpleParameters m_skyParams{};
 
   // Resources

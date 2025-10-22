@@ -52,8 +52,7 @@ struct HitState
   float3 geonrm;
 };
 
-
-int3 getTriangleIndices(uint64_t dataBufferAddress, const TriangleMesh* mesh, int primitiveID)
+int3 getTriangleIndices(uint64_t dataBufferAddress, const Ptr<TriangleMesh> mesh, int primitiveID)
 {
   if(mesh->indices.byteStride == sizeof(int16_t))
   {
@@ -75,17 +74,17 @@ float3 getAttribFloat3(uint64_t dataBufferAddress, uint64_t offset, int vertexID
   return attribs[vertexID];
 }
 
-float3 getVertexPosition(uint64_t dataBufferAddress, const TriangleMesh* mesh, int vertexID)
+float3 getVertexPosition(uint64_t dataBufferAddress, const Ptr<TriangleMesh> mesh, int vertexID)
 {
   return getAttribFloat3(dataBufferAddress, mesh->positions.offset, vertexID);
 }
 
-float3 getVertexNormal(uint64_t dataBufferAddress, const TriangleMesh* mesh, int vertexID)
+float3 getVertexNormal(uint64_t dataBufferAddress, const Ptr<TriangleMesh> mesh, int vertexID)
 {
   return getAttribFloat3(dataBufferAddress, mesh->normals.offset, vertexID);
 }
 
-float3 getVertexNormalInterpolated(uint64_t dataBufferAddress, const TriangleMesh* mesh, int3 vertexID, float3 baryWeights)
+float3 getVertexNormalInterpolated(uint64_t dataBufferAddress, const Ptr<TriangleMesh> mesh, int3 vertexID, float3 baryWeights)
 {
   float3* normals = (float3*)(dataBufferAddress + mesh->normals.offset);
   float3  n0      = normals[vertexID.x];
