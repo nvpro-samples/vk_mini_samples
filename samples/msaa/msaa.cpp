@@ -101,12 +101,13 @@ public:
 
     // Slang compiler
     {
-      m_slang.addSearchPaths(nvsamples::getShaderDirs());
-      m_slang.defaultTarget();
-      m_slang.defaultOptions();
-      m_slang.addOption({slang::CompilerOptionName::DebugInformation,
-                         {slang::CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_MAXIMAL}});
-      m_slang.addOption({slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_NONE}});
+      m_slangCompiler.addSearchPaths(nvsamples::getShaderDirs());
+      m_slangCompiler.defaultTarget();
+      m_slangCompiler.defaultOptions();
+      m_slangCompiler.addOption({slang::CompilerOptionName::DebugInformation,
+                                 {slang::CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_MAXIMAL}});
+      m_slangCompiler.addOption({slang::CompilerOptionName::Optimization,
+                                 {slang::CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_NONE}});
     }
 
     // The texture sampler to use
@@ -424,7 +425,7 @@ private:
   {
     nvutils::ScopedTimer timer("Compile Shaders");
 
-    if(m_slang.compileFile("raster_msaa.slang"))
+    if(m_slangCompiler.compileFile("raster_msaa.slang"))
     {
       vkDestroyShaderEXT(m_device, m_vertShader, nullptr);
       vkDestroyShaderEXT(m_device, m_fragShader, nullptr);
@@ -432,8 +433,8 @@ private:
       VkShaderCreateInfoEXT shaderCreateInfo{
           .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
           .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-          .codeSize               = m_slang.getSpirvSize(),
-          .pCode                  = m_slang.getSpirv(),
+          .codeSize               = m_slangCompiler.getSpirvSize(),
+          .pCode                  = m_slangCompiler.getSpirv(),
           .setLayoutCount         = 1,
           .pSetLayouts            = &m_descriptorSetLayout,
           .pushConstantRangeCount = 1,
@@ -592,9 +593,9 @@ private:
 
 
   // Shaders
-  nvslang::SlangCompiler m_slang;         // The slang compiler
-  VkShaderEXT            m_vertShader{};  // The vertex shader
-  VkShaderEXT            m_fragShader{};  // The fragment shader
+  nvslang::SlangCompiler m_slangCompiler;  // The slang compiler
+  VkShaderEXT            m_vertShader{};   // The vertex shader
+  VkShaderEXT            m_fragShader{};   // The fragment shader
 
 
   shaderio::PushConstant m_pushConst{};  // Information sent to the shader

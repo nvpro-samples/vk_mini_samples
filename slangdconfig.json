@@ -1,0 +1,11 @@
+{
+  "slang.predefinedMacros": [
+    "MY_MACRO",
+    "MY_VALUE_MACRO=1"
+  ],
+  "slang.additionalSearchPaths": [
+    ".",
+    "../nvpro_core2/"
+  ],
+  "slang.enableCommitCharactersInAutoCompletion": "on"
+}

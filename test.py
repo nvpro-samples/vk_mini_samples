@@ -19,6 +19,8 @@ EXECUTABLES_WITH_ARGS = [
     ("image_ktx", ["--headless"]),
     ("image_viewer", ["--headless"]),
     ("line_stipple", ["--headless"]),
+    ("mesh_shaders", ["--headless"]),
+    ("mesh_task_shaders", ["--headless"]),
     ("memory_budget", ["--headless"]),
     ("mm_opacity", ["--headless"]),
     ("msaa", ["--headless"]),

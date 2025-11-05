@@ -48,6 +48,8 @@ Start with these foundational samples to understand the framework:
 | [image_ktx](samples/image_ktx) | KTX image display with tonemapping post-processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | ✅ | ✅ |
 | [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | ✅ | ✅ |
 | [line_stipple](samples/line_stipple) | Dashed line rendering with stipple pattern | ![](samples/line_stipple/docs/line_stipple_th.jpg) | ✅ | ✅ |
+| [mesh_shaders](samples/mesh_shaders) | Basic mesh shaders without task shader (baseline) | ![](samples/mesh_shaders/docs/mesh_shaders_th.jpg) | ✅ | ✅ |
+| [mesh_task_shaders](samples/mesh_task_shaders) | Mesh and task shaders with GPU-driven frustum culling | ![](samples/mesh_task_shaders/docs/mesh_task_shaders_th.jpg) | ✅ | ✅ |
 | [mm_opacity](samples/mm_opacity) | Micromap opacity implementation | ![](samples/mm_opacity/docs/opacity_th.jpg) | ✅ | ✅ |
 | [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing demonstration | ![](samples/msaa/docs/msaa_th.jpg) | ✅ | ✅ |
 | [offscreen](samples/offscreen) | Windowless rendering with image save functionality | ![](samples/offscreen/docs/offline_th.jpg) | ✅ | ✅ |

@@ -1,21 +1,24 @@
-**/spv/*
-**/autogen/*
-**/build/*
-**/_auto*/*
-**/externals/*
-**/.obsidian/
-_Build/*
-_Install/*
-bin_x64/*
-downloaded_resources/*
-/nvpro_core*/
-.vscode/**
+# === Build directories and outputs ===
+build/
+_build/
+_install/
+bin_x64/
+_bin/
+
+# === Generated files and autogen ===
+**/autogen/
+**/spv/
+**/_auto*/
+downloaded_resources/
+
+# === IDE and Editor settings ===
+.vscode/
 .vs/
+
+# === External dependencies ===
+**/externals/
+
+# === Unneeded documentation/licenses ===
 **/nsight-aftermath-usage-guidelines.txt
 **/LICENSE
-log_offscreen.txt
-
-samples/.vscode/
-
-_bin/
 
