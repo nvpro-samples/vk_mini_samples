@@ -114,7 +114,7 @@ void traceRay(RayDesc ray, inout HitPayload payload)
     HitObject hitObj = HitObject::TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
     ReorderThread(hitObj);
 
-    float3 barycentrics = hitObj.GetAttributes<float3>();
+    float2 barycentrics = hitObj.GetAttributes<float2>();
 
     RayDesc rayDesc = hitObj.GetRayDesc();
     payload.hitT    = rayDesc.TMax;
