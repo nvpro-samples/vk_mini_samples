@@ -91,7 +91,6 @@ void traceRay(Ray r)
   if(USE_SER == 1)
   {
     hitObjectNV hObj;
-    hitObjectRecordEmptyNV(hObj);  //Initialize to an empty hit object
     hitObjectTraceRayNV(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.origin, 0.0, r.direction, INFINITE, 0);
     reorderThreadNV(hObj);
     hitObjectGetAttributesNV(hObj, 0);
