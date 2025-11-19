@@ -36,7 +36,7 @@
 #define IM_VEC2_CLASS_EXTRA ImVec2(const glm::vec2& f) {x = f.x; y = f.y;} operator glm::vec2() const { return glm::vec2(x, y); }
 // clang-format on
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 
@@ -259,7 +259,7 @@ private:
     creator.renderingState.depthAttachmentFormat = m_depthFormat;
 
     // Shader sources, pre-compiled to Spir-V (see Makefile)
-#if(USE_SLANG)
+#if (USE_SLANG)
     creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", shader_printf_slang);
     creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", shader_printf_slang);
 #else
@@ -381,6 +381,7 @@ int main(int argc, char** argv)
   // This is adding the settings to enable the validation layer for the debug printf
   nvvk::ValidationSettings validation{};
   validation.setPreset(nvvk::ValidationSettings::LayerPresets::eDebugPrintf);
+  validation.printf_to_stdout   = VK_FALSE;  // Different from default to capture output
   vkSetup.instanceCreateInfoExt = validation.buildPNextChain();
 
 

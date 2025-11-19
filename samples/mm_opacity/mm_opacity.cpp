@@ -862,18 +862,14 @@ int main(int argc, char** argv)
   cli.add(reg);
   cli.parse(argc, argv);
 
-  // #MICROMAP
-  nvvk::ValidationSettings vvl{
-      .unique_handles = false,  // This is required for the validation layers to work properly
-  };
-
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   // #MICROMAP
   VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
 
   // Setting how we want Vulkan context to be created
-  nvvk::ContextInitInfo vkSetup;
+  nvvk::ContextInitInfo    vkSetup;
+  nvvk::ValidationSettings vvl{};
   vkSetup.instanceCreateInfoExt = vvl.buildPNextChain();
   if(!appInfo.headless)
   {
@@ -889,7 +885,7 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
 
 
-#if(VK_HEADER_VERSION >= 283)
+#if (VK_HEADER_VERSION >= 283)
   // To enable ray tracing validation, set the NV_ALLOW_RAYTRACING_VALIDATION=1 environment variable
   // https://developer.nvidia.com/blog/ray-tracing-validation-at-the-driver-level/
   // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_NV_ray_tracing_validation.html
