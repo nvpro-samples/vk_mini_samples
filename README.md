@@ -259,4 +259,4 @@ OpenGL Shading Language - Native Vulkan ecosystem support
 
 ## License
 
-Copyright 2024-2025 NVIDIA CORPORATION. Released under Apache License, Version 2.0. See [LICENSE](LICENSE) file for details.
+Copyright 2024-2026 NVIDIA CORPORATION. Released under Apache License, Version 2.0. See [LICENSE](LICENSE) file for details.

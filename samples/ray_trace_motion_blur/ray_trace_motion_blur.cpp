@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -75,6 +75,7 @@ struct MatPrimitiveMesh : public nvutils::PrimitiveMesh
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/gbuffers.hpp>
+#include <nvvk/formats.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
 #include <nvvk/sampler_pool.hpp>
@@ -117,6 +118,7 @@ public:
     NVVK_DBG_NAME(linearSampler);
 
     // GBuffer for the ray tracing
+    m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     m_gBuffers.init({.allocator      = &m_alloc,
                      .colorFormats   = {m_colorFormat},
                      .depthFormat    = m_depthFormat,
@@ -759,9 +761,9 @@ private:
   nvvk::GBuffer           m_gBuffers;  // G-Buffers: color + depth
   nvvk::SamplerPool       m_samplerPool{};
 
-  VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
-  VkFormat m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkDevice m_device      = VK_NULL_HANDLE;                 // Convenient
+  VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
+  VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
+  VkDevice m_device      = VK_NULL_HANDLE;            // Convenient
 
   // Resources
   struct PrimitiveMeshVk

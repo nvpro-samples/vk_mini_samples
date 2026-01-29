@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //////////////////////////////////////////////////////////////////////////
@@ -150,6 +150,8 @@ public:
     {  // Setting menu
       ImGui::Begin("Settings");
       nvgui::CameraWidget(g_cameraManip);
+      ImGui::Separator();
+      ImGui::Text("Double-click an object to focus the view");
       ImGui::End();
     }
 
@@ -200,9 +202,13 @@ public:
     renderingInfo.pColorAttachments    = &colorAttachment;
     renderingInfo.pDepthAttachment     = &depthAttachment;
 
-    // Allow to render to the GBuffer
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
 
+    // Transition GBuffer images to be used as attachments
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
     // Start the rendering
     vkCmdBeginRendering(cmd, &renderingInfo);
 
@@ -252,6 +258,10 @@ public:
 
     // Allow to display the GBuffer
     nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
+                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
   }
 
 private:
@@ -438,8 +448,10 @@ private:
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
     // Transit the depth buffer image in eTransferSrcOptimal
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
 
     // Copy the pixel under the cursor
     VkBufferImageCopy copy_region{};
@@ -450,8 +462,10 @@ private:
                            1, &copy_region);
 
     // Put back the depth buffer as  it was
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT});
+    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
+                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                      VK_IMAGE_LAYOUT_GENERAL,
+                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
     m_app->submitAndWaitTempCmdBuffer(cmd);
 
 

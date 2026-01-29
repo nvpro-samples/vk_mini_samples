@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -179,11 +179,24 @@ public:
         .pDepthAttachment     = &depthAttachment,
     };
 
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-
-    // Render to MSAA image and resolve to G-Buffer
-    if(m_settings.msaaSamples != VK_SAMPLE_COUNT_1_BIT)
+    // Transition GBuffer images to be used as attachments
+    if(m_settings.msaaSamples == VK_SAMPLE_COUNT_1_BIT)
     {
+      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
+                                        VK_IMAGE_LAYOUT_GENERAL,
+                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+    }
+    else
+    {
+      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getDepthImage(),
+                                        VK_IMAGE_LAYOUT_GENERAL,
+                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+
+      // Render to MSAA image and resolve to G-Buffer
       colorAttachment.imageView          = m_msaaGBuffers.getColorImageView();
       colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
       colorAttachment.resolveImageView   = m_gBuffers.getColorImageView();
@@ -200,7 +213,24 @@ public:
       drawStippledLines(cmd);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+
+    // Transition GBuffer images to be used as textures
+    if(m_settings.msaaSamples == VK_SAMPLE_COUNT_1_BIT)
+    {
+      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
+                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                        VK_IMAGE_LAYOUT_GENERAL,
+                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+    }
+    else
+    {
+      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getDepthImage(),
+                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                        VK_IMAGE_LAYOUT_GENERAL,
+                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+    }
   }
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
