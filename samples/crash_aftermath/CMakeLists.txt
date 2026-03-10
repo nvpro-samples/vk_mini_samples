@@ -38,9 +38,11 @@ set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
 
 compile_slang(
     "${SHADER_SLANG_FILES}"
-     "${SHADER_OUTPUT_DIR}"
-    GENERATED_SHADER_SLANG_HEADERS
+    "${SHADER_OUTPUT_DIR}"
+    HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
+    SPVS_VAR GENERATED_SHADER_SLANG_SPVS
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+    DEBUG_LEVEL 2 
 )
 
 compile_glsl(
@@ -48,7 +50,14 @@ compile_glsl(
    "${SHADER_OUTPUT_DIR}"
    GENERATED_SHADER_GLSL_HEADERS
    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
- )
+)
+
+# GLSL build produces .spv in _autogen; list them for copy to runtime (Inspector loads by content)
+set(GENERATED_SHADER_GLSL_SPVS
+  ${SHADER_OUTPUT_DIR}/crash_aftermath.vert.glsl.spv
+  ${SHADER_OUTPUT_DIR}/crash_aftermath.frag.glsl.spv
+  ${SHADER_OUTPUT_DIR}/crash_aftermath.comp.glsl.spv
+)
 
 # Add shader files to the project
 source_group("Shaders" FILES ${SHADER_SLANG_FILES} ${SHADER_GLSL_FILES} ${SHADER_H_FILES})
@@ -65,4 +74,13 @@ copy_to_runtime_and_install( ${PROJECT_NAME}
     LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
     FILES ${NsightAftermath_DLLS}
     AUTO
+)
+
+# Copy generated .spv to runtime so the Crash Dump Inspector can load them (it hashes by content).
+# These are generated at build time so we use POST_BUILD; copy_to_runtime checks EXISTS at configure time.
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${GENERATED_SHADER_SLANG_SPVS} ${GENERATED_SHADER_GLSL_SPVS}
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>
+  COMMENT "Copying .spv shaders to runtime for Aftermath Monitor / Crash Dump Inspector"
 )

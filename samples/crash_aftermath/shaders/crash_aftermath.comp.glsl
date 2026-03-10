@@ -17,27 +17,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#version 450
+#version 460
+
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 #include "shaderio.h"
 
-layout(location = 0) in vec3 inPosition;
-layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec2 inUv;
+layout(local_size_x = 64) in;
 
-layout(location = 0) out vec3 outFragColor;
-layout(location = 1) out vec2 outUv;
-
-layout(set = 0, binding = 0) uniform FrameInfo_
+layout(set = 0, binding = 1) buffer Testing_
 {
-  FrameInfo frameInfo;
+  float values[];
 };
 
 void main()
 {
-  gl_Position  = frameInfo.mpv * vec4(inPosition, 1.0);
-  outFragColor = 0.5 + 0.5 * inNormal;
-  outUv        = inUv;
+  // TDR: v starts at 0.5 and v *= sin(v) keeps shrinking it toward 0.
+  // Once v reaches 0.0 in float32, it stays there forever (0 * sin(0) = 0),
+  // but "v <= 10.0" remains true. The SSBO write each iteration is a visible
+  // side-effect that prevents the compiler from optimizing the loop away.
+  // All 64 threads in the workgroup are stuck, blocking the compute queue
+  // -> Windows TDR -> VK_ERROR_DEVICE_LOST.
+  float v = 0.5;
+  while(v <= 10.0)
+  {
+    v *= sin(v);
+    values[gl_LocalInvocationIndex] = v;
+  }
 }

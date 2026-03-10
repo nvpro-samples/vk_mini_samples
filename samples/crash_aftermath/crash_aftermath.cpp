@@ -19,12 +19,21 @@
 
 
 /*
- This sample shows how to integrate NSight Aftermath.
 
- Note: if NVVK_SUPPORTS_AFTERMATH is not defined, this means the path to NSight Aftermath wasn't set.
-       - Download the NSight Aftermath SDK
-       - Open `Ungrouped Entries` and set the NSIGHT_AFTERMATH_SDK path
-       - Delete CMake cache and re-configure CMake
+This sample shows how to integrate NSight Aftermath and demonstrates various
+ways to trigger VK_ERROR_DEVICE_LOST on the GPU.
+
+Crash mechanisms used:
+  - TDR (Timeout Detection and Recovery): infinite loops that stall the GPU
+    beyond the Windows ~2 second timeout.
+  - GPU page faults via BDA (Buffer Device Address): writing to unmapped GPU
+    virtual memory through buffer_reference pointers.
+
+Note: if AFTERMATH_AVAILABLE is not defined, this means the path to NSight Aftermath wasn't set.
+      - Download the NSight Aftermath SDK
+      - In CMakeGUI; open `Ungrouped Entries` and set the NSIGHT_AFTERMATH_SDK path
+        (i.e C:\Program Files\NVIDIA Corporation\Nsight Graphics 2026.x.x\SDKs\NsightAftermathSDK\202x.x.x.xxxxxx)
+      - Delete CMake cache and re-configure CMake
 */
 
 #define VMA_IMPLEMENTATION
@@ -35,6 +44,7 @@
 
 #include "shaders/shaderio.h"
 
+#include "_autogen/crash_aftermath.comp.glsl.h"
 #include "_autogen/crash_aftermath.frag.glsl.h"
 #include "_autogen/crash_aftermath.slang.h"
 #include "_autogen/crash_aftermath.vert.glsl.h"
@@ -70,17 +80,44 @@
 #define USE_SLANG 1
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
-// The camera for the scene
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
 
 class AftermathSample : public nvapp::IAppElement
 {
-  enum TdrReason
+  // Each crash test maps to a shader CRASH_TEST specialization constant value
+  // and/or a specific CPU-side setup (buffer address, compute dispatch, etc.).
+  enum CrashTest
   {
-    eNone,
-    eOutOfBoundsVertexBufferOffset,
+    eNone = 0,         // Normal rendering, no crash
+    eFragLoopSin,      // TDR: fragment infinite loop (sin)         -> CRASH_TEST=1
+    eFragLoopSSBO,     // TDR: fragment infinite loop (SSBO write)  -> CRASH_TEST=2
+    eBdaOverrun,       // Page fault: BDA write past buffer end     -> CRASH_TEST=3
+    eBdaWildSpray,     // Page fault: BDA writes to random addrs    -> CRASH_TEST=4
+    eBdaUseAfterFree,  // Page fault: BDA write to freed buffer     -> CRASH_TEST=3
+    eBdaIndirect,      // Page fault: BDA pointer chain, inner freed-> CRASH_TEST=5
+    eComputeLoop,      // TDR: compute shader infinite loop         -> compute pipeline
   };
 
+  // Map CrashTest enum to the graphics pipeline index (CRASH_TEST specialization constant).
+  static int getPipelineIndex(CrashTest test)
+  {
+    switch(test)
+    {
+      case eFragLoopSin:
+        return 1;
+      case eFragLoopSSBO:
+        return 2;
+      case eBdaOverrun:
+      case eBdaUseAfterFree:
+        return 3;
+      case eBdaWildSpray:
+        return 4;
+      case eBdaIndirect:
+        return 5;
+      default:
+        return 0;
+    }
+  }
 
 public:
   AftermathSample()           = default;
@@ -98,23 +135,19 @@ public:
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
     m_samplerPool.init(app->getDevice());
     VkSampler linearSampler{};
     NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
     NVVK_DBG_NAME(linearSampler);
 
-
-    // GBuffer
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     m_gBuffers.init({
         .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
+        .colorFormats   = {m_colorFormat},
         .depthFormat    = m_depthFormat,
         .imageSampler   = linearSampler,
         .descriptorPool = m_app->getTextureDescriptorPool(),
     });
-
 
     createPipeline();
     createVkResources();
@@ -127,74 +160,83 @@ public:
     destroyResources();
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
-  {
-    m_gBuffers.update(cmd, size);
-    //createGbuffers({width, height});
-  }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { m_gBuffers.update(cmd, size); }
 
   void onUIRender() override
   {
-    {  // Setting panel
+    {
       ImGui::Begin("Settings");
 
-#if !defined(NVVK_SUPPORTS_AFTERMATH)
-      ImGui::TextColored(ImVec4(1, 0, 0, 1), "Aftermath not enabled");
+#if !defined(USE_NSIGHT_AFTERMATH)
+      ImGui::TextColored(ImVec4(1, 0, 0, 1), "Aftermath SDK not integrated");
 #endif
 
+      // ---- TDR crashes: infinite loops that exceed the Windows GPU timeout ----
+      ImGui::SeparatorText("TDR Crashes (infinite loops)");
+
       if(ImGui::Button("1. Crash"))
-      {
-        m_currentPipe = 1;
-      }
+        m_crashTest = eFragLoopSin;
       ImGui::SameLine();
-      ImGui::Text("Infinite loop in vertex shader");
+      ImGui::Text("Fragment infinite loop (sin)");
 
       if(ImGui::Button("2. Crash"))
-      {
-        m_currentPipe = 2;
-      }
+        m_crashTest = eFragLoopSSBO;
       ImGui::SameLine();
-      ImGui::Text("Infinite loop in fragment shader");
+      ImGui::Text("Fragment infinite loop (SSBO writes)");
 
-      if(ImGui::Button("3. Bug"))
-      {
-        m_tdrReason = TdrReason::eOutOfBoundsVertexBufferOffset;
-      }
+      if(ImGui::Button("3. Crash"))
+        m_crashTest = eComputeLoop;
       ImGui::SameLine();
-      ImGui::Text("Out of bound vertex buffer");
+      ImGui::Text("Compute shader infinite loop");
 
-      if(ImGui::Button("4. Bug"))
-      {
-        m_alloc.destroyBuffer(m_vertices);
-      }
-      ImGui::SameLine();
-      ImGui::Text("Delete vertex buffer");
+      // ---- Page-fault crashes: BDA writes to unmapped GPU virtual memory ----
+      ImGui::SeparatorText("Page Fault Crashes (BDA writes)");
 
-      if(ImGui::Button("5. Bug"))
-      {
-        wrongDescriptorSet();
-      }
+      if(ImGui::Button("4. Crash"))
+        m_crashTest = eBdaOverrun;
       ImGui::SameLine();
-      ImGui::Text("Wrong buffer address");
+      ImGui::Text("BDA buffer overrun (+1 GB past end)");
+
+      if(ImGui::Button("5. Crash"))
+        m_crashTest = eBdaWildSpray;
+      ImGui::SameLine();
+      ImGui::Text("BDA wild pointer spray");
 
       if(ImGui::Button("6. Crash"))
       {
-        m_currentPipe = 3;
+        // Wait for the GPU to finish all prior work, then destroy the victim
+        // buffer. This ensures the dedicated VkDeviceMemory is freed and the
+        // GPU virtual address range is unmapped before the next frame's shader
+        // writes through the stale address -> page fault.
+        if(m_victimBuffer.buffer != VK_NULL_HANDLE)
+        {
+          vkDeviceWaitIdle(m_device);
+          m_alloc.destroyBuffer(m_victimBuffer);
+        }
+        m_crashTest = eBdaUseAfterFree;
       }
       ImGui::SameLine();
-      ImGui::Text("Out of bound buffer");
+      ImGui::Text("BDA use-after-free");
 
       if(ImGui::Button("7. Crash"))
       {
-        m_currentPipe = 4;
+        // Destroy the inner target buffer. The indirect buffer still holds its
+        // stale address. The shader follows the pointer chain and writes through
+        // the dangling inner pointer -> page fault.
+        if(m_indirectTarget.buffer != VK_NULL_HANDLE)
+        {
+          vkDeviceWaitIdle(m_device);
+          m_alloc.destroyBuffer(m_indirectTarget);
+        }
+        m_crashTest = eBdaIndirect;
       }
       ImGui::SameLine();
-      ImGui::Text("Bad texture access");
+      ImGui::Text("BDA indirect use-after-free (pointer chain)");
 
       ImGui::End();
     }
 
-    {  // Display the G-Buffer image
+    {
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
 
@@ -213,15 +255,13 @@ public:
     static bool onlyOnce = true;
     if(onlyOnce)
       ImGui::OpenPopup("NSight Aftermath");
-    // Always center this window when appearing
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0F, 20.0F));
     if(ImGui::BeginPopupModal("NSight Aftermath", NULL, ImGuiWindowFlags_AlwaysAutoResize))
     {
       onlyOnce = false;
-      ImGui::Text("NSight Aftermath is not installed.\n");
-      ImGui::Text("This sample will work but will not dump debugging crashes.\n");
+      ImGui::Text("The Nsight Aftermath SDK is not integrated. \nYou can still test crash dumps by running the Aftermath Monitor;\npoint the Crash Dump Inspector at this executable's directory to load the .spv shader files (copied here at build time).\n");
       ImGui::Separator();
       if(ImGui::Button("OK", ImVec2(120, 0)))
       {
@@ -235,38 +275,48 @@ public:
   void onRender(VkCommandBuffer cmd) override
   {
     NVVK_DBG_SCOPE(cmd);
-    m_frameNumber++;
 
-    // Drawing the primitives in a G-Buffer
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
-    colorAttachment.clearValue                = {m_clearColor};
-    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
-    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
-
-    // Create the rendering info
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.pDepthAttachment     = &depthAttachment;
-
+    // Prepare frame data
     const glm::mat4 matv = g_cameraManip->getViewMatrix();
     glm::mat4       matp = g_cameraManip->getPerspectiveMatrix();
 
     shaderio::FrameInfo finfo{};
-    finfo.time[0] = static_cast<float>(ImGui::GetTime());
-    finfo.time[1] = 0;
-    finfo.mpv     = matp * matv;
-
+    finfo.time.x     = static_cast<float>(ImGui::GetTime());
+    finfo.mpv        = matp * matv;
     finfo.resolution = glm::vec2(m_gBuffers.getSize().width, m_gBuffers.getSize().height);
-    finfo.badOffset  = std::rand();  // 0xDEADBEEF;
-    finfo.errorTest  = m_currentPipe;
+
+    // Set the BDA for page-fault crash tests
+    switch(m_crashTest)
+    {
+      case eBdaOverrun:
+        // Valid buffer base + 1 GB offset: lands in unmapped GPU virtual memory
+        finfo.bufferAddr = m_bValues.address + (1024ULL * 1024ULL * 1024ULL);
+        break;
+      case eBdaUseAfterFree:
+        finfo.bufferAddr = m_victimAddress;
+        break;
+      case eBdaIndirect:
+        // Points to the indirect buffer, which contains the (now stale) target address
+        finfo.bufferAddr = m_indirectBuffer.address;
+        break;
+      default:
+        finfo.bufferAddr = 0;
+        break;
+    }
+
     vkCmdUpdateBuffer(cmd, m_bFrameInfo.buffer, 0, sizeof(shaderio::FrameInfo), &finfo);
 
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                           VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+                           VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+                               | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+
+    // Compute-shader crash test: dispatch and return (no rasterization needed)
+    if(m_crashTest == eComputeLoop)
+    {
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
+      vkCmdDispatch(cmd, 1, 1, 1);
+    }
 
     // Transition GBuffer images to be used as attachments
     nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
@@ -275,25 +325,36 @@ public:
                                       VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                                       {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
 
+    // Rasterize the sphere
+    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    colorAttachment.clearValue                = {m_clearColor};
+    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
+    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+
+    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments    = &colorAttachment;
+    renderingInfo.pDepthAttachment     = &depthAttachment;
+
     vkCmdBeginRendering(cmd, &renderingInfo);
     nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline[m_currentPipe]);
+    int pipeIdx = getPipelineIndex(m_crashTest);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipelines[pipeIdx]);
     VkDeviceSize offsets{0};
-    if(m_tdrReason == TdrReason::eOutOfBoundsVertexBufferOffset)
-    {
-      offsets = std::rand();
-    }
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
     vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-    auto index_count = static_cast<uint32_t>(m_meshes[0].triangles.size() * 3);
-    vkCmdDrawIndexed(cmd, index_count, 1, 0, 0, 0);
+    auto indexCount = static_cast<uint32_t>(m_meshes[0].triangles.size() * 3);
+    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
 
     vkCmdEndRendering(cmd);
 
-    // Transition GBuffer images to be used as textures
+    // Transition GBuffer images back for display
     nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
     nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
                                       VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -307,7 +368,6 @@ private:
     nvvk::DescriptorBindings bindings;
     bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
     bindings.addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    bindings.addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
 
     NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
     NVVK_DBG_NAME(m_descriptorPack.getLayout());
@@ -334,12 +394,10 @@ private:
                                                    .format   = VK_FORMAT_R32G32_SFLOAT,
                                                    .offset   = offsetof(nvutils::PrimitiveVertex, tex)}};
 
-    // Helper to create the graphic pipeline
     nvvk::GraphicsPipelineCreator creator;
     creator.pipelineInfo.layout                  = m_pipelineLayout;
     creator.colorFormats                         = {m_colorFormat};
     creator.renderingState.depthAttachmentFormat = m_depthFormat;
-
 
 #if defined(AFTERMATH_AVAILABLE)
     {
@@ -349,9 +407,10 @@ private:
     }
 #endif
 
-    // Create all pipelines
-    m_pipeline.resize(10);
-    for(int i = 0; i < 10; i++)
+    // Create graphics pipelines: one per CRASH_TEST specialization constant value (0..5)
+    static constexpr int kNumGraphicsPipelines = 6;
+    m_graphicsPipelines.resize(kNumGraphicsPipelines);
+    for(int i = 0; i < kNumGraphicsPipelines; i++)
     {
       creator.clearShaders();
       nvvk::Specialization specialization;
@@ -362,35 +421,54 @@ private:
       creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", std::span(crash_aftermath_slang), pSpecializationInfo);
       creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", std::span(crash_aftermath_slang), pSpecializationInfo);
 #else
-      creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", std::span(bary_vert_glsl), pSpecializationInfo);
-      creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", std::span(bary_frag_glsl), pSpecializationInfo);
+      creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", std::span(crash_aftermath_vert_glsl), pSpecializationInfo);
+      creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", std::span(crash_aftermath_frag_glsl), pSpecializationInfo);
 #endif
 
-      NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, m_graphicState, &m_pipeline[i]));
-      NVVK_DBG_NAME(m_pipeline[i]);
+      NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, m_graphicState, &m_graphicsPipelines[i]));
+      NVVK_DBG_NAME(m_graphicsPipelines[i]);
+    }
+
+    // Create compute pipeline for the compute-shader infinite-loop crash test
+    {
+#if USE_SLANG
+      const VkShaderModuleCreateInfo moduleInfo{
+          .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+          .codeSize = std::span(crash_aftermath_slang).size_bytes(),
+          .pCode    = crash_aftermath_slang,
+      };
+      const char* entryPoint = "computeMain";
+#else
+      const VkShaderModuleCreateInfo moduleInfo{
+          .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+          .codeSize = std::span(crash_aftermath_comp_glsl).size_bytes(),
+          .pCode    = crash_aftermath_comp_glsl,
+      };
+      const char* entryPoint = "main";
+#endif
+
+      VkPipelineShaderStageCreateInfo stageInfo{
+          .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+          .pNext = &moduleInfo,
+          .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+          .pName = entryPoint,
+      };
+
+      VkComputePipelineCreateInfo compInfo{
+          .sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+          .stage  = stageInfo,
+          .layout = m_pipelineLayout,
+      };
+      NVVK_CHECK(vkCreateComputePipelines(m_device, {}, 1, &compInfo, nullptr, &m_computePipeline));
+      NVVK_DBG_NAME(m_computePipeline);
     }
   }
 
   void updateDescriptorSet()
   {
-    // Writing to descriptors
-    const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorBufferInfo dbi_val{m_bValues.buffer, 0, VK_WHOLE_SIZE};
-
     nvvk::WriteSetContainer writeContainer;
     writeContainer.append(m_descriptorPack.makeWrite(0), m_bFrameInfo);
     writeContainer.append(m_descriptorPack.makeWrite(1), m_bValues);
-    writeContainer.append(m_descriptorPack.makeWrite(2), m_image);
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
-  }
-
-  void wrongDescriptorSet()
-  {
-    // Writing to descriptors
-    VkDescriptorBufferInfo dbi_unif{nullptr, 0, VK_WHOLE_SIZE};
-    dbi_unif.buffer = VkBuffer(0xDEADBEEFDEADBEEF);
-    nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(m_descriptorPack.makeWrite(1), dbi_unif);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
   }
 
@@ -404,7 +482,7 @@ private:
       nvvk::StagingUploader uploader;
       uploader.init(&m_alloc, true);
 
-      // Create buffer of the mesh
+      // Mesh vertex and index buffers
       NVVK_CHECK(m_alloc.createBuffer(m_vertices, std::span(m_meshes[0].vertices).size_bytes(), VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
       NVVK_CHECK(uploader.appendBuffer(m_vertices, 0, std::span(m_meshes[0].vertices)));
       NVVK_DBG_NAME(m_vertices.buffer);
@@ -412,40 +490,43 @@ private:
       NVVK_CHECK(uploader.appendBuffer(m_indices, 0, std::span(m_meshes[0].triangles)));
       NVVK_DBG_NAME(m_indices.buffer);
 
-      // Frame information
+      // Frame information UBO
       NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT,
                                       VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
       NVVK_DBG_NAME(m_bFrameInfo.buffer);
-      // Dummy buffer of values
-      const std::vector<float> values = {0.5F};
+
+      // SSBO used by infinite-loop crash tests (writes prevent dead code elimination)
+      const std::vector<float> values(64, 0.5F);
       NVVK_CHECK(m_alloc.createBuffer(m_bValues, std::span(values).size_bytes(), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
                                       VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
       NVVK_CHECK(uploader.appendBuffer(m_bValues, 0, std::span(values)));
       NVVK_DBG_NAME(m_bValues.buffer);
 
-      // Create dummy texture
-      {
-        VkImageCreateInfo create_info = DEFAULT_VkImageCreateInfo;  // nvvk::makeImage2DCreateInfo({1, 1}, VK_FORMAT_R8G8B8A8_UNORM);
-        create_info.extent = {1, 1, 1};
-        create_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-        create_info.usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+      // Victim buffer for the BDA use-after-free crash test (test 6).
+      // VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT forces a separate VkDeviceMemory
+      // so that destroying the buffer actually unmaps the GPU virtual address range
+      // (without it, VMA suballocates from a shared block that stays mapped).
+      NVVK_CHECK(m_alloc.createBuffer(m_victimBuffer, 256, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO,
+                                      VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT));
+      m_victimAddress = m_victimBuffer.address;
+      NVVK_DBG_NAME(m_victimBuffer.buffer);
 
-        const VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        std::vector<uint8_t>      image_data = {255, 0, 255, 255};
+      // Indirect use-after-free (test 7): a pointer chain where the inner
+      // target is destroyed. The shader reads the target address from the
+      // indirect buffer, then writes through the (now stale) inner pointer.
+      NVVK_CHECK(m_alloc.createBuffer(m_indirectTarget, 256, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
+                                      VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT));
+      NVVK_DBG_NAME(m_indirectTarget.buffer);
+      NVVK_CHECK(m_alloc.createBuffer(m_indirectBuffer, sizeof(uint64_t), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
+      uint64_t indirectTargetAddr = m_indirectTarget.address;
+      NVVK_CHECK(uploader.appendBuffer(m_indirectBuffer, 0, std::span(&indirectTargetAddr, 1)));
+      NVVK_DBG_NAME(m_indirectBuffer.buffer);
 
-        NVVK_CHECK(m_alloc.createImage(m_image, create_info, DEFAULT_VkImageViewCreateInfo));
-        NVVK_CHECK(uploader.appendImage(m_image, std::span(image_data), VK_IMAGE_LAYOUT_GENERAL));
-        NVVK_DBG_NAME(m_image.image);
-        NVVK_DBG_NAME(m_image.descriptor.imageView);
-        m_samplerPool.acquireSampler(m_image.descriptor.sampler);
-        NVVK_DBG_NAME(m_image.descriptor.sampler);
-      }
       uploader.cmdUploadAppended(cmd);
       m_app->submitAndWaitTempCmdBuffer(cmd);
       uploader.deinit();
     }
 
-    // Camera position
     g_cameraManip->setLookat({0, 0, 1}, {0, 0, 0}, {0, 1, 0});
   }
 
@@ -455,15 +536,15 @@ private:
     m_alloc.destroyBuffer(m_bValues);
     m_alloc.destroyBuffer(m_vertices);
     m_alloc.destroyBuffer(m_indices);
-    m_alloc.destroyImage(m_image);
+    if(m_victimBuffer.buffer != VK_NULL_HANDLE)
+      m_alloc.destroyBuffer(m_victimBuffer);
+    if(m_indirectTarget.buffer != VK_NULL_HANDLE)
+      m_alloc.destroyBuffer(m_indirectTarget);
+    m_alloc.destroyBuffer(m_indirectBuffer);
 
-    m_vertices = {};
-    m_indices  = {};
-
-    for(auto& pipe : m_pipeline)
-    {
+    for(auto& pipe : m_graphicsPipelines)
       vkDestroyPipeline(m_device, pipe, nullptr);
-    }
+    vkDestroyPipeline(m_device, m_computePipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     m_descriptorPack.deinit();
 
@@ -473,33 +554,38 @@ private:
   }
 
   //--------------------------------------------------------------------------------------------------
-  nvapp::Application*     m_app{};       // Application
-  nvvk::GBuffer           m_gBuffers;    // G-Buffers: color + depth
-  nvvk::ResourceAllocator m_alloc;       // Allocator
-  nvvk::Buffer            m_bFrameInfo;  // The buffer used with frame data
-  nvvk::Buffer            m_bValues;     // The buffer used to pass bad data
+  nvapp::Application*     m_app{};
+  nvvk::GBuffer           m_gBuffers;
+  nvvk::ResourceAllocator m_alloc;
+  nvvk::Buffer            m_bFrameInfo;
+  nvvk::Buffer            m_bValues;
 
-  TdrReason m_tdrReason{eNone};
+  VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;
 
-  VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
-  VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
+  nvvk::Buffer      m_vertices;
+  nvvk::Buffer      m_indices;
+  VkClearColorValue m_clearColor = {{0.0F, 0.0F, 0.0F, 1.0F}};
+  VkDevice          m_device     = VK_NULL_HANDLE;
 
-  nvvk::Buffer      m_vertices;                                  // Buffer of the vertices
-  nvvk::Buffer      m_indices;                                   // Buffer of the indices
-  VkClearColorValue m_clearColor  = {{0.0F, 0.0F, 0.0F, 1.0F}};  // Clear color
-  VkDevice          m_device      = VK_NULL_HANDLE;              // Convenient
-  int               m_currentPipe = 0;
-  int               m_frameNumber = 0;
+  CrashTest m_crashTest = eNone;
+
+  // BDA use-after-free (test 6): address saved before the buffer is destroyed
+  nvvk::Buffer    m_victimBuffer{};
+  VkDeviceAddress m_victimAddress{};
+
+  // BDA indirect use-after-free (test 7): pointer chain with stale inner pointer
+  nvvk::Buffer m_indirectBuffer{};  // holds uint64_t pointing to m_indirectTarget
+  nvvk::Buffer m_indirectTarget{};  // destroyed when test is triggered
 
   std::vector<nvutils::PrimitiveMesh> m_meshes;
-  nvvk::Image                         m_image;
 
-  std::vector<VkPipeline> m_pipeline{};        // Graphic pipeline to render
-  VkPipelineLayout        m_pipelineLayout{};  // Pipeline layout
-  nvvk::DescriptorPack    m_descriptorPack{};  // Descriptor bindings, layout, pool, and set
-
+  std::vector<VkPipeline>     m_graphicsPipelines{};
+  VkPipeline                  m_computePipeline{};
+  VkPipelineLayout            m_pipelineLayout{};
+  nvvk::DescriptorPack        m_descriptorPack{};
   nvvk::GraphicsPipelineState m_graphicState;
-  nvvk::SamplerPool           m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
+  nvvk::SamplerPool           m_samplerPool{};
 };
 
 int main(int argc, char** argv)
@@ -523,8 +609,11 @@ int main(int argc, char** argv)
   nvvk::CheckError::getInstance().setCallbackFunction([&](VkResult result) { aftermath.errorCallback(result); });
 #endif
 
+  // Disable validation layers to avoid interference with the crashes we want to track with Aftermath.
+  // Validation layers can cause additional GPU work and synchronization that may prevent the crash
+  // from happening or alter its behavior, making it harder to analyze with Aftermath.
+  vkSetup.enableValidationLayers = false;
 
-  // Create the Vulkan context
   nvvk::Context vkContext;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
@@ -532,26 +621,22 @@ int main(int argc, char** argv)
     return 1;
   }
 
-
   appInfo.name           = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();
   appInfo.physicalDevice = vkContext.getPhysicalDevice();
   appInfo.queues         = vkContext.getQueueInfos();
 
-
-  // Create the application
   nvapp::Application app;
   app.init(appInfo);
 
-  // Camera manipulator (global)
   g_cameraManip   = std::make_shared<nvutils::CameraManipulator>();
   auto elemCamera = std::make_shared<nvapp::ElementCamera>();
   elemCamera->setCameraManipulator(g_cameraManip);
 
   app.addElement(elemCamera);
   app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());
-  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));
   app.addElement(std::make_shared<AftermathSample>());
 
   app.run();

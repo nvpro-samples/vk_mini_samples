@@ -137,7 +137,9 @@ public:
       ImGui::End();
     }
 
-    {  // Window Title
+    // Window Title - only when not in headless mode, and refreshing every seconds to avoid impacting the performance
+    if(!m_app->isHeadless())
+    {
       static float dirty_timer = 0.0F;
       dirty_timer += ImGui::GetIO().DeltaTime;
       if(dirty_timer > 1.0F)  // Refresh every seconds
@@ -341,6 +343,7 @@ int main(int argc, char** argv)
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
   reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  reg.add({"frames", "num frames in headless"}, &appInfo.headlessFrameCount);
   cli.add(reg);
   cli.parse(argc, argv);
 

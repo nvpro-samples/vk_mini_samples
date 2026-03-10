@@ -23,17 +23,13 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_scalar_block_layout : enable
-#extension GL_EXT_nonuniform_qualifier : enable
-
 
 #include "shaderio.h"
 
 layout(location = 0) in vec3 inFragColor;
 layout(location = 1) in vec2 inUv;
-layout(location = 2) in float alpha;
 
 layout(location = 0) out vec4 outColor;
-
 
 layout(set = 0, binding = 0) uniform FrameInfo_
 {
@@ -43,31 +39,23 @@ layout(set = 0, binding = 1) buffer Testing_
 {
   float values[];
 };
-layout(set = 0, binding = 2) uniform sampler2D inTexture[];
 
-struct BadStruct
+layout(buffer_reference, scalar) buffer WriteTarget_
 {
-  float bad_value;
-  mat4  bad_mat;
-};
-layout(buffer_reference, scalar) buffer BadStruct_
-{
-  BadStruct s[];
+  float v;
 };
 
+layout(buffer_reference, scalar) buffer IndirectPtr_
+{
+  uint64_t targetAddr;
+};
 
 layout(constant_id = 0) const int CRASH_TEST = 0;
-
-vec3 IntegerToColor(uint val)
-{
-  const vec3 freq = vec3(1.33333f, 2.33333f, 3.33333f);
-  return vec3(sin(freq * val) * .5 + .5);
-}
 
 
 void main()
 {
-  float iTime = frameInfo.time[0];
+  float iTime = frameInfo.time.x;
 
   // Ripple color
   vec3  col = vec3(inUv, 0.5 + 0.5 * sin(iTime * 6.5));
@@ -75,10 +63,15 @@ void main()
   float z   = 1.0 + 0.5 * sin((r + iTime * 0.05) / 0.005);
   col *= z;
 
-
-  if(CRASH_TEST == 2)
+  // ---------------------------------------------------------------------------
+  // TDR CRASH: Infinite loop using sin()
+  // ---------------------------------------------------------------------------
+  if(CRASH_TEST == 1)
   {
-    // Entering an infinite loop
+    // TDR: sin(x) for x in (0,1) returns a value in (0,1), so multiplying
+    // col.x by sin(col.x) keeps col.x small and it never exceeds 10.
+    // The GPU cannot complete this shader, triggering Windows TDR
+    // (Timeout Detection and Recovery) after ~2 seconds -> VK_ERROR_DEVICE_LOST.
     col = min(col, vec3(1.0));
     while(col.x <= 10.0)
     {
@@ -86,23 +79,76 @@ void main()
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // TDR CRASH: Infinite loop with SSBO writes
+  // ---------------------------------------------------------------------------
+  if(CRASH_TEST == 2)
+  {
+    // TDR: v starts in (0,1) and v *= sin(v) keeps shrinking it toward 0.
+    // Once v reaches 0.0 in float32, it stays there forever (0 * sin(0) = 0),
+    // but "v <= 10.0" remains true. The SSBO write each iteration is a visible
+    // side-effect that prevents the compiler from optimizing the loop away
+    // -> guaranteed TDR -> VK_ERROR_DEVICE_LOST.
+    float v = min(col.x, 0.99);
+    while(v <= 10.0)
+    {
+      v *= sin(v);
+      values[0] = v;
+    }
+    col *= values[0];
+  }
+
+  // ---------------------------------------------------------------------------
+  // PAGE FAULT CRASH: Write through BDA to unmapped GPU virtual memory
+  // ---------------------------------------------------------------------------
   if(CRASH_TEST == 3)
   {
-    // This is not good, but might not crash
-    values[frameInfo.badOffset] = 0.5 + 0.5 * abs(sin(gl_FragCoord.y + iTime) + sin(gl_FragCoord.x + iTime * 0.5));
-    col *= values[frameInfo.badOffset];
-
-    // Bad access
-    BadStruct_ tbuf = BadStruct_(frameInfo.bufferAddr);
-    BadStruct  buff = tbuf.s[frameInfo.badOffset + 100000000];  // <------ Make it crash !!!
-    col += buff.bad_value;
+    // PAGE FAULT: bufferAddr is set by the CPU to an unmapped GPU virtual
+    // address -- either a valid buffer base + huge offset (overrun past the
+    // buffer end), NULL (address 0), or the address of a previously destroyed
+    // buffer (use-after-free).
+    // Writing through this BDA pointer causes a GPU page fault that the
+    // driver cannot recover from -> VK_ERROR_DEVICE_LOST.
+    WriteTarget_ ptr = WriteTarget_(frameInfo.bufferAddr);
+    ptr.v = 1.0;
+    col += ptr.v;
   }
 
+  // ---------------------------------------------------------------------------
+  // PAGE FAULT CRASH: Wild pointer spray -- each fragment writes to a
+  // different pseudo-random address in the GPU virtual address space
+  // ---------------------------------------------------------------------------
   if(CRASH_TEST == 4)
   {
-    col += texture(inTexture[frameInfo.badOffset + 100000000], inUv).xyz;
-    col *= IntegerToColor(frameInfo.badOffset);
+    // WILD POINTER SPRAY: Each fragment hashes its screen coordinates to
+    // produce a different address in the GPU's ~40-bit virtual address space.
+    // With thousands of fragments writing to scattered addresses, we're
+    // guaranteed to hit unmapped pages -> GPU page fault -> VK_ERROR_DEVICE_LOST.
+    uint  h    = uint(gl_FragCoord.x) * 2654435761u ^ uint(gl_FragCoord.y) * 340573321u;
+    uint64_t addr = uint64_t(h) << 8;  // spread across 40-bit VA range
+    addr &= ~uint64_t(3);              // 4-byte alignment
+    addr += 4096u;                     // skip null page region
+    WriteTarget_ ptr = WriteTarget_(addr);
+    ptr.v = 1.0;
+    col += ptr.v;
   }
 
-  outColor = vec4(col, alpha);
+  // ---------------------------------------------------------------------------
+  // PAGE FAULT CRASH: Indirect use-after-free via BDA pointer chain
+  // ---------------------------------------------------------------------------
+  if(CRASH_TEST == 5)
+  {
+    // INDIRECT USE-AFTER-FREE: bufferAddr points to an "indirect" buffer that
+    // holds the BDA of a second "target" buffer. The target buffer has been
+    // destroyed on the CPU side. The shader follows the pointer chain:
+    //   bufferAddr -> indirect buffer -> [stale target address] -> WRITE
+    // The write through the dangling inner pointer causes a GPU page fault
+    // -> VK_ERROR_DEVICE_LOST.
+    IndirectPtr_ indirect = IndirectPtr_(frameInfo.bufferAddr);
+    WriteTarget_ target   = WriteTarget_(indirect.targetAddr);
+    target.v = 1.0;
+    col += target.v;
+  }
+
+  outColor = vec4(col, 1.0);
 }

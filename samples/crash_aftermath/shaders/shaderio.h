@@ -27,11 +27,8 @@ NAMESPACE_SHADERIO_BEGIN()
 struct FrameInfo
 {
   float4x4 mpv;
-  int      badOffset;
-  int      errorTest;
   float2   resolution;
-  float    time[2];
-  int      _pad2;
+  float2   time;
   uint64_t bufferAddr;
 };
 

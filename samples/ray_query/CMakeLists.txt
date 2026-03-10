@@ -37,10 +37,19 @@ set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
 # Adding local pre-compiled version of the tonemapper
 list(APPEND SHADER_SLANG_FILES ${NVSHADERS_DIR}/nvshaders/tonemapper.slang)
 
+# Define required SPIR-V capabilities for ray tracing and advanced features
+set(SHADER_CAPABILITIES 
+  spvGroupNonUniformBallot            # Ballot operations for subgroup functionality
+  spvGroupNonUniformArithmetic        # Arithmetic operations across subgroups
+  spvRayQueryKHR 					  # Ray query operations
+)
+
 compile_slang(
     "${SHADER_SLANG_FILES}"
      "${SHADER_OUTPUT_DIR}"
-    GENERATED_SHADER_SLANG_HEADERS
+    HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
+    SPVS_VAR GENERATED_SHADER_SLANG_SPVS
+    CAPABILITIES ${SHADER_CAPABILITIES}  # List expands and is automatically joined with `+`
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
 )
 
