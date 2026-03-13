@@ -347,9 +347,13 @@ int main(int argc, char** argv)
   cli.add(reg);
   cli.parse(argc, argv);
 
-  nvvk::ContextInitInfo vkSetup = {
-      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-  };
+  // Enable VK_EXT_frame_boundary, if it exists, so tools like Nsight Graphics
+  // can see frame markers even if there is no swapchain.
+  VkPhysicalDeviceFrameBoundaryFeaturesEXT frameBoundaryFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAME_BOUNDARY_FEATURES_EXT};
+  nvvk::ContextInitInfo vkSetup = {.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+                                   .deviceExtensions   = {{.extensionName = VK_EXT_FRAME_BOUNDARY_EXTENSION_NAME,
+                                                           .feature       = &frameBoundaryFeatures,
+                                                           .required      = false}}};
   if(!appInfo.headless)
   {
     nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
@@ -366,12 +370,13 @@ int main(int argc, char** argv)
   }
 
 
-  appInfo.name           = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
-  appInfo.vSync          = true;
-  appInfo.instance       = vkContext.getInstance();
-  appInfo.device         = vkContext.getDevice();
-  appInfo.physicalDevice = vkContext.getPhysicalDevice();
-  appInfo.queues         = vkContext.getQueueInfos();
+  appInfo.name             = fmt::format("{} ({})", TARGET_NAME, SHADER_LANGUAGE_STR);
+  appInfo.vSync            = true;
+  appInfo.instance         = vkContext.getInstance();
+  appInfo.device           = vkContext.getDevice();
+  appInfo.physicalDevice   = vkContext.getPhysicalDevice();
+  appInfo.queues           = vkContext.getQueueInfos();
+  appInfo.useFrameBoundary = vkContext.hasExtensionEnabled(VK_EXT_FRAME_BOUNDARY_EXTENSION_NAME);
 
   // Create the application
   nvapp::Application app;
