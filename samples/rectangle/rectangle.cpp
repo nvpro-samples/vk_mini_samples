@@ -25,7 +25,7 @@
 */
 
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #include <array>
@@ -324,14 +324,14 @@ private:
   nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
 
 
-  VkFormat          m_colorFormat    = VK_FORMAT_B8G8R8A8_UNORM;       // Color format of the image
-  VkFormat          m_depthFormat    = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkPipelineLayout  m_pipelineLayout = VK_NULL_HANDLE;                 // The description of the pipeline
-  VkPipeline        m_pipeline       = VK_NULL_HANDLE;                 // The graphic pipeline to render
-  nvvk::Buffer      m_vertices;                                        // Buffer of the vertices
-  nvvk::Buffer      m_indices;                                         // Buffer of the indices
-  VkClearColorValue m_clearColor{{0.1F, 0.4F, 0.1F, 1.0F}};            // Clear color
-  VkDevice          m_device = VK_NULL_HANDLE;                         // Convenient
+  VkFormat          m_colorFormat    = VK_FORMAT_B8G8R8A8_UNORM;  // Color format of the image
+  VkFormat          m_depthFormat    = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer
+  VkPipelineLayout  m_pipelineLayout = VK_NULL_HANDLE;            // The description of the pipeline
+  VkPipeline        m_pipeline       = VK_NULL_HANDLE;            // The graphic pipeline to render
+  nvvk::Buffer      m_vertices;                                   // Buffer of the vertices
+  nvvk::Buffer      m_indices;                                    // Buffer of the indices
+  VkClearColorValue m_clearColor{{0.1F, 0.4F, 0.1F, 1.0F}};       // Clear color
+  VkDevice          m_device = VK_NULL_HANDLE;                    // Convenient
 };
 
 
