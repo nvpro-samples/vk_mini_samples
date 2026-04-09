@@ -44,6 +44,7 @@ Start with these foundational samples to understand the framework:
 | Sample | Description | Image | GLSL | Slang |
 |--------|-------------|-------|------|-------|
 | [barycentric_wireframe](samples/barycentric_wireframe) | Single-pass solid-wireframe rendering using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) | ✅ | ✅ |
+| [descriptor_heap](samples/descriptor_heap) | VK_EXT_descriptor_heap with per-draw and bindless rendering modes | ![](samples/descriptor_heap/docs/descriptor_heap_th.jpg) | ✅ | ✅ |
 | [gltf_raytrace](samples/gltf_raytrace) | glTF scene loading with path-tracing renderer | ![](samples/gltf_raytrace/docs/gltf_th.jpg) | ❌ | ✅ |
 | [image_ktx](samples/image_ktx) | KTX image display with tonemapping post-processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | ✅ | ✅ |
 | [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | ✅ | ✅ |

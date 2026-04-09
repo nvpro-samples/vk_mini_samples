@@ -68,6 +68,13 @@
 // The camera for the scene
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
 
+//////////////////////////////////////////////////////////////////////////
+/// Shader indices
+enum class ShaderIndex
+{
+  eVertex   = 0,
+  eFragment = 1,
+};
 
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Display an image on a quad.
@@ -229,7 +236,8 @@ public:
     m_graphicState.cmdApplyAllStates(cmd);
 
     // Bind linked shaders
-    m_graphicState.cmdBindShaders(cmd, {.vertex = m_shaders[0], .fragment = m_shaders[1]});
+    m_graphicState.cmdBindShaders(cmd, {.vertex   = m_shaders[static_cast<size_t>(ShaderIndex::eVertex)],
+                                        .fragment = m_shaders[static_cast<size_t>(ShaderIndex::eFragment)]});
 
     // Rendering to GBuffer: attachment information
     VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;

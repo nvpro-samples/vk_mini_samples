@@ -12,6 +12,7 @@ add_subdirectory(common)
 
 add_subdirectory(samples/barycentric_wireframe)
 add_subdirectory(samples/compute_multi_threaded)
+add_subdirectory(samples/descriptor_heap)
 add_subdirectory(samples/compute_only)
 add_subdirectory(samples/crash_aftermath)
 add_subdirectory(samples/gltf_raytrace)
