@@ -22,7 +22,9 @@
  This sample shows how to load and display an image.
  - Render to a GBuffer and displayed using ImGui
  - The image is applied as a texture on a quad.
- - It is possible to change the sampling filters on the fly, with proper flagging of descriptor layout.
+ - Texturing uses VK_EXT_descriptor_heap bindless-style: nvvk::DescriptorHeap + shaders that
+   index layout(descriptor_heap) / Slang DescriptorHandle with spvDescriptorHeapEXT. Push data
+   carries transform/scale and samplerIdx (read in the shader to choose a sampler heap slot).
  - Zoom and pan the image under the cursor
 
 */
@@ -34,6 +36,7 @@
 #define STB_IMAGE_IMPLEMENTATION  // Implementation of the image loading library
 
 #include <array>
+#include <cstddef>
 
 #include <GLFW/glfw3.h>
 #undef APIENTRY
@@ -55,10 +58,12 @@
 #include <nvutils/logger.hpp>
 #include <nvutils/parameter_parser.hpp>
 #include <nvvk/check_error.hpp>
+#include <fmt/format.h>
+
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
-#include <nvvk/descriptors.hpp>
+#include <nvvk/descriptor_heap.hpp>
 #include <nvvk/gbuffers.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
@@ -78,10 +83,9 @@
 // Texture wrapper class which load an image
 struct SampleTexture
 {
-  SampleTexture(nvvk::ResourceAllocator* alloc)
+  explicit SampleTexture(nvvk::ResourceAllocator* alloc)
       : m_alloc(alloc)
   {
-    m_device = m_alloc->getDevice();
   }
 
   ~SampleTexture() { m_alloc->destroyImage(const_cast<nvvk::Image&>(m_image)); }
@@ -122,14 +126,13 @@ struct SampleTexture
     nvvk::cmdGenerateMipmaps(cmd, m_image.image, m_size, createInfo.mipLevels);
   }
 
-  void               setSampler(const VkSampler& sampler) { m_image.descriptor.sampler = sampler; }
-  [[nodiscard]] bool isValid() const { return m_image.image != nullptr; }
-  [[nodiscard]] const VkDescriptorImageInfo& descriptor() const { return m_image.descriptor; }
-  [[nodiscard]] const VkExtent2D&            getSize() const { return m_size; }
+  [[nodiscard]] bool              isValid() const { return m_image.image != VK_NULL_HANDLE; }
+  [[nodiscard]] VkImage           getImage() const { return m_image.image; }
+  [[nodiscard]] VkFormat          getFormat() const { return m_image.format; }
+  [[nodiscard]] const VkExtent2D& getSize() const { return m_size; }
   [[nodiscard]] float getAspect() const { return static_cast<float>(m_size.width) / static_cast<float>(m_size.height); }
 
 private:
-  VkDevice                 m_device{};
   nvvk::ResourceAllocator* m_alloc{nullptr};
   VkExtent2D               m_size{0, 0};
   nvvk::Image              m_image;
@@ -155,23 +158,19 @@ public:
     m_app    = app;
     m_device = m_app->getDevice();
 
-    // Creating the allocator
+    // Allocator: buffer device address required for descriptor heap buffers
     m_alloc.init({
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .physicalDevice   = app->getPhysicalDevice(),
         .device           = app->getDevice(),
         .instance         = app->getInstance(),
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });
 
-    // set up staging
     m_stagingUploader.init(&m_alloc, true);
 
-    // Acquiring the sampler which will be used for displaying the GBuffer and the texture
     m_samplerPool.init(app->getDevice());
-    createSamplers();
-
-    // Creating the G-Buffer, a single color attachment, no depth-stencil
-    VkSampler linearSampler;
+    VkSampler linearSampler{};
     NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
     NVVK_DBG_NAME(linearSampler);
     m_gBuffers.init({.allocator      = &m_alloc,
@@ -179,29 +178,82 @@ public:
                      .imageSampler   = linearSampler,
                      .descriptorPool = m_app->getTextureDescriptorPool()});
 
+    NVVK_CHECK(m_heap.init(app->getPhysicalDevice(), app->getDevice()));
 
-    // Find image file and create the texture
+    const VkBufferUsageFlags2 heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    VkDeviceSize              samplerBufSize  = m_heap.setupSamplerHeap(2);
+    VkDeviceSize              resourceBufSize = m_heap.setupResourceHeap(1);
+    NVVK_CHECK(m_alloc.createBuffer(m_samplerHeapBuffer, samplerBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO, {},
+                                    m_heap.getSamplerHeapAlignment()));
+    NVVK_CHECK(m_alloc.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                    VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                                    m_heap.getResourceHeapAlignment()));
+    NVVK_DBG_NAME(m_samplerHeapBuffer.buffer);
+    NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
+
     const std::filesystem::path imageFilename = nvutils::findFile("fruit.jpg", nvsamples::getResourcesDirs());
     assert(!imageFilename.empty());
     m_texture           = std::make_shared<SampleTexture>(&m_alloc);
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     m_texture->createFromFile(cmd, m_stagingUploader, imageFilename);
-    m_texture->setSampler(m_samplers[0]);  // Default to nearest
-    m_app->submitAndWaitTempCmdBuffer(cmd);
-    m_stagingUploader.releaseStaging();
     assert(m_texture->isValid());
 
+    // --- Method A: staging upload (sampler heap is device-local only) ---
+    // appendBufferMapping returns a writable pointer into the staging buffer;
+    // vkWriteSamplerDescriptorsEXT writes land there directly (zero intermediate copy).
+    void* smpMapping = nullptr;
+    NVVK_CHECK(m_stagingUploader.appendBufferMapping(m_samplerHeapBuffer, 0, m_heap.getSamplerHeapSize(), smpMapping));
+
+    VkSamplerCreateInfo nearestSamplerCI{
+        .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter    = VK_FILTER_NEAREST,
+        .minFilter    = VK_FILTER_NEAREST,
+        .mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    };
+    m_nearestSamplerIdx = m_heap.acquireSamplerDescriptor(nearestSamplerCI, smpMapping);
+
+    VkSamplerCreateInfo linearSamplerCI{
+        .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter    = VK_FILTER_LINEAR,
+        .minFilter    = VK_FILTER_LINEAR,
+        .mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    };
+    m_linearSamplerIdx = m_heap.acquireSamplerDescriptor(linearSamplerCI, smpMapping);
+
+    m_stagingUploader.cmdUploadAppended(cmd);
+
+    // --- Method B: persistently mapped buffer (resource heap is host-visible) ---
+    // vkWriteResourceDescriptorsEXT writes land directly in device-visible memory;
+    // no staging upload needed at all.
+    NVVK_CHECK(m_heap.writeImageDescriptor(0, m_texture->getImage(), m_texture->getFormat(),
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_resourceHeapBuffer.mapping));
+
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+    m_stagingUploader.releaseStaging();
+
     createPipeline();
-    createVkBuffers();  // The geometry is a simple quad
+    createVkBuffers();
   }
 
   void onDetach() override
   {
     vkDeviceWaitIdle(m_device);
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     vkDestroyShaderEXT(m_device, m_vertexShader, nullptr);
     vkDestroyShaderEXT(m_device, m_fragmentShader, nullptr);
+    m_vertexShader   = VK_NULL_HANDLE;
+    m_fragmentShader = VK_NULL_HANDLE;
+
+    m_heap.releaseSamplerDescriptor(m_nearestSamplerIdx);
+    m_heap.releaseSamplerDescriptor(m_linearSamplerIdx);
+    m_alloc.destroyBuffer(m_samplerHeapBuffer);
+    m_alloc.destroyBuffer(m_resourceHeapBuffer);
+    m_samplerHeapBuffer  = {};
+    m_resourceHeapBuffer = {};
+    m_heap.deinit();
 
     m_alloc.destroyBuffer(m_vertices);
     m_alloc.destroyBuffer(m_indices);
@@ -258,7 +310,7 @@ public:
         change |= ImGui::RadioButton("Linear", &mode, 1);
         if(change)
         {
-          m_texture->setSampler(m_samplers[mode]);
+          m_samplerIdx = (mode == 0) ? m_nearestSamplerIdx : m_linearSamplerIdx;
         }
       }
       if(ImGui::Button("Reset"))
@@ -345,28 +397,28 @@ public:
     const float imgAspectRatio  = m_texture->getAspect();
     const float viewAspectRatio = m_gBuffers.getAspectRatio();
 
-    m_pushConst.scale = {1.0F, 1.0F};
+    m_pushData.scale = {1.0F, 1.0F};
 
     bool  isImgWider = imgAspectRatio > viewAspectRatio;
     float ratio      = isImgWider ? viewAspectRatio / imgAspectRatio : imgAspectRatio / viewAspectRatio;
 
-    // If aspect ratio <= 1, scale x for wider images and y for taller ones
     bool scale_x = (isImgWider ? imgAspectRatio : viewAspectRatio) <= 1;
     if(scale_x)
     {
-      m_pushConst.scale.x = ratio;
+      m_pushData.scale.x = ratio;
     }
     else
     {
-      m_pushConst.scale.y = ratio;
+      m_pushData.scale.y = ratio;
     }
 
-    // Applying the zoom and pan
     const glm::mat4 ortho = glm::ortho(-1.0F, 1.0F, -1.0F, 1.0F, -1.0F, 1.0F);
     const glm::mat4 scale = glm::scale(glm::mat4(1), glm::vec3(g_imageViewerSettings.zoom, g_imageViewerSettings.zoom, 0));
     const glm::mat4 trans =
         glm::translate(glm::mat4(1), glm::vec3(g_imageViewerSettings.pan.x, g_imageViewerSettings.pan.y, 0));
-    m_pushConst.transfo = ortho * scale * trans;
+    m_pushData.transfo    = ortho * scale * trans;
+    m_pushData.samplerIdx = m_samplerIdx;
+    m_pushData._pad       = 0;
 
     // Drawing the quad in a G-Buffer
     VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
@@ -392,9 +444,12 @@ public:
       m_dynamicPipeline.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
       m_dynamicPipeline.cmdBindShaders(cmd, {.vertex = m_vertexShader, .fragment = m_fragmentShader});
 
-      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant), &m_pushConst);
+      m_heap.cmdBindHeaps(cmd, m_samplerHeapBuffer.address, m_resourceHeapBuffer.address);
 
-      updateTexture(cmd);
+      VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                                 .offset = 0,
+                                 .data   = {.address = &m_pushData, .size = sizeof(PushData)}};
+      vkCmdPushDataEXT(cmd, &pushInfo);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, offsets);
       vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT16);
@@ -416,24 +471,21 @@ private:
     glm::vec2 uv;
   };
 
-  struct PushConstant
+  // Matches shader push_constant / [[vk::push_constant]]. samplerIdx is read in the fragment
+  // stage (GLSL: flat varying; Slang: FragmentInput.samplerIdx) to index the sampler heap.
+  struct PushData
   {
     glm::mat4 transfo{1};
     glm::vec2 scale{1};
+    uint32_t  samplerIdx{};
+    uint32_t  _pad{};
   };
+  static_assert(sizeof(PushData) == 80, "PushData must match shader push layout");
 
   void createPipeline()
   {
-    m_descBind.addBinding(
-        {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT});
-    NVVK_CHECK(m_descBind.createDescriptorSetLayout(m_device, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT, &m_descriptorSetLayout));
-    NVVK_DBG_NAME(m_descriptorSetLayout);
-
-    // Pipeline layout
-    const VkPushConstantRange pushConstantRanges = {VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstant)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorSetLayout}, {pushConstantRanges}));
-    NVVK_DBG_NAME(m_pipelineLayout);
-
+    // Bindless descriptor heap: SPIR-V uses SPV_EXT_descriptor_heap directly; no
+    // VkShaderDescriptorSetAndBindingMappingInfoEXT (per vk_mini_samples descriptor_heap bindless path).
     m_dynamicPipeline.vertexBindings = {
         {.sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, .stride = sizeof(Vertex), .divisor = 1}};
     m_dynamicPipeline.vertexAttributes = {{.sType    = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
@@ -445,57 +497,48 @@ private:
                                            .format   = VK_FORMAT_R32G32_SFLOAT,
                                            .offset   = offsetof(Vertex, uv)}};
 
-    // Creating the shaders
-    VkShaderCreateInfoEXT shaderInfo{
-        .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
-        .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-        .setLayoutCount         = 1,
-        .pSetLayouts            = &m_descriptorSetLayout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &pushConstantRanges,
-    };
+    VkShaderCreateFlagsEXT flags = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT | VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT;
+
+    std::array<VkShaderCreateInfoEXT, 2> createInfos{};
+    createInfos[0].sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
+    createInfos[0].pNext     = nullptr;
+    createInfos[0].flags     = flags;
+    createInfos[0].stage     = VK_SHADER_STAGE_VERTEX_BIT;
+    createInfos[0].nextStage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    createInfos[0].codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT;
 #if USE_SLANG
-    shaderInfo.codeSize  = image_viewer_slang_sizeInBytes;
-    shaderInfo.pCode     = image_viewer_slang;
-    shaderInfo.pName     = "vertexMain";
-    shaderInfo.stage     = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderInfo.nextStage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_vertexShader);
-    NVVK_DBG_NAME(m_vertexShader);
-    shaderInfo.pName     = "fragmentMain";
-    shaderInfo.stage     = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderInfo.nextStage = 0;
-    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_fragmentShader);
-    NVVK_DBG_NAME(m_fragmentShader);
+    createInfos[0].codeSize = image_viewer_slang_sizeInBytes;
+    createInfos[0].pCode    = image_viewer_slang;
+    createInfos[0].pName    = "vertexMain";
 #else
-    shaderInfo.pName    = "main";
-    shaderInfo.codeSize = std::span(image_viewer_vert_glsl).size_bytes();
-    shaderInfo.pCode    = std::span(image_viewer_vert_glsl).data();
-    shaderInfo.stage    = VK_SHADER_STAGE_VERTEX_BIT;
-    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_vertexShader);
-    NVVK_DBG_NAME(m_vertexShader);
-    shaderInfo.pName    = "main";
-    shaderInfo.stage    = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderInfo.codeSize = std::span(image_viewer_frag_glsl).size_bytes();
-    shaderInfo.pCode    = std::span(image_viewer_frag_glsl).data();
-    vkCreateShadersEXT(m_app->getDevice(), 1U, &shaderInfo, nullptr, &m_fragmentShader);
-    NVVK_DBG_NAME(m_fragmentShader);
+    createInfos[0].codeSize = std::span(image_viewer_vert_glsl).size_bytes();
+    createInfos[0].pCode    = std::span(image_viewer_vert_glsl).data();
+    createInfos[0].pName    = "main";
 #endif
-  }
 
-  // Push the image descriptor, such that it can be used in shader
-  void updateTexture(VkCommandBuffer cmd)
-  {
-    nvvk::WriteSetContainer container;
-    container.append(m_descBind.getWriteSet(0), m_texture->descriptor());
+    createInfos[1].sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
+    createInfos[1].pNext     = nullptr;
+    createInfos[1].flags     = flags;
+    createInfos[1].stage     = VK_SHADER_STAGE_FRAGMENT_BIT;
+    createInfos[1].nextStage = 0;
+    createInfos[1].codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT;
+#if USE_SLANG
+    createInfos[1].codeSize = image_viewer_slang_sizeInBytes;
+    createInfos[1].pCode    = image_viewer_slang;
+    createInfos[1].pName    = "fragmentMain";
+#else
+    createInfos[1].codeSize = std::span(image_viewer_frag_glsl).size_bytes();
+    createInfos[1].pCode    = std::span(image_viewer_frag_glsl).data();
+    createInfos[1].pName    = "main";
+#endif
 
-    VkPushDescriptorSetInfo pushInfo{.sType                = VK_STRUCTURE_TYPE_PUSH_DESCRIPTOR_SET_INFO,
-                                     .stageFlags           = VK_SHADER_STAGE_ALL_GRAPHICS,
-                                     .layout               = m_pipelineLayout,
-                                     .descriptorWriteCount = container.size(),
-                                     .pDescriptorWrites    = container.data()};
-
-    vkCmdPushDescriptorSet2(cmd, &pushInfo);
+    std::array<VkShaderEXT, 2> shaders{};
+    NVVK_CHECK(vkCreateShadersEXT(m_device, static_cast<uint32_t>(createInfos.size()), createInfos.data(), nullptr,
+                                  shaders.data()));
+    m_vertexShader   = shaders[0];
+    m_fragmentShader = shaders[1];
+    NVVK_DBG_NAME(m_vertexShader);
+    NVVK_DBG_NAME(m_fragmentShader);
   }
 
   // Creating the geometry and pushing it to the GPU
@@ -524,27 +567,6 @@ private:
     }
   }
 
-  // Create two samplers, one nearest, one linear
-  void createSamplers()
-  {
-    m_samplers.resize(2);
-
-    VkSamplerCreateInfo sampler_info{
-        .sType      = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter  = VK_FILTER_NEAREST,
-        .minFilter  = VK_FILTER_NEAREST,
-        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-    };
-
-    NVVK_CHECK(m_samplerPool.acquireSampler(m_samplers[0], sampler_info));
-    NVVK_DBG_NAME(m_samplers[0]);
-
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    NVVK_CHECK(m_samplerPool.acquireSampler(m_samplers[1], sampler_info));
-    NVVK_DBG_NAME(m_samplers[1]);
-  }
-
   // Saving the buffer to disk
   void onLastHeadlessFrame() override
   {
@@ -557,28 +579,26 @@ private:
   //
   nvapp::Application*     m_app{};
   nvvk::ResourceAllocator m_alloc;
+  nvvk::DescriptorHeap    m_heap{};
   nvvk::StagingUploader   m_stagingUploader{};
   nvvk::SamplerPool       m_samplerPool;
-  nvvk::GBuffer           m_gBuffers;  // G-Buffers: color
+  nvvk::GBuffer           m_gBuffers;
 
-  VkDevice m_device{};  // Convenient
+  VkDevice m_device{};
 
-  // Resources
-  nvvk::Buffer           m_vertices;  // Buffer of the vertices
-  nvvk::Buffer           m_indices;   // Buffer of the indices
-  std::vector<VkSampler> m_samplers;
+  nvvk::Buffer m_samplerHeapBuffer{};
+  nvvk::Buffer m_resourceHeapBuffer{};
+  nvvk::Buffer m_vertices;
+  nvvk::Buffer m_indices;
 
-  // Data and setting
-  PushConstant                   m_pushConst;  // Information sent to the shader
-  std::shared_ptr<SampleTexture> m_texture;    // Loaded image and displayed
+  PushData                       m_pushData{};
+  uint32_t                       m_samplerIdx{};
+  uint32_t                       m_nearestSamplerIdx{};
+  uint32_t                       m_linearSamplerIdx{};
+  std::shared_ptr<SampleTexture> m_texture;
 
-  // Pipeline
-  VkDescriptorSetLayout       m_descriptorSetLayout{};  // Descriptor set layout
-  VkPipelineLayout            m_pipelineLayout{};       // The description of the pipeline
   nvvk::GraphicsPipelineState m_dynamicPipeline;
-  nvvk::DescriptorBindings    m_descBind;
 
-  // Shaders
   VkShaderEXT m_vertexShader{};
   VkShaderEXT m_fragmentShader{};
 };
@@ -603,14 +623,19 @@ int main(int argc, char** argv)
   cli.add(reg);
   cli.parse(argc, argv);
 
-  // Vulkan creation context information
   VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dStateFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+  heapFeatures.descriptorHeap = VK_TRUE;
+  VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
+  untypedPtrFeatures.shaderUntypedPointers = VK_TRUE;
+
   vkSetup = {.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
              .deviceExtensions   = {
-                 {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
                  {VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &dStateFeatures},
                  {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures},
+                 {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, &heapFeatures},
+                 {VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME, &untypedPtrFeatures},
              }};
 
   if(!appInfo.headless)

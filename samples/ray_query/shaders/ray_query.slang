@@ -236,7 +236,7 @@ float3 pathTrace(RayDesc ray, inout uint seed)
     // Setting up the material
     PbrMaterial pbrMat  = defaultPbrMaterial(mat.albedo, mat.metallic, mat.roughness, payload.nrm, payload.geonrm);
     pbrMat.transmission = mat.transmission;
-    pbrMat.isThinWalled = false;
+    pbrMat.thickness    = 1.0;  // Fake thickness for the IOR, to have some refraction effect.
     float matIor        = 1.1;
 
     if(isInside)

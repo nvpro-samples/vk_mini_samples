@@ -19,14 +19,20 @@
 
 #version 450
 
-layout(location = 0) in vec2 inFragUv;
-layout(location = 0) out vec4 outColor;
-layout(set = 0, binding = 0) uniform sampler2D inTexture;
+#extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_EXT_descriptor_heap : enable
 
+layout(location = 0) in vec2 inFragUv;
+layout(location = 1) flat in uint inSamplerIdx;
+layout(location = 0) out vec4 outColor;
+
+// Bindless: explicit heap indices (see vk_mini_samples image_viewer.cpp — heap slot 0 = texture, 0/1 = samplers).
+layout(descriptor_heap) uniform texture2D heapTextures[];
+layout(descriptor_heap) uniform sampler heapSamplers[];
 
 void main()
 {
-
-  vec3 color = texture(inTexture, inFragUv).xyz;
-  outColor   = vec4(color, 1.0);
+  vec3 color =
+      texture(sampler2D(heapTextures[nonuniformEXT(0)], heapSamplers[nonuniformEXT(inSamplerIdx)]), inFragUv).xyz;
+  outColor = vec4(color, 1.0);
 }

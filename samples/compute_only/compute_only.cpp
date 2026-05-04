@@ -223,9 +223,14 @@ int main(int argc, char** argv)
 
   // Extension feature needed.
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+
   nvvk::ContextInitInfo vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-      .deviceExtensions = {{VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
+      .deviceExtensions =
+          {
+              {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature},
+              {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+          },
   };
   if(!appInfo.headless)
   {

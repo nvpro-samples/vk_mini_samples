@@ -22,12 +22,14 @@
 layout(location = 0) in vec2 inPosition;
 layout(location = 1) in vec2 inUv;
 layout(location = 0) out vec2 outFragUv;
-
+layout(location = 1) flat out uint outSamplerIdx;
 
 layout(push_constant) uniform RasterPushConstant_
 {
   mat4 transfo;
   vec2 scale;
+  uint samplerIdx;
+  uint _pad;
 };
 
 void main()
@@ -35,4 +37,5 @@ void main()
   vec4 pos    = transfo * vec4(scale * inPosition, 0.0, 1.0);
   gl_Position = pos;
   outFragUv   = inUv;
+  outSamplerIdx = samplerIdx;
 }

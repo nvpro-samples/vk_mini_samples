@@ -258,7 +258,7 @@ vec3 pathTrace(Ray ray, inout uint seed)
     Material    mat     = materials.m[iInfo.materialID];
     PbrMaterial pbrMat  = defaultPbrMaterial(mat.albedo, mat.metallic, mat.roughness, payload.nrm, payload.geonrm);
     pbrMat.transmission = mat.transmission;
-    pbrMat.isThinWalled = false;
+    pbrMat.thickness = 1.0;
 
     float matIor = 1.1;
 

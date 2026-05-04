@@ -170,6 +170,7 @@ public:
       m_slangCompiler.addOption(
           {CompilerOptionName::DebugInformation, {CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_STANDARD}});
       m_slangCompiler.addOption({CompilerOptionName::Optimization, {CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_DEFAULT}});
+      m_slangCompiler.addCapability("spvRayQueryKHR");
 
 #if defined(AFTERMATH_AVAILABLE)
       // This aftermath callback is used to report the shader hash (Spirv) to the Aftermath library.

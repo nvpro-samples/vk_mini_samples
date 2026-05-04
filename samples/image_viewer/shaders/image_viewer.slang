@@ -27,37 +27,37 @@ struct VertexInput
 struct FragmentInput
 {
     float2 uv : TEXCOORD;
-    float4 sv_position : SV_Position;
+    // Flat: same sampler index for whole primitive (single quad).
+    nointerpolation uint samplerIdx : SAMPLERIDX;
+    float4               sv_position : SV_Position;
 };
 
 struct PushConstant
 {
     float4x4 transfo;
     float2   scale;
+    uint     samplerIdx;
+    uint     _pad;
 };
 
-// Descriptor Set
-// clang-format off
-[[vk::push_constant]]   ConstantBuffer<PushConstant>    pushConst;
-[[vk::binding(0)]]      Sampler2D                       mainTexture;
-// clang-format on
+[[vk::push_constant]] ConstantBuffer<PushConstant> pushConst;
 
-
-// Vertex  Shader
+// Bindless via SPV_EXT_descriptor_heap (slangc -capability spvDescriptorHeapEXT): DescriptorHandle<T> -> heap index in .x
 [shader("vertex")]
 FragmentInput vertexMain(VertexInput input)
 {
-    return {
-        input.uv,                                                             // uv : TEXCOORD
-        mul(float4(pushConst.scale * input.pos, 0.0, 1.0), pushConst.transfo) // sv_position : SV_Position
-    };
+    FragmentInput o;
+    o.uv           = input.uv;
+    o.samplerIdx   = pushConst.samplerIdx;
+    o.sv_position  = mul(float4(pushConst.scale * input.pos, 0.0, 1.0), pushConst.transfo);
+    return o;
 }
 
-
-// Fragment Shader
 [shader("pixel")]
 float4 fragmentMain(FragmentInput input)
     : SV_TARGET
 {
-    return mainTexture.Sample(input.uv);
+    Texture2D tex = Texture2D.Handle(uint2(0, 0));
+    SamplerState samp = SamplerState.Handle(uint2(NonUniformResourceIndex(input.samplerIdx), 0));
+    return tex.Sample(samp, input.uv);
 }
