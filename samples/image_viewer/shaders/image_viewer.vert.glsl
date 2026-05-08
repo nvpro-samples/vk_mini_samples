@@ -29,7 +29,6 @@ layout(push_constant) uniform RasterPushConstant_
   mat4 transfo;
   vec2 scale;
   uint samplerIdx;
-  uint _pad;
 };
 
 void main()

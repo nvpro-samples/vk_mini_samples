@@ -259,9 +259,9 @@ public:
     }
 
     // Descriptor heap
-    m_heap.init(app->getPhysicalDevice(), app->getDevice());
+    NVVK_CHECK(m_heap.init(app->getPhysicalDevice(), app->getDevice()));
     VkDeviceSize   samplerBufSize  = m_heap.setupSamplerHeap(1);
-    VkDeviceSize   resourceBufSize = m_heap.setupResourceHeap(2);  // slot 0: KTX image, slot 1: FrameInfo UBO
+    VkDeviceSize   resourceBufSize = m_heap.setupResourceHeap(1, 1);  // 1 image + 1 UBO (packed regions)
     constexpr auto heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
 
     NVVK_CHECK(m_alloc.createBuffer(m_samplerHeapBuffer, samplerBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
@@ -488,20 +488,20 @@ private:
     // VkShaderDescriptorSetAndBindingMappingInfoEXT tells the driver where each
     // (set, binding) lives in the heap.
     //
-    // Heap layout used by this sample:
+    // Heap layout (packed: images first, then buffers — see nvvk::DescriptorHeap):
     //   sampler heap:  slot 0 = linear sampler
-    //   resource heap: slot 0 = KTX texture image (for BKtxTex)
-    //                  slot 1 = FrameInfo uniform buffer (for BKtxFrameInfo)
+    //   resource heap: local image 0 = KTX texture; local buffer 0 = FrameInfo UBO
     //
 
-    // Write the FrameInfo uniform buffer descriptor into the resource heap at
-    // slot 1. The KTX image was already written at slot 0 in onAttach.
-    NVVK_CHECK(m_heap.writeBufferDescriptor(1, m_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, m_resourceHeapBuffer.mapping));
+    // Refresh FrameInfo descriptor (also written in onAttach).
+    NVVK_CHECK(m_heap.writeBufferDescriptor(0, m_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, m_resourceHeapBuffer.mapping));
 
-    // --- Set/binding -> heap mapping ---
-    // Binding 0 (FrameInfo uniform buffer) -> resource heap slot 1
-    const uint32_t resourceStride = static_cast<uint32_t>(m_heap.resourceDescriptorStride());
-    const uint32_t samplerStride  = static_cast<uint32_t>(m_heap.samplerDescriptorSize());
+    // --- Set/binding -> heap mapping (byte offsets / per-type strides) ---
+    const uint32_t imageStride          = static_cast<uint32_t>(m_heap.info().imageDescriptorSize());
+    const uint32_t bufferStride         = static_cast<uint32_t>(m_heap.info().bufferDescriptorSize());
+    const uint32_t samplerStride        = static_cast<uint32_t>(m_heap.samplerDescriptorSize());
+    const uint32_t imageHeapByteOffset  = static_cast<uint32_t>(m_heap.imageRegionByteOffset());
+    const uint32_t bufferHeapByteOffset = static_cast<uint32_t>(m_heap.bufferRegionByteOffset());
 
     VkDescriptorSetAndBindingMappingEXT uboMapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
     uboMapping.descriptorSet                             = 0;
@@ -510,8 +510,8 @@ private:
     uboMapping.resourceMask                              = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
     uboMapping.source                                    = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
     uboMapping.sourceData.constantOffset                 = {};
-    uboMapping.sourceData.constantOffset.heapOffset      = 1 * resourceStride;
-    uboMapping.sourceData.constantOffset.heapArrayStride = resourceStride;
+    uboMapping.sourceData.constantOffset.heapOffset      = bufferHeapByteOffset;
+    uboMapping.sourceData.constantOffset.heapArrayStride = bufferStride;
 
     // Binding 1 (sampler2D) is a combined image sampler. The image side lives
     // in the resource heap (slot 0); the sampler side lives in the sampler
@@ -524,8 +524,8 @@ private:
                               | VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
     texMapping.source                                      = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
     texMapping.sourceData.constantOffset                   = {};
-    texMapping.sourceData.constantOffset.heapOffset        = 0 * resourceStride;
-    texMapping.sourceData.constantOffset.heapArrayStride   = resourceStride;
+    texMapping.sourceData.constantOffset.heapOffset        = imageHeapByteOffset;
+    texMapping.sourceData.constantOffset.heapArrayStride   = imageStride;
     texMapping.sourceData.constantOffset.samplerHeapOffset = 0 * samplerStride;
     texMapping.sourceData.constantOffset.samplerHeapArrayStride = samplerStride;
 

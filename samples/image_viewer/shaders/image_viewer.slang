@@ -20,44 +20,49 @@
 
 struct VertexInput
 {
-    float2 pos : POSITION;
-    float2 uv : TEXCOORD;
+  float2 pos : POSITION;
+  float2 uv : TEXCOORD;
 };
 
 struct FragmentInput
 {
-    float2 uv : TEXCOORD;
-    // Flat: same sampler index for whole primitive (single quad).
-    nointerpolation uint samplerIdx : SAMPLERIDX;
-    float4               sv_position : SV_Position;
+  float2 uv : TEXCOORD;
+  // Flat: same sampler index for whole primitive (single quad).
+  nointerpolation uint samplerIdx : SAMPLERIDX;
+  float4               sv_position : SV_Position;
 };
 
 struct PushConstant
 {
-    float4x4 transfo;
-    float2   scale;
-    uint     samplerIdx;
-    uint     _pad;
+  float4x4 transfo;
+  float2   scale;
+  uint     samplerIdx;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstant> pushConst;
+[[vk::push_constant]]
+ConstantBuffer<PushConstant> pushConst;
 
-// Bindless via SPV_EXT_descriptor_heap (slangc -capability spvDescriptorHeapEXT): DescriptorHandle<T> -> heap index in .x
+// Bindless via SPV_EXT_descriptor_heap: [require(spvDescriptorHeapEXT)] makes Slang emit
+// ResourceHeapEXT/SamplerHeapEXT builtins (accessed via SPV_KHR_untyped_pointers) instead of
+// a typed `__slang_resource_heap` OpVariable with DescriptorSet/Binding decorations. The
+// latter would otherwise trip VUID-VkShaderCreateInfoEXT-flags-11292 when creating the
+// shader object with VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT.
 [shader("vertex")]
 FragmentInput vertexMain(VertexInput input)
 {
-    FragmentInput o;
-    o.uv           = input.uv;
-    o.samplerIdx   = pushConst.samplerIdx;
-    o.sv_position  = mul(float4(pushConst.scale * input.pos, 0.0, 1.0), pushConst.transfo);
-    return o;
+  FragmentInput o;
+  o.uv          = input.uv;
+  o.samplerIdx  = pushConst.samplerIdx;
+  o.sv_position = mul(float4(pushConst.scale * input.pos, 0.0, 1.0), pushConst.transfo);
+  return o;
 }
+
 
 [shader("pixel")]
 float4 fragmentMain(FragmentInput input)
     : SV_TARGET
 {
-    Texture2D tex = Texture2D.Handle(uint2(0, 0));
-    SamplerState samp = SamplerState.Handle(uint2(NonUniformResourceIndex(input.samplerIdx), 0));
-    return tex.Sample(samp, input.uv);
+  const uint texID = 0;  // Always use the first texture in the heap for now. The sampler index is passed via push constants.
+  Sampler2D sampled = Sampler2D.Handle(uint2(texID, input.samplerIdx));
+  return sampled.Sample(input.uv);
 }

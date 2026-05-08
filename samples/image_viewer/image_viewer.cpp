@@ -178,11 +178,12 @@ public:
                      .imageSampler   = linearSampler,
                      .descriptorPool = m_app->getTextureDescriptorPool()});
 
+    // No buffers needed in this sample's resource heap (0 buffer count).
     NVVK_CHECK(m_heap.init(app->getPhysicalDevice(), app->getDevice()));
 
     const VkBufferUsageFlags2 heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
     VkDeviceSize              samplerBufSize  = m_heap.setupSamplerHeap(2);
-    VkDeviceSize              resourceBufSize = m_heap.setupResourceHeap(1);
+    VkDeviceSize              resourceBufSize = m_heap.setupResourceHeap(1, 0);  // 1 image + 0 buffer
     NVVK_CHECK(m_alloc.createBuffer(m_samplerHeapBuffer, samplerBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO, {},
                                     m_heap.getSamplerHeapAlignment()));
     NVVK_CHECK(m_alloc.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
@@ -251,6 +252,7 @@ public:
     m_heap.releaseSamplerDescriptor(m_linearSamplerIdx);
     m_alloc.destroyBuffer(m_samplerHeapBuffer);
     m_alloc.destroyBuffer(m_resourceHeapBuffer);
+
     m_samplerHeapBuffer  = {};
     m_resourceHeapBuffer = {};
     m_heap.deinit();
@@ -418,7 +420,6 @@ public:
         glm::translate(glm::mat4(1), glm::vec3(g_imageViewerSettings.pan.x, g_imageViewerSettings.pan.y, 0));
     m_pushData.transfo    = ortho * scale * trans;
     m_pushData.samplerIdx = m_samplerIdx;
-    m_pushData._pad       = 0;
 
     // Drawing the quad in a G-Buffer
     VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
@@ -478,9 +479,8 @@ private:
     glm::mat4 transfo{1};
     glm::vec2 scale{1};
     uint32_t  samplerIdx{};
-    uint32_t  _pad{};
   };
-  static_assert(sizeof(PushData) == 80, "PushData must match shader push layout");
+  static_assert(sizeof(PushData) == 76, "PushData must match shader push layout");
 
   void createPipeline()
   {

@@ -34,12 +34,15 @@ file(GLOB SHADER_H_FILES "shaders/*.h")
 
 set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
 
+set(SLANG_CAP 
+    spvGroupNonUniform                  # Tonemapper uses subgroup operations
+)
 
 compile_slang(
     "${SHADER_SLANG_FILES}"
      "${SHADER_OUTPUT_DIR}"
     HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
-    SPVS_VAR GENERATED_SHADER_SLANG_SPVS
+    CAPABILITIES ${SLANG_CAP}  
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
 )
 
