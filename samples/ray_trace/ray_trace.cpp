@@ -823,7 +823,7 @@ public:
     g_cameraManip->fit(m_meshes.back().bbox.min(), m_meshes.back().bbox.max());
     nvutils::Bbox& meshBB = m_meshes.back().bbox;
     g_cameraManip->setClipPlanes(
-        {std::max(0.1f, meshBB.min().z * 0.1f), std::max(meshBB.radius() * 5.0f, g_cameraManip->getClipPlanes().y)});
+        {std::max(0.1, meshBB.min().z * 0.1), std::max(meshBB.radius() * 5.0, g_cameraManip->getClipPlanes().y)});
 
     createResources();
     createBottomLevelAS();

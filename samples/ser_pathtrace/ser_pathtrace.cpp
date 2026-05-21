@@ -762,8 +762,8 @@ private:
   //
   bool updateFrame()
   {
-    static float     ref_fov{0};
-    static glm::mat4 ref_cam_matrix;
+    static double     ref_fov{0};
+    static glm::dmat4 ref_cam_matrix;
 
     const auto& m   = g_cameraManip->getViewMatrix();
     const auto  fov = g_cameraManip->getFov();

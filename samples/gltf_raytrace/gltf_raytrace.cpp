@@ -268,7 +268,7 @@ public:
         {
           // Set the camera CENTER to the hit position
           glm::vec3 worldPos = pickResult.worldRayOrigin + pickResult.worldRayDirection * pickResult.hitT;
-          glm::vec3 eye, center, up;
+          glm::dvec3 eye, center, up;
           g_cameraManip->getLookat(eye, center, up);
           g_cameraManip->setLookat(eye, worldPos, up, false);  // Nice with CameraManip.updateAnim();
         }
@@ -595,8 +595,8 @@ private:
   //
   bool updateFrame()
   {
-    static float     ref_fov{0};
-    static glm::mat4 ref_cam_matrix;
+    static double     ref_fov{0};
+    static glm::dmat4 ref_cam_matrix;
 
     const auto& m   = g_cameraManip->getViewMatrix();
     const auto  fov = g_cameraManip->getFov();

@@ -4,7 +4,7 @@
 
 ## Overview
 
-This sample demonstrates [VK_EXT_descriptor_heap](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_descriptor_heap.html), which replaces traditional descriptor sets with GPU-visible heap buffers and push data. Descriptors are written directly to host-visible memory, and shaders access them either through set/binding mapping or direct heap indexing.
+This sample demonstrates [VK_EXT_descriptor_heap](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_descriptor_heap.html) (see also the [Vulkan Guide: Descriptor Heap](https://docs.vulkan.org/guide/latest/descriptor_heap.html)), which replaces traditional descriptor sets with GPU-visible heap buffers and push data. Descriptors are written directly to host-visible memory, and shaders access them either through set/binding mapping or direct heap indexing.
 
 The scene is an NxNxN RGB color cube where each small cube has 6 unique face textures showing its hex color code. Two rendering modes are provided:
 

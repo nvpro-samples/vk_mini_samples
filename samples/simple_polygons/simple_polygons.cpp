@@ -433,7 +433,7 @@ private:
       const glm::vec3 hit_pos  = glm::unProjectZO({mouse_pos.x, mouse_pos.y, d}, view, proj, win_norm);
 
       // Set the interest position
-      glm::vec3 eye, center, up;
+      glm::dvec3 eye, center, up;
       g_cameraManip->getLookat(eye, center, up);
       g_cameraManip->setLookat(eye, hit_pos, up, false);
     }
