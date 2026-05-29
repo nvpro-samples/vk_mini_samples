@@ -27,7 +27,9 @@
 #extension GL_ARB_gpu_shader_int64 : enable       // Debug - heatmap value
 #extension GL_EXT_shader_realtime_clock : enable  // Debug - heatmap timing
 
-#extension GL_NV_shader_invocation_reorder : enable
+#extension GL_EXT_shader_invocation_reorder : enable
+
+
 #extension GL_EXT_ray_query : require
 
 
@@ -59,7 +61,7 @@ layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceIn
 layout(set = 0, binding = B_vertex, scalar) buffer Vertex_ { Vertex v[]; } vertices[];
 layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[];
 
-layout(location = 0) hitObjectAttributeNV vec3 objAttribs;
+layout(location = 0) hitObjectAttributeEXT vec3 objAttribs;
 
 layout(constant_id = 0) const int USE_SER = 1;
 
@@ -90,21 +92,21 @@ void traceRay(Ray r)
   uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT;
   if(USE_SER == 1)
   {
-    hitObjectNV hObj;
-    hitObjectTraceRayNV(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.origin, 0.0, r.direction, INFINITE, 0);
-    reorderThreadNV(hObj);
-    hitObjectGetAttributesNV(hObj, 0);
+    hitObjectEXT hObj;
+    hitObjectTraceRayEXT(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.origin, 0.0, r.direction, INFINITE, 0);
+    reorderThreadEXT(hObj);
+    hitObjectGetAttributesEXT(hObj, 0);
 
-    payload.hitT = hitObjectGetRayTMaxNV(hObj);
+    payload.hitT = hitObjectGetRayTMaxEXT(hObj);
 
-    if(hitObjectIsHitNV(hObj))
+    if(hitObjectIsHitEXT(hObj))
     {
-      payload.instanceIndex = hitObjectGetInstanceIdNV(hObj);
+      payload.instanceIndex = hitObjectGetInstanceIdEXT(hObj);
 
-      int    meshID        = hitObjectGetInstanceCustomIndexNV(hObj);
-      int    triID         = hitObjectGetPrimitiveIndexNV(hObj);
-      mat4x3 objectToWorld = hitObjectGetObjectToWorldNV(hObj);
-      mat4x3 worldToObject = hitObjectGetWorldToObjectNV(hObj);
+      int    meshID        = hitObjectGetInstanceCustomIndexEXT(hObj);
+      int    triID         = hitObjectGetPrimitiveIndexEXT(hObj);
+      mat4x3 objectToWorld = hitObjectGetObjectToWorldEXT(hObj);
+      mat4x3 worldToObject = hitObjectGetWorldToObjectEXT(hObj);
 
       HitState hit = getHitState(meshID, triID, objectToWorld, worldToObject, objAttribs);
       payload.pos  = hit.pos;
@@ -130,10 +132,9 @@ bool traceShadow(Ray r, float maxDist)
   bool isHit;
   if(USE_SER == 1)
   {
-    hitObjectNV hObj;
-    hitObjectRecordEmptyNV(hObj);
-    hitObjectTraceRayNV(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.origin, 0.0, r.direction, maxDist, 0);
-    isHit = hitObjectIsHitNV(hObj);
+    hitObjectEXT hObj;
+    hitObjectTraceRayEXT(hObj, topLevelAS, rayFlags, 0xFF, 0, 0, 0, r.origin, 0.0, r.direction, maxDist, 0);
+    isHit = hitObjectIsHitEXT(hObj);
   }
   else
   {

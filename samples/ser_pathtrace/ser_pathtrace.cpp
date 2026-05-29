@@ -45,8 +45,8 @@
 #include "shaders/shaderio.h"  // Shared between host and device
 
 #include "_autogen/ser_pathtrace.rchit.glsl.h"
-#include "_autogen/ser_pathtrace.rgen.glsl.h"
 #include "_autogen/ser_pathtrace.rmiss.glsl.h"
+#include "_autogen/ser_pathtrace.rgen.glsl.h"
 #include "_autogen/ser_pathtrace.slang.h"
 #include "_autogen/tonemapper.slang.h"
 
@@ -181,9 +181,11 @@ public:
         PropertyEditor::begin();
         {
           PropertyEditor::entry("SER Mode", fmt::format("{}", m_reorderProperties.rayTracingInvocationReorderReorderingHint
-                                                                      == VK_RAY_TRACING_INVOCATION_REORDER_MODE_REORDER_NV ?
+                                                                      == VK_RAY_TRACING_INVOCATION_REORDER_MODE_REORDER_EXT ?
                                                                   "Active" :
                                                                   "Not Available"));
+
+          PropertyEditor::entry("Extension", "VK_EXT_ray_tracing_invocation_reorder");
 
           if(PropertyEditor::Checkbox("Use SER", (bool*)&m_useSER))
           {
@@ -540,7 +542,7 @@ private:
     tlasInstances.reserve(m_nodes.size());
     for(auto& node : m_nodes)
     {
-      VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
+      VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR};
 
       VkAccelerationStructureInstanceKHR rayInst{};
       rayInst.transform           = nvvk::toTransformMatrixKHR(node.localMatrix());  // Position of the instance
@@ -631,7 +633,8 @@ private:
     for(auto& s : stages)
       s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 
-#if(USE_SLANG)
+#if USE_SLANG
+    // Select shader variant based on compile-time extension availability
     const VkShaderModuleCreateInfo moduleInfo = nvsamples::getShaderModuleCreateInfo(ser_pathtrace_slang);
     stages[eRaygen].pNext                     = &moduleInfo;
     stages[eRaygen].pName                     = "rgenMain";
@@ -643,7 +646,7 @@ private:
     stages[eClosestHit].pName                 = "rchitMain";
     stages[eClosestHit].stage                 = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 #else
-    // Raygen
+    // Raygen - Select shader variant based on compile-time extension availability
     const VkShaderModuleCreateInfo rgenInfo = nvsamples::getShaderModuleCreateInfo(ser_pathtrace_rgen_glsl);
     stages[eRaygen].pNext                   = &rgenInfo;
     stages[eRaygen].pName                   = "main";
@@ -867,8 +870,8 @@ private:
 
   VkPhysicalDeviceAccelerationStructurePropertiesKHR m_asProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  VkPhysicalDeviceRayTracingInvocationReorderPropertiesNV m_reorderProperties{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_PROPERTIES_NV};
+  VkPhysicalDeviceRayTracingInvocationReorderPropertiesEXT m_reorderProperties{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_PROPERTIES_EXT};
 
   nvvk::SBTGenerator m_sbt;  // Shader binding table wrapper
   nvvk::Buffer       m_sbtBuffer;
@@ -901,10 +904,7 @@ auto main(int argc, char** argv) -> int
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   VkPhysicalDeviceShaderClockFeaturesKHR clockFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
-  VkPhysicalDeviceShaderSMBuiltinsFeaturesNV smBuiltinFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_FEATURES_NV};
-  VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV reorderFeature{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV};
-  VkPhysicalDeviceRayQueryFeaturesKHR rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  VkPhysicalDeviceRayQueryFeaturesKHR    rayqueryFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
 
 
@@ -921,10 +921,12 @@ auto main(int argc, char** argv) -> int
   vkSetup.deviceExtensions.push_back({VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME});
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature});  // To use vkCmdTraceRaysKHR
   vkSetup.deviceExtensions.push_back({VK_KHR_SHADER_CLOCK_EXTENSION_NAME, &clockFeature});
-  vkSetup.deviceExtensions.push_back({VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, &reorderFeature});
-  vkSetup.deviceExtensions.push_back({VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME, &smBuiltinFeature});
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature});
   vkSetup.deviceExtensions.push_back({VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures});
+
+  VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT reorderFeature{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT};
+  vkSetup.deviceExtensions.push_back({VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, &reorderFeature});
 
   // Validation layers settings
   nvvk::ValidationSettings vvlInfo{};

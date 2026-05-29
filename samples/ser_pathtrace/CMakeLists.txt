@@ -47,7 +47,6 @@ set(SHADER_CAPABILITIES
   spvSparseResidency 
   spvMinLod 
   spvFragmentFullyCoveredEXT
-  spvShaderInvocationReorderNV 
   spvShaderInvocationReorderEXT 
   spvShaderClockKHR
   spvGroupNonUniform                  # Tonemapper uses subgroup operations
@@ -58,7 +57,11 @@ compile_slang(
      "${SHADER_OUTPUT_DIR}"
     HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
     CAPABILITIES ${SHADER_CAPABILITIES}  # List expands and is automatically joined with `+`
+    # Slang 2026.8: wrongly requires spvShaderInvocationReorderNV when targeting EXT (E41013)
+    # -ignore-capabilities emits valid SPIR-V (OpHitObject*EXT / OpReorderThread*EXT).
+    IGNORE_CAPABILITIES ON
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+    SPVS_VAR GENERATED_SHADER_SLANG_SPV
 )
 
 compile_glsl(
@@ -66,7 +69,7 @@ compile_glsl(
    "${SHADER_OUTPUT_DIR}"
    GENERATED_SHADER_GLSL_HEADERS
    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
- )
+)
 
 # Add shader files to the project
 source_group("Shaders" FILES ${SHADER_SLANG_FILES} ${SHADER_GLSL_FILES} ${SHADER_H_FILES})
@@ -79,7 +82,7 @@ target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_SHADER_SLANG_HEADERS} ${GENER
 #------------------------------------------------------------------------------------------------------------------------------
 # Installation, copy files
 
-copy_to_runtime_and_install( ${PROJECT_NAME}
-    LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
-    AUTO
+copy_to_runtime_and_install(${PROJECT_NAME}
+  LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
+  AUTO
 )
