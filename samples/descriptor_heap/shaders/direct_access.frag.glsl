@@ -16,11 +16,14 @@
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
-#version 450
+#version 460
 
 #extension GL_GOOGLE_include_directive : enable
-#extension GL_EXT_nonuniform_qualifier : enable
 #extension GL_EXT_descriptor_heap : enable
+// glslang requires GL_EXT_nonuniform_qualifier to be enabled to allow a
+// variable index into a runtime array of opaque types, even when the
+// nonuniformEXT() qualifier itself is not used.
+#extension GL_EXT_nonuniform_qualifier : enable
 
 #include "shaderio.h"
 
@@ -31,17 +34,17 @@ layout(location = 3) flat in uint inBaseFaceTexIdx;
 
 layout(location = 0) out vec4 outColor;
 
-// Bindless mode: direct descriptor heap access via layout(descriptor_heap).
-// No set/binding mapping needed. The shader computes texIdx = baseFaceTexIdx +
-// faceIdx and indexes heapTextures[] directly. baseFaceTexIdx was computed in
-// the vertex shader from gl_InstanceIndex.
+// Direct Access mode: descriptor heap access via layout(descriptor_heap).
+// No set/binding mapping is needed. The shader computes texIdx =
+// baseFaceTexIdx + faceIdx and indexes heapTextures[] directly.
+// baseFaceTexIdx was computed in the vertex shader from gl_InstanceIndex.
 layout(descriptor_heap) uniform texture2D heapTextures[];
 layout(descriptor_heap) uniform sampler heapSamplers[];
 
 layout(push_constant) uniform PushConstants_
 {
-  FrameInfo        frame;
-  BindlessPushData bindless;
+  FrameInfo         frame;
+  InstancedPushData instanced;
 };
 
 vec3 unpackColor(uint c)
@@ -52,13 +55,15 @@ vec3 unpackColor(uint c)
 void main()
 {
   uint texIdx   = inBaseFaceTexIdx + inFaceIdx;
-  vec4 texColor = texture(sampler2D(heapTextures[nonuniformEXT(texIdx)], heapSamplers[0]), inUV);
+  vec4 texColor = texture(sampler2D(heapTextures[texIdx],
+                                    heapSamplers[0]),
+                          inUV);
 
-  // Replace border pixels with per-draw-call border color
+  // Replace border pixels with the single-draw border color.
   float borderWidth = 1.0 / 48.0;
   if(inUV.x < borderWidth || inUV.x > 1.0 - borderWidth || inUV.y < borderWidth || inUV.y > 1.0 - borderWidth)
   {
-    texColor.rgb = unpackColor(bindless.borderColor);
+    texColor.rgb = unpackColor(instanced.borderColor);
   }
 
   vec3  N     = normalize(inNormal);

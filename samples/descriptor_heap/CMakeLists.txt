@@ -36,11 +36,24 @@ set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
 
 
 
+# NonUniformResourceIndex in a fragment shader pulls in the standard image
+# sampling capability profile; declare it explicitly alongside descriptor heaps.
+set(SHADER_CAPABILITIES
+  spvDescriptorHeapEXT
+  SPV_GOOGLE_user_type
+  spvDerivativeControl
+  spvImageQuery
+  spvImageGatherExtended
+  spvSparseResidency
+  spvMinLod
+  spvFragmentFullyCoveredEXT
+)
+
 compile_slang(
     "${SHADER_SLANG_FILES}"
     "${SHADER_OUTPUT_DIR}"
     HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
-    CAPABILITIES spvDescriptorHeapEXT
+    CAPABILITIES ${SHADER_CAPABILITIES}
     EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
 )
 

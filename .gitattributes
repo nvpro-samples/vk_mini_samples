@@ -1,5 +1,0 @@
-# Auto detect text files and normalize to LF on checkin, use LF in working directory
-* text=auto eol=lf
-
-# Explicitly declare text files you want to always be normalized and converted to LF
-*.slang text eol=lf

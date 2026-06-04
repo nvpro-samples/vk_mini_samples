@@ -32,21 +32,22 @@ layout(location = 3) flat out uint outBaseFaceTexIdx;
 
 layout(push_constant) uniform PushConstants_
 {
-  FrameInfo        frame;
-  BindlessPushData bindless;
+  FrameInfo         frame;
+  InstancedPushData instanced;
 };
 
-// Bindless instanced rendering: we draw all cubes in a single vkCmdDrawIndexed
-// call with instanceCount = numCubes. Each instance renders the same cube mesh,
-// but the instance ID lets us compute a unique world position and texture
-// index. No per-cube data is bound on the CPU side — everything is derived here
-// from the instance index and the grid parameters in push constants.
+// Shared instanced rendering for the ConstantOffset and DirectAccess modes: we
+// draw all cubes in a single vkCmdDrawIndexed call with instanceCount =
+// numCubes. Each instance renders the same cube mesh, but the instance ID lets
+// us compute a unique world position and texture index. No per-cube data is
+// bound on the CPU side — everything is derived here from the instance index
+// and the grid parameters in push data.
 void main()
 {
-  // In this sample, gl_BaseInstance is zero but this matches slang's
-  // SV_InstanceID
+  // In this sample, gl_BaseInstance is zero but this matches Slang's
+  // SV_InstanceID.
   int instanceID = gl_InstanceIndex - gl_BaseInstance;
-  int N          = int(bindless.gridSize);
+  int N          = int(instanced.gridSize);
   int ix         = instanceID % N;
   int iy         = (instanceID / N) % N;
   int iz         = instanceID / (N * N);
@@ -57,21 +58,16 @@ void main()
 
   outBaseFaceTexIdx = uint(instanceID) * 6u;
 
-  // Animation timing constants
-  float cubeDelay    = 0.01;
-  float fallDuration = 0.4;
-  float restDuration = 1.5;
-
   // Compute cycle length and loop
-  float totalStagger = float(frame.numCubes - 1u) * cubeDelay;
-  float fallInEnd    = totalStagger + fallDuration;
-  float fallOutStart = fallInEnd + restDuration;
-  float cycleTime    = fallOutStart + totalStagger + fallDuration;
+  float totalStagger = float(frame.numCubes - 1u) * animationCubeDelay;
+  float fallInEnd    = totalStagger + animationFallDuration;
+  float fallOutStart = fallInEnd + animationRestDuration;
+  float cycleTime    = fallOutStart + totalStagger + animationFallDuration;
   float loopTime     = mod(frame.time, cycleTime);
 
   // Per-cube fall-in and fall-out progress
-  float tIn  = clamp((loopTime - float(instanceID) * cubeDelay) / fallDuration, 0.0, 1.0);
-  float tOut = clamp((loopTime - fallOutStart - float(instanceID) * cubeDelay) / fallDuration, 0.0, 1.0);
+  float tIn  = clamp((loopTime - float(instanceID) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tOut = clamp((loopTime - fallOutStart - float(instanceID) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
 
   // Invisible before fall-in or after fall-out: degenerate vertex
   bool visible = (tIn > 0.0) && (tOut < 1.0);

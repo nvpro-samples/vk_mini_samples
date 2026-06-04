@@ -21,10 +21,13 @@
 /*
   Descriptor Heap Sample
 
-  Demonstrates VK_EXT_descriptor_heap with two rendering modes:
-  - Per-Draw: Traditional set/binding declarations, mapped to descriptor
-    heap via VkShaderDescriptorSetAndBindingMappingInfoEXT
-  - Bindless: Unsized texture array indexed directly from push data
+  Demonstrates VK_EXT_descriptor_heap with three heap-index modes:
+  - PushIndex: set/binding declarations mapped with
+    HEAP_WITH_PUSH_INDEX_EXT (naturally per-cube draws)
+  - ConstantOffset: set/binding unsized arrays mapped with
+    HEAP_WITH_CONSTANT_OFFSET_EXT (naturally a single instanced draw)
+  - DirectAccess: layout(descriptor_heap) syntax (same rendering pattern
+    as ConstantOffset, but no mapping info)
 
   The scene is an NxNxN RGB color cube. Each small cube's position maps to
   an RGB color. Each face has its own texture showing the hex color code
@@ -37,12 +40,13 @@
   - resizeResourceHeap(): Allocate resource heap buffer for image descriptors.
   - writeImageDescriptor(): Write descriptors to host staging memory.
   - rebuildScene(): Upload staging to device-local heap via StagingUploader.
-  - createShaders(): Per-draw shaders get set/binding mapping (baseFaceTexIdx
-    in push data -> heap index); bindless shaders use layout(descriptor_heap).
+  - createShaders(): Build all three mode shader pairs. PushIndex and
+    ConstantOffset use VkShaderDescriptorSetAndBindingMappingInfoEXT; DirectAccess
+    uses layout(descriptor_heap).
   - cmdBindHeaps(): Bind sampler and resource heaps once per frame.
   - cmdPushData(): Push frame and per-draw data via vkCmdPushDataEXT.
-  - onRender(): Per-draw pushes DrawData per cube; bindless pushes once and
-    uses instanced draw (shader derives position from gl_InstanceIndex).
+  - onRender(): PushIndex pushes DrawData per cube; ConstantOffset/DirectAccess
+    push once and use instanced drawing (position from gl_InstanceIndex).
 */
 //////////////////////////////////////////////////////////////////////////
 
@@ -64,13 +68,16 @@
 #define VMA_IMPLEMENTATION
 
 #if USE_SLANG
-#include "_autogen/bindless.slang.h"
-#include "_autogen/per_draw.slang.h"
+#include "_autogen/constant_offset.slang.h"
+#include "_autogen/direct_access.slang.h"
+#include "_autogen/push_index.slang.h"
+#else
+#include "_autogen/constant_offset.frag.glsl.h"
+#include "_autogen/direct_access.frag.glsl.h"
+#include "_autogen/instanced.vert.glsl.h"
+#include "_autogen/push_index.frag.glsl.h"
+#include "_autogen/push_index.vert.glsl.h"
 #endif
-#include "_autogen/bindless.frag.glsl.h"
-#include "_autogen/bindless.vert.glsl.h"
-#include "_autogen/per_draw.frag.glsl.h"
-#include "_autogen/per_draw.vert.glsl.h"
 
 #include <nvapp/application.hpp>
 #include <nvapp/elem_camera.hpp>
@@ -85,7 +92,6 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
-#include <nvvk/descriptors.hpp>
 #include <nvvk/formats.hpp>
 #include <nvvk/gbuffers.hpp>
 #include <nvvk/graphics_pipeline.hpp>
@@ -101,8 +107,9 @@ std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
 /// Rendering mode
 enum class RenderingMode
 {
-  PerDraw  = 0,
-  Bindless = 1,
+  PushIndex      = 0,
+  ConstantOffset = 1,
+  DirectAccess   = 2,
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -209,10 +216,12 @@ public:
 
     if(m_heapAvailable)
     {
-      for(size_t i = 0; i < m_perDrawShaders.size(); i++)
-        vkDestroyShaderEXT(m_device, m_perDrawShaders[i], nullptr);
-      for(size_t i = 0; i < m_bindlessShaders.size(); i++)
-        vkDestroyShaderEXT(m_device, m_bindlessShaders[i], nullptr);
+      for(size_t i = 0; i < m_pushIndexShaders.size(); i++)
+        vkDestroyShaderEXT(m_device, m_pushIndexShaders[i], nullptr);
+      for(size_t i = 0; i < m_constantOffsetShaders.size(); i++)
+        vkDestroyShaderEXT(m_device, m_constantOffsetShaders[i], nullptr);
+      for(size_t i = 0; i < m_directAccessShaders.size(); i++)
+        vkDestroyShaderEXT(m_device, m_directAccessShaders[i], nullptr);
       destroyFaceImages();
       m_allocator->destroyBuffer(m_vertexBuffer);
       m_allocator->destroyBuffer(m_indexBuffer);
@@ -248,16 +257,19 @@ public:
 
       ImGui::Text("Rendering Mode:");
       int modeInt = static_cast<int>(m_mode);
-      ImGui::RadioButton("Per-Draw", &modeInt, static_cast<int>(RenderingMode::PerDraw));
+      ImGui::RadioButton("Push Index (per-cube draws)", &modeInt, static_cast<int>(RenderingMode::PushIndex));
       ImGui::SetItemTooltip(
-          "Shaders use set/binding declarations.\n"
-          "VkShaderDescriptorSetAndBindingMappingInfoEXT "
-          "maps them to the heap.");
-      ImGui::RadioButton("Bindless", &modeInt, static_cast<int>(RenderingMode::Bindless));
+          "Shader:  layout(set=0, binding=0) texture2D faceTextures[6];\n"
+          "Mapping: HEAP_WITH_PUSH_INDEX (per-draw index from push data).");
+      ImGui::RadioButton("Constant Offset (single instanced draw)", &modeInt, static_cast<int>(RenderingMode::ConstantOffset));
+      ImGui::SetItemTooltip(
+          "Shader:  layout(set=0, binding=0) texture2D heap[];\n"
+          "Mapping: HEAP_WITH_CONSTANT_OFFSET (heap exposed as a single unsized array).");
+      ImGui::RadioButton("Direct Access (single instanced draw)", &modeInt, static_cast<int>(RenderingMode::DirectAccess));
       m_mode = static_cast<RenderingMode>(modeInt);
       ImGui::SetItemTooltip(
-          "Shaders use layout(descriptor_heap) for direct heap access.\n"
-          "Single instanced draw call; no set/binding mapping needed.");
+          "Shader:  layout(descriptor_heap) texture2D heap[];\n"
+          "Mapping: none.");
       ImGui::Separator();
 
       int newGridSize = m_gridSize;
@@ -271,7 +283,8 @@ public:
         rebuildScene(m_gridSize);
       }
 
-      ImGui::SliderFloat("Animation Speed", &m_animSpeed, 0.5f, 3.0f);
+      ImGui::SliderFloat("Animation Speed", &m_animSpeed, 0.0f, 3.0f);
+      ImGui::SetItemTooltip("Set to 0 to freeze with all cubes placed.");
       ImGui::Separator();
 
       int   numCubes    = m_gridSize * m_gridSize * m_gridSize;
@@ -288,9 +301,9 @@ public:
       ImGui::Separator();
       ImGui::Text("Draw calls: %d", m_statsDrawCalls);
       ImGui::SetItemTooltip(
-          "Per-Draw: one vkCmdDrawIndexed per cube.\n"
-          "Bindless: one instanced vkCmdDrawIndexed for all cubes.\n"
-          "Cube borders are colored by draw call.");
+          "Push Index: one vkCmdDrawIndexed per cube.\n"
+          "Constant Offset / Direct Access: one instanced vkCmdDrawIndexed.\n"
+          "Push Index colors borders per cube; instanced modes share one border color.");
       ImGui::Text("Push data bytes: %d", m_statsPushDataBytes);
       ImGui::SetItemTooltip(
           "Bytes sent via vkCmdPushDataEXT (replaces vkCmdPushConstants\n"
@@ -299,12 +312,16 @@ public:
       ImGui::SetItemTooltip(
           "Calls to vkCmdBindSamplerHeapEXT + vkCmdBindResourceHeapEXT.\n"
           "Typically once per frame.");
-      float avgMappedPerDraw = m_statsDrawCalls > 0 ? static_cast<float>(m_statsMappedDescPerFrame) / m_statsDrawCalls : 0.0f;
-      ImGui::Text("Mapped descriptors: %d (%.0f/draw)", m_statsMappedDescPerFrame, avgMappedPerDraw);
+      float avgMappingsPerDraw = m_statsDrawCalls > 0 ? static_cast<float>(m_statsMappingsPerFrame) / m_statsDrawCalls : 0.0f;
+      ImGui::Text("Mappings/frame: %d (%.0f/draw)", m_statsMappingsPerFrame, avgMappingsPerDraw);
       ImGui::SetItemTooltip(
-          "Per-Draw only: descriptors resolved via set/binding mapping.\n"
-          "6 images (HEAP_WITH_PUSH_INDEX) + 1 sampler "
-          "(HEAP_WITH_CONSTANT_OFFSET) per draw.");
+          "Number of VkDescriptorSetAndBindingMappingEXT entries honored\n"
+          "across all draws this frame. Mappings are baked into shaders at\n"
+          "creation time; this counter reflects how often shaders declaring\n"
+          "them are dispatched.\n"
+          "  Push Index:      6 (HEAP_WITH_PUSH_INDEX) + 1 (HEAP_WITH_CONSTANT_OFFSET) per draw\n"
+          "  Constant Offset: 2 (HEAP_WITH_CONSTANT_OFFSET) per draw\n"
+          "  Direct Access:   0 (no mappings; layout(descriptor_heap))");
 
       ImGui::End();
     }
@@ -325,13 +342,19 @@ public:
 
     NVVK_DBG_SCOPE(cmd);
 
-    // Time
+    // Time. The animation cycle in the vertex shader is:
+    //   [stagger fall-in]  →  [rest, all placed]  →  [stagger fall-out]
+    // Offset by restStartTime so t=0 lands at the start of the rest phase:
+    // all cubes fully placed. Animation speed = 0 then freezes there.
+    uint32_t    numCubes      = static_cast<uint32_t>(m_gridSize * m_gridSize * m_gridSize);
+    const float restStartTime = (numCubes - 1) * shaderio::animationCubeDelay + shaderio::animationFallDuration;
+
     auto  now     = std::chrono::high_resolution_clock::now();
     float elapsed = std::chrono::duration<float>(now - m_startTime).count();
-    float time    = elapsed * m_animSpeed;
+    float time    = restStartTime + elapsed * m_animSpeed;
 
     if(m_app->isHeadless())
-      time = 2.0f;  // In headless mode, skip animation and render the final state for benchmarking
+      time = restStartTime;  // In headless mode, snapshot the fully-placed state
 
     // #DESC_HEAP: Bind descriptor heaps (once per frame)
     cmdBindHeaps(cmd);
@@ -363,7 +386,9 @@ public:
     m_graphicState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
     m_graphicState.cmdApplyAllStates(cmd);
 
-    auto& shaders = (m_mode == RenderingMode::PerDraw) ? m_perDrawShaders : m_bindlessShaders;
+    auto& shaders = (m_mode == RenderingMode::PushIndex)      ? m_pushIndexShaders :
+                    (m_mode == RenderingMode::ConstantOffset) ? m_constantOffsetShaders :
+                                                                m_directAccessShaders;
     m_graphicState.cmdBindShaders(cmd, {.vertex   = shaders[static_cast<size_t>(ShaderIndex::eVertex)],
                                         .fragment = shaders[static_cast<size_t>(ShaderIndex::eFragment)]});
 
@@ -372,7 +397,6 @@ public:
     vkCmdBindIndexBuffer(cmd, m_indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
     // #DESC_HEAP: Push frame info at offset 0
-    uint32_t numCubes   = static_cast<uint32_t>(m_gridSize * m_gridSize * m_gridSize);
     uint32_t numIndices = static_cast<uint32_t>(m_cubeMesh.triangles.size() * 3);
 
     shaderio::FrameInfo frameInfo{};
@@ -387,12 +411,12 @@ public:
     m_statsDrawCalls          = 0;
     m_statsPushDataBytes      = static_cast<int>(sizeof(shaderio::FrameInfo));
     m_statsHeapBinds          = 1;
-    m_statsMappedDescPerFrame = 0;
+    m_statsMappingsPerFrame   = 0;
 
-    if(m_mode == RenderingMode::PerDraw)
+    if(m_mode == RenderingMode::PushIndex)
     {
-      // #DESC_HEAP: Per-Draw mode — one draw call per cube
-      // Each draw pushes DrawData at offset 160. The mapping reads
+      // #DESC_HEAP: PushIndex mode — one draw call per cube
+      // Each draw pushes DrawData after FrameInfo. The mapping reads
       // baseFaceTexIdx from push data to resolve faceTextures[0..5] from the
       // heap. The shader never reads baseFaceTexIdx directly.
       float spacing = 1.1f;
@@ -417,30 +441,31 @@ public:
             vkCmdDrawIndexed(cmd, numIndices, 1, 0, 0, 0);
             m_statsDrawCalls++;
             m_statsPushDataBytes += static_cast<int>(sizeof(shaderio::DrawData));
-            m_statsMappedDescPerFrame += 7;  // 6 images (PUSH_INDEX) + 1 sampler (CONSTANT_OFFSET)
+            m_statsMappingsPerFrame += 7;  // 6 images (PUSH_INDEX) + 1 sampler (CONSTANT_OFFSET)
           }
         }
       }
     }
     else
     {
-      // #DESC_HEAP: Bindless mode — single instanced draw call
-      // Push BindlessPushData once at offset 160. Shader derives per-cube data
-      // from gl_InstanceIndex and gridSize, then indexes heapTextures[]
-      // directly.
-      shaderio::BindlessPushData bindlessData{};
-      bindlessData.borderColor = static_cast<uint32_t>(nvutils::hashVal(m_statsDrawCalls)) | 0xFF000000u;
-      bindlessData.gridSize    = static_cast<uint32_t>(m_gridSize);
+      // #DESC_HEAP: ConstantOffset/DirectAccess modes — single instanced draw.
+      shaderio::InstancedPushData instancedData{};
+      instancedData.borderColor = static_cast<uint32_t>(nvutils::hashVal(m_statsDrawCalls)) | 0xFF000000u;
+      instancedData.gridSize    = static_cast<uint32_t>(m_gridSize);
 
-      cmdPushData(cmd, sizeof(shaderio::FrameInfo), sizeof(shaderio::BindlessPushData), &bindlessData);
+      cmdPushData(cmd, sizeof(shaderio::FrameInfo), sizeof(shaderio::InstancedPushData), &instancedData);
 
       // Instanced rendering: draw numCubes instances of the same cube mesh
-      // in a single draw call. No per-cube data is bound; instead, the vertex
-      // shader (bindless.slang) uses SV_InstanceID to compute each cube's
-      // world position from gridSize and to index into the texture heap.
+      // in a single draw call. The vertex shader derives each cube from the
+      // instance ID and grid size.
       vkCmdDrawIndexed(cmd, numIndices, numCubes, 0, 0, 0);
       m_statsDrawCalls = 1;
-      m_statsPushDataBytes += static_cast<int>(sizeof(shaderio::BindlessPushData));
+      m_statsPushDataBytes += static_cast<int>(sizeof(shaderio::InstancedPushData));
+
+      if(m_mode == RenderingMode::ConstantOffset)
+      {
+        m_statsMappingsPerFrame += 2;  // 1 image array + 1 sampler array (both HEAP_WITH_CONSTANT_OFFSET)
+      }
     }
 
     vkCmdEndRendering(cmd);
@@ -603,8 +628,9 @@ private:
 
   // #DESC_HEAP: Push data for shaders and descriptor mapping
   // Replaces vkCmdPushConstants. Layout: FrameInfo at offset 0; DrawData or
-  // BindlessPushData at offset 160. In per-draw mode, the mapping reads
-  // baseFaceTexIdx from push data at pushOffset to resolve heap indices.
+  // InstancedPushData at offset sizeof(FrameInfo). In push-index mode, the
+  // mapping reads baseFaceTexIdx from push data at pushOffset to resolve heap
+  // indices.
   void cmdPushData(VkCommandBuffer cmd, uint32_t offset, uint32_t size, const void* data)
   {
     VkPushDataInfoEXT pushInfo{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT};
@@ -615,10 +641,14 @@ private:
   }
 
   //--------------------------------------------------------------------------------------------------
-  // #DESC_HEAP: Create shader objects (per-draw and bindless)
-  // Per-draw shaders have VkShaderDescriptorSetAndBindingMappingInfoEXT that
-  // maps set/binding declarations to heap locations. Bindless shaders use
-  // layout(descriptor_heap) directly.
+  // #DESC_HEAP: Create shader objects for all three rendering modes.
+  //
+  // The descriptor-heap mapping struct
+  // (VkShaderDescriptorSetAndBindingMappingInfoEXT, chained into
+  // VkShaderCreateInfoEXT::pNext) is only used by shaders that declare
+  // resources with traditional set/binding declarations. Direct Access
+  // shaders declare layout(descriptor_heap) and bypass the mapping
+  // entirely — mappingInfo is nullptr there.
   //
   void createShaders()
   {
@@ -636,12 +666,25 @@ private:
                                                    .format   = VK_FORMAT_R32G32B32_SFLOAT,
                                                    .offset   = offsetof(nvutils::PrimitiveVertex, nrm)}};
 
-    // --- #DESC_HEAP: Per-Draw shaders with set/binding mapping ---
-    // Binding 0 (faceTextures[6]) uses HEAP_WITH_PUSH_INDEX: the driver reads
-    // baseFaceTexIdx from push data at pushOffset to compute the heap index.
-    // The shader never reads baseFaceTexIdx directly — the mapping consumes it.
-    // Binding 1 (sampler) uses HEAP_WITH_CONSTANT_OFFSET: fixed at sampler heap
-    // offset 0.
+    // --- #DESC_HEAP: PushIndex shaders with set/binding mapping ---
+    // This block demonstrates per-draw heap indexing. Before each draw,
+    // vkCmdPushDataEXT writes a per-cube baseFaceTexIdx into push data;
+    // HEAP_WITH_PUSH_INDEX reads it back from the mapping's pushOffset
+    // field and uses it as the base heap index for the binding. The
+    // shader's faceTextures[6] covers 6 consecutive descriptors from
+    // that base, indexed by faceIdx. Binding 1 (sampler) uses
+    // HEAP_WITH_CONSTANT_OFFSET: fixed at sampler-heap offset 0.
+    //
+    // On bindingCount vs. array bindings — from the VK_EXT_descriptor_heap
+    // spec:
+    //   "If an array of bindings are specified, each subsequent binding is
+    //    offset by heapArrayStride. If a binding is itself an array, each
+    //    subsequent shader index is offset by heapArrayStride."
+    // Both knobs share heapArrayStride. In practice you pick one or the
+    // other: either bindingCount=N over N adjacent scalar bindings, or
+    // bindingCount=1 over a single array binding (this sample's
+    // faceTextures[6]) and let the shader's array index select a heap
+    // slot.
     {
       // Mapping for binding 0: texture2D faceTextures[6] ->
       // HEAP_WITH_PUSH_INDEX
@@ -658,15 +701,17 @@ private:
       texMapping.sourceData.pushIndex.heapIndexStride = static_cast<uint32_t>(m_imageDescSize);
       texMapping.sourceData.pushIndex.heapArrayStride = static_cast<uint32_t>(m_imageDescSize);
 
-      // Mapping for binding 1: sampler -> HEAP_WITH_CONSTANT_OFFSET
+      // Mapping for binding 1: sampler -> HEAP_WITH_CONSTANT_OFFSET.
+      // We only have one sampler, so a constant offset is enough and no
+      // array stride is needed.
       VkDescriptorSetAndBindingMappingEXT samplerMapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-      samplerMapping.descriptorSet             = 0;
-      samplerMapping.firstBinding              = 1;
-      samplerMapping.bindingCount              = 1;
-      samplerMapping.resourceMask              = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
-      samplerMapping.source                    = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
-      samplerMapping.sourceData.constantOffset = {};
-      samplerMapping.sourceData.constantOffset.samplerHeapOffset = 0;
+      samplerMapping.descriptorSet                        = 0;
+      samplerMapping.firstBinding                         = 1;
+      samplerMapping.bindingCount                         = 1;
+      samplerMapping.resourceMask                         = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
+      samplerMapping.source                               = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
+      samplerMapping.sourceData.constantOffset            = {};
+      samplerMapping.sourceData.constantOffset.heapOffset = 0;
 
       std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings = {texMapping, samplerMapping};
 
@@ -675,20 +720,69 @@ private:
       mappingInfo.pMappings    = mappings.data();
 
 #if USE_SLANG
-      createHeapShaders(m_perDrawShaders, per_draw_slang, per_draw_slang, &mappingInfo, "vertexMain", "fragmentMain");
+      createHeapShaders(m_pushIndexShaders, push_index_slang, push_index_slang, &mappingInfo, "vertexMain", "fragmentMain");
 #else
-      createHeapShaders(m_perDrawShaders, per_draw_vert_glsl, per_draw_frag_glsl, &mappingInfo);
+      createHeapShaders(m_pushIndexShaders, push_index_vert_glsl, push_index_frag_glsl, &mappingInfo);
 #endif
     }
 
-    // --- #DESC_HEAP: Bindless shaders (no mapping needed) ---
-    // Shaders use layout(descriptor_heap) for direct heap access. No
-    // set/binding mapping.
+    // --- #DESC_HEAP: ConstantOffset shaders with set/binding mapping ---
+    // This block makes a contiguous region of the heap visible to the
+    // shader as an array binding. HEAP_WITH_CONSTANT_OFFSET pins the
+    // binding to a fixed heap offset; the shader supplies its own index
+    // into the region. Here the shader computes instanceID*6 + faceIdx
+    // and indexes the binding's unsized array.
+    //
+    // Aside: VkDescriptorMappingSourceConstantOffsetEXT also exposes
+    // samplerHeapOffset / samplerHeapArrayStride. Those are the active
+    // fields only when a binding is a combined image+sampler
+    // (OpTypeSampledImage, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) — a
+    // single descriptor that fuses an image and a sampler. This sample
+    // uses separate texture and sampler bindings, so we don't need to set
+    // samplerHeapOffset / samplerHeapArrayStride.
+    {
+      VkDescriptorSetAndBindingMappingEXT texMapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+      texMapping.descriptorSet                             = 0;
+      texMapping.firstBinding                              = 0;
+      texMapping.bindingCount                              = 1;
+      texMapping.resourceMask                              = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT;
+      texMapping.source                                    = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
+      texMapping.sourceData.constantOffset                 = {};
+      texMapping.sourceData.constantOffset.heapOffset      = 0;
+      texMapping.sourceData.constantOffset.heapArrayStride = static_cast<uint32_t>(m_imageDescSize);
+
+      VkDescriptorSetAndBindingMappingEXT samplerMapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+      samplerMapping.descriptorSet                        = 0;
+      samplerMapping.firstBinding                         = 1;
+      samplerMapping.bindingCount                         = 1;
+      samplerMapping.resourceMask                         = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
+      samplerMapping.source                               = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
+      samplerMapping.sourceData.constantOffset            = {};
+      samplerMapping.sourceData.constantOffset.heapOffset = 0;
+      samplerMapping.sourceData.constantOffset.heapArrayStride = static_cast<uint32_t>(m_samplerDescSize);
+
+      std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings = {texMapping, samplerMapping};
+
+      VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
+      mappingInfo.mappingCount = static_cast<uint32_t>(mappings.size());
+      mappingInfo.pMappings    = mappings.data();
+
+#if USE_SLANG
+      createHeapShaders(m_constantOffsetShaders, constant_offset_slang, constant_offset_slang, &mappingInfo,
+                        "vertexMain", "fragmentMain");
+#else
+      createHeapShaders(m_constantOffsetShaders, instanced_vert_glsl, constant_offset_frag_glsl, &mappingInfo);
+#endif
+    }
+
+    // --- #DESC_HEAP: DirectAccess shaders ---
+    // No mapping struct: layout(descriptor_heap) handles binding entirely
+    // in SPIR-V via the DescriptorHeapEXT capability. mappingInfo = nullptr.
     {
 #if USE_SLANG
-      createHeapShaders(m_bindlessShaders, bindless_slang, bindless_slang, nullptr, "vertexMain", "fragmentMain");
+      createHeapShaders(m_directAccessShaders, direct_access_slang, direct_access_slang, nullptr, "vertexMain", "fragmentMain");
 #else
-      createHeapShaders(m_bindlessShaders, bindless_vert_glsl, bindless_frag_glsl, nullptr);
+      createHeapShaders(m_directAccessShaders, instanced_vert_glsl, direct_access_frag_glsl, nullptr);
 #endif
     }
   }
@@ -839,8 +933,9 @@ private:
   std::vector<uint8_t> m_resourceHeapStaging;  // Host staging for vkWriteResourceDescriptorsEXT
 
   // Shader objects
-  std::array<VkShaderEXT, 2>  m_perDrawShaders{};
-  std::array<VkShaderEXT, 2>  m_bindlessShaders{};
+  std::array<VkShaderEXT, 2>  m_pushIndexShaders{};
+  std::array<VkShaderEXT, 2>  m_constantOffsetShaders{};
+  std::array<VkShaderEXT, 2>  m_directAccessShaders{};
   nvvk::GraphicsPipelineState m_graphicState;
 
   // Scene
@@ -851,13 +946,13 @@ private:
 
   // Settings
   bool                                           m_heapAvailable           = false;
-  RenderingMode                                  m_mode                    = RenderingMode::Bindless;
+  RenderingMode                                  m_mode                    = RenderingMode::ConstantOffset;
   int                                            m_gridSize                = 6;
   float                                          m_animSpeed               = 1.0f;
   int                                            m_statsDrawCalls          = 0;
   int                                            m_statsPushDataBytes      = 0;
   int                                            m_statsHeapBinds          = 0;
-  int                                            m_statsMappedDescPerFrame = 0;
+  int                                            m_statsMappingsPerFrame   = 0;
   std::chrono::high_resolution_clock::time_point m_startTime;
 };
 

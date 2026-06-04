@@ -16,7 +16,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
-#version 450
+#version 460
 
 #extension GL_GOOGLE_include_directive : enable
 
@@ -35,27 +35,21 @@ layout(push_constant) uniform PushConstants_
   DrawData  draw;
 };
 
-// Per-draw mode: the CPU issues one draw call per cube, pushing DrawData each
-// time. The transform and cubeIndex come from push data; baseFaceTexIdx is
-// consumed by the descriptor heap mapping (not read here) to resolve
-// faceTextures[0..5].
+// Push-index mode: one draw call per cube. DrawData is pushed for each draw.
+// baseFaceTexIdx is consumed by the descriptor mapping logic, not read directly
+// by shader code.
 void main()
 {
-  // Animation timing constants
-  float cubeDelay    = 0.01;
-  float fallDuration = 0.4;
-  float restDuration = 1.5;
-
   // Compute cycle length and loop
-  float totalStagger = float(frame.numCubes - 1u) * cubeDelay;
-  float fallInEnd    = totalStagger + fallDuration;
-  float fallOutStart = fallInEnd + restDuration;
-  float cycleTime    = fallOutStart + totalStagger + fallDuration;
+  float totalStagger = float(frame.numCubes - 1u) * animationCubeDelay;
+  float fallInEnd    = totalStagger + animationFallDuration;
+  float fallOutStart = fallInEnd + animationRestDuration;
+  float cycleTime    = fallOutStart + totalStagger + animationFallDuration;
   float loopTime     = mod(frame.time, cycleTime);
 
   // Per-cube fall-in and fall-out progress
-  float tIn  = clamp((loopTime - float(draw.cubeIndex) * cubeDelay) / fallDuration, 0.0, 1.0);
-  float tOut = clamp((loopTime - fallOutStart - float(draw.cubeIndex) * cubeDelay) / fallDuration, 0.0, 1.0);
+  float tIn  = clamp((loopTime - float(draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tOut = clamp((loopTime - fallOutStart - float(draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
 
   // Invisible before fall-in or after fall-out: degenerate vertex
   bool visible = (tIn > 0.0) && (tOut < 1.0);

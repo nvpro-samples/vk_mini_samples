@@ -16,7 +16,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
-#version 450
+#version 460
 
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_nonuniform_qualifier : enable
@@ -29,7 +29,7 @@ layout(location = 2) flat in int inFaceIdx;
 
 layout(location = 0) out vec4 outColor;
 
-// Per-draw mode: 6 face textures mapped via the descriptor heap mapping API.
+// Push-index mode: 6 face textures mapped via the descriptor heap mapping API.
 // The mapping uses HEAP_WITH_PUSH_INDEX: the driver reads baseFaceTexIdx from
 // push data at pushOffset to compute the heap index. The shader accesses
 // faceTextures[faceIdx] and the mapping resolves it to the correct heap slot.

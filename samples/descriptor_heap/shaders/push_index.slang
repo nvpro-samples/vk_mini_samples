@@ -19,7 +19,6 @@
 
 #include "shaderio.h"
 
-// Push constants
 struct PushBlock
 {
   FrameInfo frame;
@@ -28,7 +27,7 @@ struct PushBlock
 [[vk::push_constant]]
 ConstantBuffer<PushBlock> push;
 
-// Per-draw mode: 6 face textures mapped via the descriptor heap mapping API.
+// Push-index mode: 6 face textures mapped via the descriptor heap mapping API.
 // The mapping uses HEAP_WITH_PUSH_INDEX: the driver reads baseFaceTexIdx from
 // push data at pushOffset to compute the heap index. The shader accesses
 // faceTextures[faceIdx] and the mapping resolves it to the correct heap slot.
@@ -38,7 +37,6 @@ Texture2D faceTextures[6];
 [[vk::binding(1, 0)]]
 SamplerState samp;
 
-// Vertex input
 struct VSin
 {
   [[vk::location(0)]]
@@ -47,7 +45,6 @@ struct VSin
   float3 normal;
 };
 
-// Vertex-to-fragment interpolants
 struct VSout
 {
   float2              uv : TEXCOORD0;
@@ -56,32 +53,28 @@ struct VSout
   float4              sv_position : SV_Position;
 };
 
-// Fragment output
 struct PSout
 {
   float4 color : SV_Target;
 };
 
-// Per-draw mode: the CPU issues one draw call per cube, pushing DrawData each
+// Push-index mode: the CPU issues one draw call per cube, pushing DrawData each
 // time. The transform and cubeIndex come from push data; baseFaceTexIdx is
 // consumed by the descriptor heap mapping (not read here) to resolve
 // faceTextures[0..5].
-[shader("vertex")] VSout vertexMain(VSin input) {
-  // Animation timing constants
-  float cubeDelay    = 0.01;
-  float fallDuration = 0.4;
-  float restDuration = 1.5;
-
+[shader("vertex")]
+VSout vertexMain(VSin input)
+{
   // Compute cycle length and loop
-  float totalStagger = float(push.frame.numCubes - 1u) * cubeDelay;
-  float fallInEnd    = totalStagger + fallDuration;
-  float fallOutStart = fallInEnd + restDuration;
-  float cycleTime    = fallOutStart + totalStagger + fallDuration;
+  float totalStagger = float(push.frame.numCubes - 1u) * animationCubeDelay;
+  float fallInEnd    = totalStagger + animationFallDuration;
+  float fallOutStart = fallInEnd + animationRestDuration;
+  float cycleTime    = fallOutStart + totalStagger + animationFallDuration;
   float loopTime     = fmod(push.frame.time, cycleTime);
 
   // Per-cube fall-in and fall-out progress
-  float tIn  = clamp((loopTime - float(push.draw.cubeIndex) * cubeDelay) / fallDuration, 0.0, 1.0);
-  float tOut = clamp((loopTime - fallOutStart - float(push.draw.cubeIndex) * cubeDelay) / fallDuration, 0.0, 1.0);
+  float tIn  = clamp((loopTime - float(push.draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tOut = clamp((loopTime - fallOutStart - float(push.draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
 
   // Invisible before fall-in or after fall-out: degenerate vertex
   bool visible = (tIn > 0.0) && (tOut < 1.0);
@@ -120,7 +113,9 @@ float3 unpackColor(uint c)
   return float3(float(c & 0xFFu), float((c >> 8) & 0xFFu), float((c >> 16) & 0xFFu)) / 255.0;
 }
 
-[shader("pixel")] PSout fragmentMain(VSout stage) {
+[shader("pixel")]
+PSout fragmentMain(VSout stage)
+{
   float4 texColor = faceTextures[stage.faceIdx].Sample(samp, stage.uv);
 
   // Replace border pixels with per-draw hashed color
@@ -135,6 +130,5 @@ float3 unpackColor(uint c)
 
   PSout output;
   output.color = float4(texColor.rgb * (0.3 + 0.7 * NdotL), 1.0);
-
   return output;
 }

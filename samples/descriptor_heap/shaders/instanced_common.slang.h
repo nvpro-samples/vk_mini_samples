@@ -19,21 +19,17 @@
 
 #include "shaderio.h"
 
-// Push constants
+// Shared push data and vertex path for the ConstantOffset and DirectAccess
+// modes. Both render all cubes with a single instanced draw; each instance
+// derives its world position and base texture index from SV_InstanceID.
 struct PushBlock
 {
-  FrameInfo        frame;
-  BindlessPushData bindless;
+  FrameInfo         frame;
+  InstancedPushData instanced;
 };
 [[vk::push_constant]]
 ConstantBuffer<PushBlock> push;
 
-// Direct descriptor heap access via Slang's DescriptorHandle<T> with
-// SPV_EXT_descriptor_heap. The [require(spvDescriptorHeapEXT)] attribute
-// makes Slang emit ResourceHeapEXT/SamplerHeapEXT builtins instead of
-// regular set/binding descriptor arrays.
-
-// Vertex input
 struct VSin
 {
   [[vk::location(0)]]
@@ -42,7 +38,6 @@ struct VSin
   float3 normal;
 };
 
-// Vertex-to-fragment interpolants
 struct VSout
 {
   float2               uv : TEXCOORD0;
@@ -52,23 +47,15 @@ struct VSout
   float4               sv_position : SV_Position;
 };
 
-// Fragment output
 struct PSout
 {
   float4 color : SV_Target;
 };
 
-// Bindless instanced rendering: we draw all cubes in a single vkCmdDrawIndexed
-// call with instanceCount = numCubes. Each instance renders the same cube mesh,
-// but the instance ID lets us compute a unique world position and texture
-// index. No per-cube data is bound on the CPU side — everything is derived here
-// from instanceIndex and the grid parameters in push constants.
-[require(spvDescriptorHeapEXT)]
-[shader("vertex")]
-VSout vertexMain(VSin input, int instanceIndex : SV_InstanceID)
+VSout instancedVertex(VSin input, int instanceIndex)
 {
-  // Use instanceIndex to compute this cube's 3D grid position (ix, iy, iz)
-  int N  = int(push.bindless.gridSize);
+  // Use instanceIndex to compute this cube's 3D grid position (ix, iy, iz).
+  int N  = int(push.instanced.gridSize);
   int ix = instanceIndex % N;
   int iy = (instanceIndex / N) % N;
   int iz = instanceIndex / (N * N);
@@ -79,21 +66,16 @@ VSout vertexMain(VSin input, int instanceIndex : SV_InstanceID)
 
   uint baseFaceTexIdx = uint(instanceIndex) * 6u;
 
-  // Animation timing constants
-  float cubeDelay    = 0.01;
-  float fallDuration = 0.4;
-  float restDuration = 1.5;
-
   // Compute cycle length and loop
-  float totalStagger = float(push.frame.numCubes - 1u) * cubeDelay;
-  float fallInEnd    = totalStagger + fallDuration;
-  float fallOutStart = fallInEnd + restDuration;
-  float cycleTime    = fallOutStart + totalStagger + fallDuration;
+  float totalStagger = float(push.frame.numCubes - 1u) * animationCubeDelay;
+  float fallInEnd    = totalStagger + animationFallDuration;
+  float fallOutStart = fallInEnd + animationRestDuration;
+  float cycleTime    = fallOutStart + totalStagger + animationFallDuration;
   float loopTime     = fmod(push.frame.time, cycleTime);
 
   // Per-cube fall-in and fall-out progress
-  float tIn  = clamp((loopTime - float(instanceIndex) * cubeDelay) / fallDuration, 0.0, 1.0);
-  float tOut = clamp((loopTime - fallOutStart - float(instanceIndex) * cubeDelay) / fallDuration, 0.0, 1.0);
+  float tIn = clamp((loopTime - float(instanceIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tOut = clamp((loopTime - fallOutStart - float(instanceIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
 
   // Invisible before fall-in or after fall-out: degenerate vertex
   bool visible = (tIn > 0.0) && (tOut < 1.0);
@@ -131,32 +113,4 @@ VSout vertexMain(VSin input, int instanceIndex : SV_InstanceID)
 float3 unpackColor(uint c)
 {
   return float3(float(c & 0xFFu), float((c >> 8) & 0xFFu), float((c >> 16) & 0xFFu)) / 255.0;
-}
-
-// Bindless mode: direct descriptor heap access via DescriptorHandle<T>.
-// No set/binding mapping needed. The shader computes texIdx = baseFaceTexIdx +
-// faceIdx and indexes the heap directly. baseFaceTexIdx was computed in the
-// vertex shader from instanceIndex.
-[require(spvDescriptorHeapEXT)]
-[shader("pixel")]
-PSout fragmentMain(VSout stage)
-{
-  uint         texIdx   = stage.baseFaceTexIdx + stage.faceIdx;
-  Texture2D    tex      = nonuniform(Texture2D.Handle(uint2(texIdx, 0)));
-  SamplerState samp     = SamplerState.Handle(uint2(0, 0));
-  float4       texColor = tex.Sample(samp, stage.uv);
-
-  // Replace border pixels with per-draw-call border color
-  float borderWidth = 1.0 / 48.0;
-  if(stage.uv.x < borderWidth || stage.uv.x > 1.0 - borderWidth || stage.uv.y < borderWidth || stage.uv.y > 1.0 - borderWidth)
-  {
-    texColor.rgb = unpackColor(push.bindless.borderColor);
-  }
-
-  float3 N     = normalize(stage.normal);
-  float  NdotL = max(dot(N, normalize(push.frame.lightDir)), 0.0);
-
-  PSout output;
-  output.color = float4(texColor.rgb * (0.3 + 0.7 * NdotL), 1.0);
-  return output;
 }

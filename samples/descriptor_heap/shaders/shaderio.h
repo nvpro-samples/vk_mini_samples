@@ -24,13 +24,24 @@
 
 NAMESPACE_SHADERIO_BEGIN()
 
+#if __SLANG__
+static const float animationCubeDelay    = 0.01;
+static const float animationFallDuration = 0.4;
+static const float animationRestDuration = 1.5;
+#else
+const float animationCubeDelay    = 0.01;
+const float animationFallDuration = 0.4;
+const float animationRestDuration = 1.5;
+#endif
+
 /*
  * Push data layout (used by vkCmdPushDataEXT):
- *   Offset 0:   FrameInfo (160 bytes) — pushed once per frame
- *   Offset 160: DrawData (80 bytes)   — per-draw mode: pushed per cube
- *           or: BindlessPushData      — bindless mode: pushed once
+ *   Offset 0:                  FrameInfo         — pushed once per frame
+ *   Offset sizeof(FrameInfo):  DrawData          — push-index mode: pushed per cube
+ *                          or: InstancedPushData — constant-offset/direct-access
+ *                                                  modes: pushed once
  *
- * In per-draw mode, DrawData::baseFaceTexIdx is NOT read by the shader.
+ * In push-index mode, DrawData::baseFaceTexIdx is NOT read by the shader.
  * Instead, the descriptor heap mapping (HEAP_WITH_PUSH_INDEX) reads it at
  * pushOffset to resolve the 6 face textures from the heap. The shader just
  * uses faceTextures[faceIdx] and the mapping translates that to heap access.
@@ -49,7 +60,7 @@ struct FrameInfo
   float    _pad1;
 };
 
-// Per-draw mode: pushed per cube at offset 160
+// Push-index mode: pushed per cube, after FrameInfo
 struct DrawData
 {
   float4x4 transform;
@@ -60,8 +71,8 @@ struct DrawData
   uint _pad;
 };
 
-// Bindless mode: pushed once at offset 160
-struct BindlessPushData
+// Constant-offset/direct-access modes: pushed once, after FrameInfo
+struct InstancedPushData
 {
   uint borderColor;  // packed RGBA8 border color for the single draw call
   uint gridSize;     // N for NxNxN grid; shader derives position from
