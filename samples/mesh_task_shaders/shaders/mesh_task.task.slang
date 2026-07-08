@@ -92,13 +92,13 @@ void taskMain(uint3 groupThreadID: SV_GroupThreadID, uint3 groupID: SV_GroupID)
     uint globalBoxX = startBoxX + localBoxIndex;
 
     // Calculate box center position in world space
-    float  xOffset   = (float(globalBoxX) - float(pushConst.totalBoxesX - 1) * 0.5) * pushConst.spacing;
-    float  zOffset   = (float(gridZ) - float(pushConst.totalBoxesZ - 1) * 0.5) * pushConst.spacing;
-    
+    float xOffset = (float(globalBoxX) - float(pushConst.totalBoxesX - 1) * 0.5) * pushConst.spacing;
+    float zOffset = (float(gridZ) - float(pushConst.totalBoxesZ - 1) * 0.5) * pushConst.spacing;
+
     // Ripple animation: calculate distance from grid center
     float distanceFromCenter = length(float2(xOffset, zOffset));
-    float yOffset = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
-    
+    float yOffset            = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
+
     float3 boxCenter = float3(xOffset, yOffset, zOffset);
 
     // Bounding sphere radius (larger for rotating boxes)
@@ -108,8 +108,8 @@ void taskMain(uint3 groupThreadID: SV_GroupThreadID, uint3 groupID: SV_GroupID)
     boxSurvives = isSphereInFrustum(boxCenter, boundingRadius);
   }
 
-  uint  numSurvive    = WaveActiveCountBits(boxSurvives);
-  uint  offset        = WavePrefixCountBits(boxSurvives);
+  uint numSurvive = WaveActiveCountBits(boxSurvives);
+  uint offset     = WavePrefixCountBits(boxSurvives);
 
   if(boxSurvives)
   {
@@ -120,7 +120,7 @@ void taskMain(uint3 groupThreadID: SV_GroupThreadID, uint3 groupID: SV_GroupID)
   {
     taskPayload.numSurvivingBoxes = numSurvive;
     // Atomically add the number of surviving boxes to the global counter using buffer device address
-    Statistics *stats = (Statistics *)(pushConst.statisticsAddr);
+    Statistics* stats = (Statistics*)(pushConst.statisticsAddr);
     InterlockedAdd(stats->boxesDrawn, numSurvive);
   }
 

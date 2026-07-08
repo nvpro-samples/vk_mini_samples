@@ -61,11 +61,11 @@
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
 #include <nvvk/descriptors.hpp>
+#include <nvapp/imgui_texture.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
-#include <nvvk/sampler_pool.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/staging.hpp>
 #include <nvvk/validation_settings.hpp>
 
@@ -96,20 +96,15 @@ public:
 
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    m_gBuffers = std::make_unique<nvvk::GBuffer>();
-    m_gBuffers->init({
-        .allocator      = m_allocator.get(),
-        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
-        .depthFormat    = m_depthFormat,
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    // Offscreen render target: one color attachment + depth (depth supports transfer readback for picking)
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = m_allocator.get(),
+        .colorFormats = {m_colorFormat},
+        .depthFormat  = m_depthFormat,
+        .depthUsage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                      | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .debugName = "SimplePolygons",
+    }));
 
     createScene();
     createVkBuffers();
@@ -134,19 +129,19 @@ public:
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     m_descriptorPack.deinit();
 
-
-    m_samplerPool.deinit();
-    m_gBuffers->deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_allocator->deinit();
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { m_gBuffers->update(cmd, size); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
+  }
 
   void onUIRender() override
   {
-    if(!m_gBuffers)
-      return;
-
     {  // Setting menu
       ImGui::Begin("Settings");
       nvgui::CameraWidget(g_cameraManip);
@@ -165,8 +160,8 @@ public:
         rasterPicking();
       }
 
-      // Display the G-Buffer image
-      ImGui::Image(ImTextureID(m_gBuffers->getDescriptorSet()), ImGui::GetContentRegionAvail());
+      // Display the rendered image
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -186,33 +181,19 @@ public:
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
-    // Rendering to the GBuffer
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers->getColorImageView();
-    colorAttachment.clearValue                = {m_clearColor};
-    colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers->getDepthImageView();
-    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+    // Build the dynamic-rendering state from the render target. The render target
+    // keeps its images in VK_IMAGE_LAYOUT_GENERAL, so no layout transitions are
+    // needed to render into it or to sample it afterwards.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {m_clearColor};
+    rtState.depthAttachment.clearValue     = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
 
-    // Create the rendering info
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers->getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.pDepthAttachment     = &depthAttachment;
-
-
-    // Transition GBuffer images to be used as attachments
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
     // Start the rendering
-    vkCmdBeginRendering(cmd, &renderingInfo);
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    m_graphicState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+    m_graphicState.cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
@@ -255,13 +236,6 @@ public:
       vkCmdDrawIndexed(cmd, numIndices, 1, firstIndex, vertexOffset, 0);
     }
     vkCmdEndRendering(cmd);
-
-    // Allow to display the GBuffer
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
   }
 
 private:
@@ -429,7 +403,7 @@ private:
 
     if(d < 1.0F)  // Ignore infinite
     {
-      glm::vec4       win_norm = {0, 0, m_gBuffers->getSize().width, m_gBuffers->getSize().height};
+      glm::vec4       win_norm = {0, 0, m_renderTarget.getSize().width, m_renderTarget.getSize().height};
       const glm::vec3 hit_pos  = glm::unProjectZO({mouse_pos.x, mouse_pos.y, d}, view, proj, win_norm);
 
       // Set the interest position
@@ -448,7 +422,7 @@ private:
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
     // Transit the depth buffer image in eTransferSrcOptimal
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
+    nvvk::cmdImageMemoryBarrier(cmd, {m_renderTarget.getDepthImage(),
                                       VK_IMAGE_LAYOUT_GENERAL,
                                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                       {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
@@ -458,11 +432,11 @@ private:
     copy_region.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
     copy_region.imageOffset      = {x, y, 0};
     copy_region.imageExtent      = {1, 1, 1};
-    vkCmdCopyImageToBuffer(cmd, m_gBuffers->getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_pixelBuffer.buffer,
-                           1, &copy_region);
+    vkCmdCopyImageToBuffer(cmd, m_renderTarget.getDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           m_pixelBuffer.buffer, 1, &copy_region);
 
     // Put back the depth buffer as  it was
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
+    nvvk::cmdImageMemoryBarrier(cmd, {m_renderTarget.getDepthImage(),
                                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                       VK_IMAGE_LAYOUT_GENERAL,
                                       {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
@@ -472,7 +446,7 @@ private:
     // Grab the value
     float    value{1.0F};
     void*    mapped      = m_pixelBuffer.mapping;
-    VkFormat depthFormat = m_gBuffers->getDepthFormat();
+    VkFormat depthFormat = m_renderTarget.getDepthFormat();
     switch(depthFormat)
     {
       case VK_FORMAT_X8_D24_UNORM_PACK32:
@@ -503,7 +477,7 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -513,12 +487,12 @@ private:
   nvapp::Application*                      m_app{nullptr};
   std::shared_ptr<nvvk::ResourceAllocator> m_allocator;
 
-  VkFormat                       m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
-  VkFormat                       m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
-  VkClearColorValue              m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
-  VkDevice                       m_device      = VK_NULL_HANDLE;                 // Convenient
-  std::unique_ptr<nvvk::GBuffer> m_gBuffers;                                     // G-Buffers: color + depth
-  nvvk::SamplerPool              m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
+  VkFormat           m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
+  VkFormat           m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;  // Depth format of the depth buffer
+  VkClearColorValue  m_clearColor  = {{0.3F, 0.3F, 0.3F, 1.0F}};     // Clear color
+  VkDevice           m_device      = VK_NULL_HANDLE;                 // Convenient
+  nvvk::RenderTarget m_renderTarget;                                 // Offscreen render target: color + depth
+  nvapp::ImTexture   m_viewportImage;                                // ImGui texture for the render target color image
 
   // Resources
   struct PrimitiveMeshVk

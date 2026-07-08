@@ -119,4 +119,3 @@ void computeMain(uint3 threadIdx: SV_DispatchThreadID)
 
   outImage[int2(launchID)] = float4(pixel_color, 1.0);
 }
-

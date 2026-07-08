@@ -569,4 +569,3 @@ void computeMain(uint3 threadIdx: SV_DispatchThreadID)
     outImage[int2(launchID)] = float4(lerp(old_color, pixel_color, a), 1.0F);
   }
 }
-

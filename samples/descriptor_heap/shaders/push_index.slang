@@ -73,8 +73,9 @@ VSout vertexMain(VSin input)
   float loopTime     = fmod(push.frame.time, cycleTime);
 
   // Per-cube fall-in and fall-out progress
-  float tIn  = clamp((loopTime - float(push.draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
-  float tOut = clamp((loopTime - fallOutStart - float(push.draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tIn = clamp((loopTime - float(push.draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tOut =
+      clamp((loopTime - fallOutStart - float(push.draw.cubeIndex) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
 
   // Invisible before fall-in or after fall-out: degenerate vertex
   bool visible = (tIn > 0.0) && (tOut < 1.0);

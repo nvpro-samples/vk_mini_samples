@@ -103,14 +103,14 @@ void main()
     uint globalBoxX = startBoxX + localBoxIndex;
 
     // Calculate box center position in world space
-    float xOffset   = (float(globalBoxX) - float(pushConst.totalBoxesX - 1) * 0.5) * pushConst.spacing;
-    float zOffset   = (float(gridZ) - float(pushConst.totalBoxesZ - 1) * 0.5) * pushConst.spacing;
-    
+    float xOffset = (float(globalBoxX) - float(pushConst.totalBoxesX - 1) * 0.5) * pushConst.spacing;
+    float zOffset = (float(gridZ) - float(pushConst.totalBoxesZ - 1) * 0.5) * pushConst.spacing;
+
     // Ripple animation: calculate distance from grid center
     float distanceFromCenter = length(vec2(xOffset, zOffset));
-    float yOffset = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
-    
-    vec3  boxCenter = vec3(xOffset, yOffset, zOffset);
+    float yOffset            = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
+
+    vec3 boxCenter = vec3(xOffset, yOffset, zOffset);
 
     // Bounding sphere radius (larger for rotating boxes)
     float boundingRadius = calculateBoxBoundingRadius(pushConst.boxSize, true);

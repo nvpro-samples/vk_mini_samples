@@ -89,7 +89,7 @@ void main()
 
     // Ripple animation: calculate distance from grid center
     float distanceFromCenter = length(vec2(xOffset, zOffset));
-    float yOffset = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
+    float yOffset            = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
 
     vec3  boxCenter = vec3(xOffset, yOffset, zOffset);
     float halfSize  = boxSize * 0.5;
@@ -99,11 +99,11 @@ void main()
     cornerLocal.x = ((cornerIndex & 1) != 0 ? halfSize : -halfSize);
     cornerLocal.y = ((cornerIndex & 2) != 0 ? halfSize : -halfSize);
     cornerLocal.z = ((cornerIndex & 4) != 0 ? halfSize : -halfSize);
-    
+
     // Apply rotation around box's own Y axis
     float rotationAngle = calculateBoxRotation(pushConst.time, pushConst.animSpeed, distanceFromCenter, yOffset);
-    vec3 cornerRotated = rotateY(cornerLocal, rotationAngle);
-    
+    vec3  cornerRotated = rotateY(cornerLocal, rotationAngle);
+
     // Final world position
     vec3 corner = boxCenter + cornerRotated;
 
@@ -121,7 +121,7 @@ void main()
 
 
   // Distribute primitive work across all threads
-  uint corners[4] = { 0, 1, 3, 2 };
+  uint corners[4] = {0, 1, 3, 2};
   for(uint primitiveIndex = threadID; primitiveIndex < totalPrimitives; primitiveIndex += MESHSHADER_WORKGROUP_SIZE)
   {
     uint boxIndex   = primitiveIndex / LINES_PER_BOX;

@@ -61,10 +61,10 @@ Note: The amount of compute frame it can do per display iteration depends on the
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
-#include <nvvk/sampler_pool.hpp>
 
 
 #define SHOW_MENU 1  // Enabling the standard Window menu.
@@ -91,30 +91,22 @@ public:
 
     createShaderObjectAndLayout();
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    // GBuffer
+    // Offscreen render targets
     // The Display version
-    m_gBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = &m_alloc,
+        .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
+        .debugName    = "MultiThreadedDisplay",
+    }));
     {
       // The rendering thread
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      m_gCompBuffers.init({
-          .allocator      = &m_alloc,
-          .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
-          .imageSampler   = linearSampler,
-          .descriptorPool = m_app->getTextureDescriptorPool(),
-      });
-      m_gCompBuffers.update(cmd, g_defaultWindowSize);
+      NVVK_CHECK(m_compRenderTarget.init({
+          .alloc        = &m_alloc,
+          .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
+          .debugName    = "MultiThreadedCompute",
+      }));
+      NVVK_CHECK(m_compRenderTarget.update(cmd, g_defaultWindowSize));
       m_app->submitAndWaitTempCmdBuffer(cmd);
     }
 
@@ -133,9 +125,9 @@ public:
     vkDestroyPipelineLayout(m_app->getDevice(), m_pipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_app->getDevice(), m_descriptorSetLayout, nullptr);
 
-    m_samplerPool.deinit();
-    m_gBuffers.deinit();
-    m_gCompBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
+    m_compRenderTarget.deinit();
 
     m_alloc.deinit();
   }
@@ -147,7 +139,7 @@ public:
 
     ImGui::Begin("Viewport");
     ImVec2 pos = ImGui::GetCursorPos();  // Remember position to put back text
-    ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
+    ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
     ImGui::SetCursorPos(pos);
     m_frameCounter++;
     if(m_frameCounter > 30)
@@ -169,9 +161,9 @@ public:
     VkImageCopy imgCopy    = {};
     imgCopy.srcSubresource = srcSubresource;
     imgCopy.dstSubresource = srcSubresource;
-    imgCopy.extent         = {std::min(m_gBuffers.getSize().width, m_gCompBuffers.getSize().width),
-                              std::min(m_gBuffers.getSize().height, m_gCompBuffers.getSize().height), 1};
-    vkCmdCopyImage(cmd, m_gCompBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, m_gBuffers.getColorImage(),
+    imgCopy.extent         = {std::min(m_renderTarget.getSize().width, m_compRenderTarget.getSize().width),
+                              std::min(m_renderTarget.getSize().height, m_compRenderTarget.getSize().height), 1};
+    vkCmdCopyImage(cmd, m_compRenderTarget.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, m_renderTarget.getColorImage(),
                    VK_IMAGE_LAYOUT_GENERAL, 1, &imgCopy);
   }
 
@@ -231,11 +223,11 @@ public:
     {
       VkCommandBuffer cmd;
       NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_app->getDevice(), transientCmdPool));
-      VkExtent2D group_counts = nvvk::getGroupCounts(m_gCompBuffers.getSize(), WORKGROUP_SIZE);
+      VkExtent2D group_counts = nvvk::getGroupCounts(m_compRenderTarget.getSize(), WORKGROUP_SIZE);
 
       // Wait for the frame to be consumed
       nvvk::WriteSetContainer writeContainer;
-      writeContainer.append(m_bindings.getWriteSet(0), m_gCompBuffers.getDescriptorImageInfo());
+      writeContainer.append(m_bindings.getWriteSet(0), m_compRenderTarget.getColorStorageImageInfo());
       vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0,
                                 static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
 
@@ -302,7 +294,8 @@ public:
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
     // Re-creating the G-Buffer (RGBA8) when the viewport size change
-    m_gBuffers.update(cmd, size);
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
   }
 
   //-------------------------------------------------------------------------------------------------
@@ -351,21 +344,21 @@ public:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
 private:
-  nvapp::Application*     m_app{};           // Application instance
-  nvvk::ResourceAllocator m_alloc{};         // Allocator
-  nvvk::GBuffer           m_gBuffers{};      // G-Buffers: color + depth
-  nvvk::GBuffer           m_gCompBuffers{};  // G-Buffers: color + depth
+  nvapp::Application*     m_app{};               // Application instance
+  nvvk::ResourceAllocator m_alloc{};             // Allocator
+  nvvk::RenderTarget      m_renderTarget{};      // Display offscreen color image
+  nvvk::RenderTarget      m_compRenderTarget{};  // Compute-thread offscreen color image
+  nvapp::ImTexture        m_viewportImage{};     // ImGui texture displaying the copied image
   VkShaderEXT             m_shader{};
   int                     m_threadCounter{};
   int                     m_frameCounter{};
   shaderio::PushConstant  m_pushConst = {.zoom = 1.5f, .iter = 2};
 
-  nvvk::SamplerPool        m_samplerPool{};          // The sampler pool, used to create a sampler for the texture
   VkPipelineLayout         m_pipelineLayout{};       // Pipeline layout
   VkDescriptorSetLayout    m_descriptorSetLayout{};  // Descriptor set layout
   nvvk::DescriptorBindings m_bindings;

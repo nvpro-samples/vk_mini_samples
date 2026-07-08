@@ -55,9 +55,7 @@ vec3 unpackColor(uint c)
 void main()
 {
   uint texIdx   = inBaseFaceTexIdx + inFaceIdx;
-  vec4 texColor = texture(sampler2D(heapTextures[texIdx],
-                                    heapSamplers[0]),
-                          inUV);
+  vec4 texColor = texture(sampler2D(heapTextures[texIdx], heapSamplers[0]), inUV);
 
   // Replace border pixels with the single-draw border color.
   float borderWidth = 1.0 / 48.0;

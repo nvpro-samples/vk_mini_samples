@@ -66,7 +66,8 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/resource_allocator.hpp>
 #include <nvvk/sampler_pool.hpp>
 #include <nvvk/sbt_generator.hpp>
@@ -106,17 +107,14 @@ public:
     });  // Allocator
 
 
-    // The texture sampler to use
+    // The texture sampler to use (needed to sample the rendered image in the tonemapper)
     m_samplerPool.init(m_device);
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_linearSampler));
+    NVVK_DBG_NAME(m_linearSampler);
 
-    // GBuffer for the ray tracing and tonemapping
-    m_gBuffers.init({.allocator      = &m_allocator,
-                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT},
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    // Offscreen render target for the ray tracing and tonemapping
+    NVVK_CHECK(m_renderTarget.init(
+        {.alloc = &m_allocator, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT}, .debugName = "RayQuery"}));
 
     // Tonemapper
     {
@@ -146,7 +144,8 @@ public:
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    m_gBuffers.update(cmd, size);
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView(eImgTonemapped));
     resetFrame();  // Reset frame to restart the rendering
   }
 
@@ -193,7 +192,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer tonemapped image
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(eImgTonemapped), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -233,8 +232,9 @@ public:
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
 
     // Tonemap
-    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData, m_gBuffers.getDescriptorImageInfo(eImgRendered),
-                            m_gBuffers.getDescriptorImageInfo(eImgTonemapped));
+    m_tonemapper.runCompute(cmd, m_renderTarget.getSize(), m_tonemapperData,
+                            m_renderTarget.getColorSampleDescriptorImageInfo(eImgRendered, m_linearSampler),
+                            m_renderTarget.getColorSampleDescriptorImageInfo(eImgTonemapped));
   }
 
 private:
@@ -570,7 +570,8 @@ private:
     // Write to descriptors
     nvvk::WriteSetContainer writes{};
     writes.append(m_descriptorBinding.getWriteSet(B_tlas), m_topAs);
-    writes.append(m_descriptorBinding.getWriteSet(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
+    writes.append(m_descriptorBinding.getWriteSet(B_outImage), m_renderTarget.getColorAttachmentView(eImgRendered),
+                  VK_IMAGE_LAYOUT_GENERAL);
     writes.append(m_descriptorBinding.getWriteSet(B_cameraInfo), m_bCameraInfo);
     writes.append(m_descriptorBinding.getWriteSet(B_sceneDesc), m_bSceneDesc);
 
@@ -625,7 +626,8 @@ private:
     m_allocator.destroyBuffer(m_bInstInfoBuffer);
     m_allocator.destroyBuffer(m_bMaterials);
 
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
 
     for(auto& b : m_bottomAs)
     {
@@ -646,7 +648,7 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(eImgTonemapped), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -657,8 +659,10 @@ private:
   nvvk::ResourceAllocator  m_allocator;
   nvshaders::Tonemapper    m_tonemapper{};
   shaderio::TonemapperData m_tonemapperData;
-  nvvk::GBuffer            m_gBuffers;  // G-Buffers: color + depth
-  nvvk::SamplerPool        m_samplerPool{};
+  nvvk::RenderTarget       m_renderTarget;     // Offscreen target: tonemapped + rendered color images
+  nvapp::ImTexture         m_viewportImage;    // ImGui texture displaying the tonemapped image
+  VkSampler                m_linearSampler{};  // Sampler used to feed the rendered image to the tonemapper
+  nvvk::SamplerPool        m_samplerPool{};    // Sampler pool (sampler for the tonemapper input)
 
   VkDevice m_device{};  // Vulkan device
 

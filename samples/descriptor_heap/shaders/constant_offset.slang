@@ -27,7 +27,7 @@ Texture2D heapTextures[];
 SamplerState heapSamplers[];
 
 [shader("vertex")]
-VSout vertexMain(VSin input, int instanceIndex : SV_InstanceID)
+VSout vertexMain(VSin input, int instanceIndex: SV_InstanceID)
 {
   return instancedVertex(input, instanceIndex);
 }

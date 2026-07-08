@@ -239,4 +239,3 @@ void rmissMain(inout HitPayload payload)
   payload.color += sky_color * payload.weight;
   payload.depth = MISS_DEPTH;  // Stop
 }
-

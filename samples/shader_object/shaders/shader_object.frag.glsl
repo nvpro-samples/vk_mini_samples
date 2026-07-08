@@ -41,7 +41,6 @@ layout(push_constant) uniform PushConstant_
 };
 
 
-
 void main()
 {
   // Darker in the center

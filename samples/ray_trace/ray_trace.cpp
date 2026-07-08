@@ -46,9 +46,6 @@
 #define USE_SLANG 1
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
-#define IMGUI_DEFINE_MATH_OPERATORS  // ImGUI ImVec maths
-#include <glm/glm.hpp>
-
 #include <imgui/imgui.h>
 
 #include "shaders/shaderio_rt_gltf.h"
@@ -80,17 +77,15 @@
 #include <nvutils/file_operations.hpp>
 #include <nvutils/logger.hpp>
 #include <nvutils/parameter_parser.hpp>
-#include <nvutils/primitives.hpp>
 #include <nvutils/timers.hpp>
 #include <nvvk/acceleration_structures.hpp>
 #include <nvvk/check_error.hpp>
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
-#include <nvvk/default_structs.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
-#include <nvvk/helpers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/resource_allocator.hpp>
 #include <nvvk/sampler_pool.hpp>
 #include <nvvk/sbt_generator.hpp>
@@ -178,19 +173,14 @@ public:
 
     // Acquiring the sampler which will be used for displaying the GBuffer
     m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler;
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_linearSampler));
+    NVVK_DBG_NAME(m_linearSampler);
 
     // Create the G-Buffer
-    nvvk::GBufferInitInfo gBufferInit{
-        .allocator    = &m_allocator,
-        .colorFormats = {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
-        .depthFormat  = nvvk::findDepthFormat(m_app->getPhysicalDevice()),
-        .imageSampler = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    };
-    m_gBuffers.init(gBufferInit);
+    NVVK_CHECK(m_renderTarget.init({.alloc = &m_allocator,
+                                    .colorFormats = {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
+                                    .depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice()),
+                                    .debugName   = "RayTrace"}));
 
     // Get ray tracing properties
     m_rtProp.pNext = &m_accelStructProps;
@@ -223,7 +213,7 @@ public:
   //---------------------------------------------------------------------------------------------------------------
   // Destroying the resources
   //
-  void onDetach()
+  void onDetach() override
   {
     vkQueueWaitIdle(m_app->getQueue(0).queue);
     auto device = m_app->getDevice();
@@ -251,7 +241,8 @@ public:
     vkDestroyDescriptorSetLayout(device, m_rtDescriptorSetLayout, nullptr);
 
     m_tonemapper.deinit();
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_samplerPool.deinit();
     m_stagingUploader.deinit();
     m_allocator.deinit();
@@ -261,11 +252,15 @@ public:
 
   //---------------------------------------------------------------------------------------------------------------
   // When the viewport is resized, the GBuffer must be resized
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView(1));
+  }
 
   //---------------------------------------------------------------------------------------------------------------
   // The rendering function, called each frame
-  void onRender(VkCommandBuffer cmd)
+  void onRender(VkCommandBuffer cmd) override
   {
     NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
@@ -294,19 +289,20 @@ public:
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
 
     // Tonemap the image
-    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData, m_gBuffers.getDescriptorImageInfo(0),
-                            m_gBuffers.getDescriptorImageInfo(1));
+    m_tonemapper.runCompute(cmd, m_renderTarget.getSize(), m_tonemapperData,
+                            m_renderTarget.getColorSampleDescriptorImageInfo(0, m_linearSampler),
+                            m_renderTarget.getColorSampleDescriptorImageInfo(1));
   }
 
   //---------------------------------------------------------------------------------------------------------------
   // The ImGui rendering function, called each frame
-  void onUIRender()
+  void onUIRender() override
   {
     namespace PE = nvgui::PropertyEditor;
 
     if(ImGui::Begin("Viewport"))
     {
-      ImGui::Image(ImTextureID(m_gBuffers.getDescriptorSet(1)), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       // Adding Axis at the bottom left corner of the viewport
       if(m_settings.showAxis)
@@ -504,7 +500,7 @@ public:
         else if(result != VK_INCOMPLETE)
         {
           // Any result other than VK_SUCCESS or VK_INCOMPLETE is an error
-          assert(0 && "Error building BLAS");
+          assert(false && "Error building BLAS");
         }
         // VK_INCOMPLETE means continue the loop
         m_app->submitAndWaitTempCmdBuffer(cmd);
@@ -747,65 +743,52 @@ public:
   {
     nvvk::WriteSetContainer writes{};
     writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eTlas), m_tlas);
-    writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eOutImage), m_gBuffers.getColorImageView(),
-                  VK_IMAGE_LAYOUT_GENERAL);
+    writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eOutImage),
+                  m_renderTarget.getColorAttachmentView(0), VK_IMAGE_LAYOUT_GENERAL);
     writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eSceneDesc), m_bSceneInfo);
 
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipelineLayout, 0, writes.size(), writes.data());
   }
 
-  void onLastHeadlessFrame()
+  void onLastHeadlessFrame() override
   {
     // Saving the rendered image
     std::filesystem::path outputFilename = nvutils::getExecutablePath().replace_extension(".jpg");
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(), outputFilename);
+    m_app->saveImageToFile(m_renderTarget.getColorImage(1), m_renderTarget.getSize(), outputFilename);
 
     // Saving the Full UI
     // - Create a temporary GBuffer
     // - Render the UI in the GBuffer
     // - Save the GBuffer to a file
-    nvvk::GBuffer tempGBuffer;
-    VkSampler     linearSampler;
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-    tempGBuffer.init({
-        .allocator      = &m_allocator,
-        .colorFormats   = {VK_FORMAT_B8G8R8A8_UNORM},  // Only one GBuffer color attachment
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    nvvk::RenderTarget tempRenderTarget;
+    NVVK_CHECK(tempRenderTarget.init({
+        .alloc        = &m_allocator,
+        .colorFormats = {VK_FORMAT_B8G8R8A8_UNORM},  // Only one GBuffer color attachment
+        .debugName    = "RayTraceHeadlessUI",
+    }));
     {
       VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-      NVVK_CHECK(tempGBuffer.update(cmd, m_gBuffers.getSize()));
+      NVVK_CHECK(tempRenderTarget.update(cmd, m_renderTarget.getSize()));
       m_app->submitAndWaitTempCmdBuffer(cmd);
     }
-
-    // Image to render to
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = tempGBuffer.getColorImageView();
-
-    // Details of the dynamic rendering
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.renderArea           = {{0, 0}, tempGBuffer.getSize()};
 
     // Rendering the UI
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     {
-      nvvk::cmdImageMemoryBarrier(cmd, {tempGBuffer.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-      vkCmdBeginRendering(cmd, &renderingInfo);
+      nvvk::RenderTargetState rtState;
+      tempRenderTarget.fillState(rtState);
+      nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+      rtState.cmdBeginRendering(cmd, ops);
       ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
       vkCmdEndRendering(cmd);
-      nvvk::cmdImageMemoryBarrier(cmd, {tempGBuffer.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
     }
     m_app->submitAndWaitTempCmdBuffer(cmd);
     vkDeviceWaitIdle(m_app->getDevice());
 
     // Saving image
-    m_app->saveImageToFile(tempGBuffer.getColorImage(), tempGBuffer.getSize(),
+    m_app->saveImageToFile(tempRenderTarget.getSampleImage(), tempRenderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".screenshot.jpg").string(), 95);
-    tempGBuffer.deinit();
+    tempRenderTarget.deinit();
   }
 
   void onFileDrop(const char* filename)
@@ -843,7 +826,7 @@ public:
       if(!tinyLoader.LoadASCIIFromFile(&model, &err, &warn, filename.string()))
       {
         LOGE("Error loading glTF file: %s\n", err.c_str());
-        assert(0 && "No fallback");
+        assert(false && "No fallback");
         return {};
       }
     }
@@ -852,7 +835,7 @@ public:
       if(!tinyLoader.LoadBinaryFromFile(&model, &err, &warn, filename.string()))
       {
         LOGE("Error loading glTF file: %s\n", err.c_str());
-        assert(0 && "No fallback");
+        assert(false && "No fallback");
         return {};
       }
     }
@@ -955,7 +938,9 @@ public:
   nvapp::Application*      m_app{};
   nvvk::ResourceAllocator  m_allocator{};  // The VMA allocator
   nvvk::StagingUploader    m_stagingUploader{};
-  nvvk::GBuffer            m_gBuffers{};              // The G-Buffer
+  nvvk::RenderTarget       m_renderTarget{};          // The G-Buffer
+  nvapp::ImTexture         m_viewportImage{};         // ImGui texture displaying the tonemapped image
+  VkSampler                m_linearSampler{};         // Sampler used to feed the rendered image to the tonemapper
   nvvk::SamplerPool        m_samplerPool{};           // The sampler pool, used to create a sampler for the texture
   nvvk::DescriptorBindings m_rtDescriptorBindings{};  // The descriptor binding helper
   nvslang::SlangCompiler   m_slangCompiler{};         // The compiler for the shaders

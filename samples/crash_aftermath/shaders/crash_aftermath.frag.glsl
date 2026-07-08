@@ -110,7 +110,7 @@ void main()
     // Writing through this BDA pointer causes a GPU page fault that the
     // driver cannot recover from -> VK_ERROR_DEVICE_LOST.
     WriteTarget_ ptr = WriteTarget_(frameInfo.bufferAddr);
-    ptr.v = 1.0;
+    ptr.v            = 1.0;
     col += ptr.v;
   }
 
@@ -124,12 +124,12 @@ void main()
     // produce a different address in the GPU's ~40-bit virtual address space.
     // With thousands of fragments writing to scattered addresses, we're
     // guaranteed to hit unmapped pages -> GPU page fault -> VK_ERROR_DEVICE_LOST.
-    uint  h    = uint(gl_FragCoord.x) * 2654435761u ^ uint(gl_FragCoord.y) * 340573321u;
+    uint     h    = uint(gl_FragCoord.x) * 2654435761u ^ uint(gl_FragCoord.y) * 340573321u;
     uint64_t addr = uint64_t(h) << 8;  // spread across 40-bit VA range
     addr &= ~uint64_t(3);              // 4-byte alignment
     addr += 4096u;                     // skip null page region
     WriteTarget_ ptr = WriteTarget_(addr);
-    ptr.v = 1.0;
+    ptr.v            = 1.0;
     col += ptr.v;
   }
 
@@ -146,7 +146,7 @@ void main()
     // -> VK_ERROR_DEVICE_LOST.
     IndirectPtr_ indirect = IndirectPtr_(frameInfo.bufferAddr);
     WriteTarget_ target   = WriteTarget_(indirect.targetAddr);
-    target.v = 1.0;
+    target.v              = 1.0;
     col += target.v;
   }
 

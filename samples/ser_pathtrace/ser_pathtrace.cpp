@@ -58,6 +58,7 @@
 #include <nvapp/elem_default_menu.hpp>
 #include <nvapp/elem_default_title.hpp>
 #include <nvgui/camera.hpp>
+#include <nvapp/imgui_texture.hpp>
 #include <nvgui/sky.hpp>
 #include <nvgui/tonemapper.hpp>
 #include <nvshaders_host/tonemapper.hpp>
@@ -71,8 +72,8 @@
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
 #include <nvvk/helpers.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/resource_allocator.hpp>
 #include <nvvk/sampler_pool.hpp>
 #include <nvvk/sbt_generator.hpp>
@@ -116,21 +117,19 @@ public:
       m_tonemapper.init(&m_alloc, code);
     }
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
+    // Sampler used to feed the rendered image to the tonemapper (its input is a
+    // combined image sampler).
     m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler;
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_linearSampler));
+    NVVK_DBG_NAME(m_linearSampler);
 
-    // Create the G-Buffer
-    nvvk::GBufferInitInfo gBufferInit{
-        .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFormat, m_colorFormat, m_colorFormat},  // tonemap, color and heatmap
-        .depthFormat    = nvvk::findDepthFormat(m_app->getPhysicalDevice()),
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    };
-    m_gBuffers.init(gBufferInit);
+    // Offscreen render target: tonemapped + rendered (HDR) + heatmap color images, plus depth
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = &m_alloc,
+        .colorFormats = {m_colorFormat, m_colorFormat, m_colorFormat},  // tonemap, color and heatmap
+        .depthFormat  = nvvk::findDepthFormat(m_app->getPhysicalDevice()),
+        .debugName    = "SerPathtrace",
+    }));
 
 
     // Requesting ray tracing properties and reorder properties
@@ -159,7 +158,10 @@ public:
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size)
   {
-    NVVK_CHECK(m_gBuffers.update(cmd, size));
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    // Views are recreated on resize: refresh the ImGui textures used for display.
+    m_tonemappedImage.update(m_renderTarget.getUiImageView(eImgTonemapped));
+    m_heatmapImage.update(m_renderTarget.getUiImageView(eImgHeatmap));
 
     resetFrame();
   }
@@ -201,8 +203,7 @@ public:
                ImGui::PushStyleColor(ImGuiCol_Button, selectedColor);
                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoveredColor);
                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, 5));
-               bool result = ImGui::ImageButton("##but", (ImTextureID)m_gBuffers.getDescriptorSet(eImgHeatmap),
-                                                ImVec2(100 * m_gBuffers.getAspectRatio(), 100));
+               bool result = ImGui::ImageButton("##but", m_heatmapImage, ImVec2(100 * m_renderTarget.getAspectRatio(), 100));
                ImGui::PopStyleColor(2);
                ImGui::PopStyleVar();
                return result;
@@ -252,9 +253,9 @@ public:
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
 
-      // Display the G-Buffer image
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(m_showHeatmap ? eImgHeatmap : eImgTonemapped),
-                   ImGui::GetContentRegionAvail());
+      // Display the tonemapped (or heatmap) image
+      const nvapp::ImTexture& displayed = m_showHeatmap ? m_heatmapImage : m_tonemappedImage;
+      ImGui::Image(displayed, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -305,9 +306,10 @@ public:
     // Barrier to make sure the image is ready for Tonemapping
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
 
-    // Tonemap the image
-    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData, m_gBuffers.getDescriptorImageInfo(eImgRendered),
-                            m_gBuffers.getDescriptorImageInfo(eImgTonemapped));
+    // Tonemap the image (input is sampled, output is a storage image)
+    m_tonemapper.runCompute(cmd, m_renderTarget.getSize(), m_tonemapperData,
+                            m_renderTarget.getColorSampleDescriptorImageInfo(eImgRendered, m_linearSampler),
+                            m_renderTarget.getColorSampleDescriptorImageInfo(eImgTonemapped));
   }
 
 private:
@@ -740,8 +742,10 @@ private:
 
     nvvk::WriteSetContainer writeContainer;
     writeContainer.append(m_descriptorPack.makeWrite(B_tlas), m_tlas);
-    writeContainer.append(m_descriptorPack.makeWrite(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
-    writeContainer.append(m_descriptorPack.makeWrite(B_outHeatmap), m_gBuffers.getColorImageView(eImgHeatmap), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_descriptorPack.makeWrite(B_outImage), m_renderTarget.getColorAttachmentView(eImgRendered),
+                          VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_descriptorPack.makeWrite(B_outHeatmap), m_renderTarget.getColorAttachmentView(eImgHeatmap),
+                          VK_IMAGE_LAYOUT_GENERAL);
     writeContainer.append(m_descriptorPack.makeWrite(B_frameInfo), m_bFrameInfo);
     writeContainer.append(m_descriptorPack.makeWrite(B_skyParam), m_bSkyParams);
     writeContainer.append(m_descriptorPack.makeWrite(B_heatStats), m_bHeatStats);
@@ -809,7 +813,9 @@ private:
       m_alloc.destroyAcceleration(blas);
     m_alloc.destroyAcceleration(m_tlas);
 
-    m_gBuffers.deinit();
+    m_tonemappedImage.deinit();
+    m_heatmapImage.deinit();
+    m_renderTarget.deinit();
     m_sbt.deinit();
     m_tonemapper.deinit();
     m_samplerPool.deinit();
@@ -818,7 +824,7 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(eImgTonemapped), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string(), 95);
   }
 
@@ -830,8 +836,11 @@ private:
   nvvk::ResourceAllocator  m_alloc;
   nvshaders::Tonemapper    m_tonemapper{};
   shaderio::TonemapperData m_tonemapperData;
-  nvvk::GBuffer            m_gBuffers;       // G-Buffers: color + depth
-  nvvk::SamplerPool        m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
+  nvvk::RenderTarget       m_renderTarget;     // Offscreen: tonemapped + rendered + heatmap color, plus depth
+  nvapp::ImTexture         m_tonemappedImage;  // ImGui texture for the tonemapped image
+  nvapp::ImTexture         m_heatmapImage;     // ImGui texture for the heatmap image
+  nvvk::SamplerPool        m_samplerPool{};    // Sampler pool (sampler for the tonemapper input)
+  VkSampler                m_linearSampler{};  // Sampler feeding the rendered image to the tonemapper
 
 
   VkFormat                      m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image

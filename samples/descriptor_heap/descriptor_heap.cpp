@@ -92,11 +92,11 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
+#include <nvapp/imgui_texture.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
-#include <nvvk/sampler_pool.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/staging.hpp>
 #include <nvvk/validation_settings.hpp>
 
@@ -144,18 +144,13 @@ public:
 
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
 
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-
-    m_gBuffers = std::make_unique<nvvk::GBuffer>();
-    m_gBuffers->init({
-        .allocator      = m_allocator.get(),
-        .colorFormats   = {m_colorFormat},
-        .depthFormat    = m_depthFormat,
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    // Offscreen render target: one color attachment + depth
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = m_allocator.get(),
+        .colorFormats = {m_colorFormat},
+        .depthFormat  = m_depthFormat,
+        .debugName    = "DescriptorHeap",
+    }));
 
     // Initialize descriptor heaps
     if(!initHeaps(app->getPhysicalDevice()))
@@ -229,18 +224,19 @@ public:
       m_allocator->destroyBuffer(m_resourceHeapBuffer);
     }
 
-    m_samplerPool.deinit();
-    m_gBuffers->deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_allocator->deinit();
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { m_gBuffers->update(cmd, size); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
+  }
 
   void onUIRender() override
   {
-    if(!m_gBuffers)
-      return;
-
     {
       ImGui::Begin("Settings");
 
@@ -329,7 +325,7 @@ public:
     {
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
       ImGui::Begin("Viewport");
-      ImGui::Image(ImTextureID(m_gBuffers->getDescriptorSet()), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -359,31 +355,18 @@ public:
     // #DESC_HEAP: Bind descriptor heaps (once per frame)
     cmdBindHeaps(cmd);
 
-    // Rendering
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers->getColorImageView();
-    colorAttachment.clearValue                = {m_clearColor};
-    colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    // Build the dynamic-rendering state from the render target. The render target
+    // keeps its images in VK_IMAGE_LAYOUT_GENERAL, so no layout transitions are
+    // needed to render into it or to sample it afterwards.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {m_clearColor};
+    rtState.depthAttachment.clearValue     = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
 
-    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers->getDepthImageView();
-    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers->getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.pDepthAttachment     = &depthAttachment;
-
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-
-    vkCmdBeginRendering(cmd, &renderingInfo);
-
-    m_graphicState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+    m_graphicState.cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
     m_graphicState.cmdApplyAllStates(cmd);
 
     auto& shaders = (m_mode == RenderingMode::PushIndex)      ? m_pushIndexShaders :
@@ -408,10 +391,10 @@ public:
     frameInfo.dropHeight = m_gridSize * 1.5f + 5.0f;
     cmdPushData(cmd, 0, sizeof(shaderio::FrameInfo), &frameInfo);
 
-    m_statsDrawCalls          = 0;
-    m_statsPushDataBytes      = static_cast<int>(sizeof(shaderio::FrameInfo));
-    m_statsHeapBinds          = 1;
-    m_statsMappingsPerFrame   = 0;
+    m_statsDrawCalls        = 0;
+    m_statsPushDataBytes    = static_cast<int>(sizeof(shaderio::FrameInfo));
+    m_statsHeapBinds        = 1;
+    m_statsMappingsPerFrame = 0;
 
     if(m_mode == RenderingMode::PushIndex)
     {
@@ -469,12 +452,6 @@ public:
     }
 
     vkCmdEndRendering(cmd);
-
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers->getDepthImage(),
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
   }
 
 private:
@@ -898,7 +875,7 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers->getColorImage(), m_gBuffers->getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -908,12 +885,12 @@ private:
   nvapp::Application*                      m_app{};
   VkDevice                                 m_device{};
   std::unique_ptr<nvvk::ResourceAllocator> m_allocator;
-  nvvk::SamplerPool                        m_samplerPool{};
 
-  VkFormat                       m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;
-  VkFormat                       m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;
-  VkClearColorValue              m_clearColor  = {{0.2f, 0.2f, 0.2f, 1.0f}};
-  std::unique_ptr<nvvk::GBuffer> m_gBuffers;
+  VkFormat           m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  VkFormat           m_depthFormat = VK_FORMAT_X8_D24_UNORM_PACK32;
+  VkClearColorValue  m_clearColor  = {{0.2f, 0.2f, 0.2f, 1.0f}};
+  nvvk::RenderTarget m_renderTarget;   // Offscreen render target: color + depth
+  nvapp::ImTexture   m_viewportImage;  // ImGui texture for the render target color image
 
   // #DESC_HEAP: Descriptor heap state
   nvvk::Buffer         m_samplerHeapBuffer;      // Device-local sampler heap
@@ -945,14 +922,14 @@ private:
   std::vector<nvvk::Image> m_faceImages;
 
   // Settings
-  bool                                           m_heapAvailable           = false;
-  RenderingMode                                  m_mode                    = RenderingMode::ConstantOffset;
-  int                                            m_gridSize                = 6;
-  float                                          m_animSpeed               = 1.0f;
-  int                                            m_statsDrawCalls          = 0;
-  int                                            m_statsPushDataBytes      = 0;
-  int                                            m_statsHeapBinds          = 0;
-  int                                            m_statsMappingsPerFrame   = 0;
+  bool                                           m_heapAvailable         = false;
+  RenderingMode                                  m_mode                  = RenderingMode::ConstantOffset;
+  int                                            m_gridSize              = 6;
+  float                                          m_animSpeed             = 1.0f;
+  int                                            m_statsDrawCalls        = 0;
+  int                                            m_statsPushDataBytes    = 0;
+  int                                            m_statsHeapBinds        = 0;
+  int                                            m_statsMappingsPerFrame = 0;
   std::chrono::high_resolution_clock::time_point m_startTime;
 };
 

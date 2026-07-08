@@ -66,7 +66,7 @@ void main()
   float loopTime     = mod(frame.time, cycleTime);
 
   // Per-cube fall-in and fall-out progress
-  float tIn  = clamp((loopTime - float(instanceID) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
+  float tIn = clamp((loopTime - float(instanceID) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
   float tOut = clamp((loopTime - fallOutStart - float(instanceID) * animationCubeDelay) / animationFallDuration, 0.0, 1.0);
 
   // Invisible before fall-in or after fall-out: degenerate vertex

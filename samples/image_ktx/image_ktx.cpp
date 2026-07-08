@@ -79,7 +79,8 @@
 #include <nvvk/descriptors.hpp>
 #include <nvvk/descriptor_heap.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
@@ -229,15 +230,11 @@ public:
 
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     // Creating the G-Buffer, a single color attachment, no depth-stencil
-    VkSampler linearSampler{};
     m_samplerPool.init(m_device);
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-    m_gBuffers.init({.allocator      = &m_alloc,
-                     .colorFormats   = {m_colorFormat, m_srgbFormat},
-                     .depthFormat    = m_depthFormat,
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_linearSampler));
+    NVVK_DBG_NAME(m_linearSampler);
+    NVVK_CHECK(m_renderTarget.init(
+        {.alloc = &m_alloc, .colorFormats = {m_colorFormat, m_srgbFormat}, .depthFormat = m_depthFormat, .debugName = "ImageKtx"}));
 
 
     // Find image file
@@ -255,7 +252,7 @@ public:
       m_app->submitAndWaitTempCmdBuffer(cmd);
       uploader.deinit();
       assert(m_texture->valid());
-      m_texture->setSampler(linearSampler);  // Default to nearest
+      m_texture->setSampler(m_linearSampler);  // Default to nearest
     }
 
     // Descriptor heap
@@ -317,7 +314,11 @@ public:
     }
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView(GBufferTargets::eTonemapped));
+  }
 
   void onUIRender() override
   {
@@ -336,7 +337,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer0 image
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(GBufferTargets::eTonemapped), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -385,31 +386,24 @@ private:
   {
     NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-    // Drawing the scene in GBuffer-1
+    // Drawing the scene into the render target (images stay in VK_IMAGE_LAYOUT_GENERAL)
     VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers.getColorImageView(GBufferTargets::eRendered);
+    colorAttachment.imageView                 = m_renderTarget.getColorAttachmentView(GBufferTargets::eRendered);
+    colorAttachment.imageLayout               = VK_IMAGE_LAYOUT_GENERAL;
     colorAttachment.clearValue                = {m_clearColor};
 
     VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
+    depthAttachment.imageView                 = m_renderTarget.getDepthImageView();
+    depthAttachment.imageLayout               = VK_IMAGE_LAYOUT_GENERAL;
     depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
-
 
     // Create the rendering info
     VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_renderTarget.getSize());
     renderingInfo.colorAttachmentCount = 1;
     renderingInfo.pColorAttachments    = &colorAttachment;
     renderingInfo.pDepthAttachment     = &depthAttachment;
 
-
-    // Transition GBuffer images to be used as attachments
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(GBufferTargets::eRendered), VK_IMAGE_LAYOUT_GENERAL,
-                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
     vkCmdBeginRendering(cmd, &renderingInfo);
 
     nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
@@ -439,13 +433,6 @@ private:
     }
 
     vkCmdEndRendering(cmd);
-    // Transition GBuffer images to be used as textures
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(GBufferTargets::eRendered),
-                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
   }
 
   void renderPost(VkCommandBuffer cmd)
@@ -453,9 +440,9 @@ private:
     NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
-    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData,
-                            m_gBuffers.getDescriptorImageInfo(GBufferTargets::eRendered),
-                            m_gBuffers.getDescriptorImageInfo(GBufferTargets::eTonemapped));
+    m_tonemapper.runCompute(cmd, m_renderTarget.getSize(), m_tonemapperData,
+                            m_renderTarget.getColorSampleDescriptorImageInfo(GBufferTargets::eRendered, m_linearSampler),
+                            m_renderTarget.getColorSampleDescriptorImageInfo(GBufferTargets::eTonemapped));
   }
 
   void createPipeline()
@@ -625,7 +612,8 @@ private:
     m_alloc.destroyBuffer(m_samplerHeapBuffer);
     m_alloc.destroyBuffer(m_resourceHeapBuffer);
 
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_tonemapper.deinit();
     m_samplerPool.deinit();
     m_alloc.deinit();
@@ -633,7 +621,7 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(GBufferTargets::eTonemapped), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -642,7 +630,9 @@ private:
   //
   nvapp::Application*      m_app{nullptr};
   nvvk::ResourceAllocator  m_alloc;
-  nvvk::GBuffer            m_gBuffers;  // G-Buffers: color + depth
+  nvvk::RenderTarget       m_renderTarget;     // G-Buffers: color + depth
+  nvapp::ImTexture         m_viewportImage;    // ImGui texture displaying the tonemapped image
+  VkSampler                m_linearSampler{};  // Sampler used to feed the rendered image to the tonemapper
   nvvk::SamplerPool        m_samplerPool;
   nvshaders::Tonemapper    m_tonemapper{};
   shaderio::TonemapperData m_tonemapperData;

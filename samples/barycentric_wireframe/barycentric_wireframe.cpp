@@ -66,11 +66,12 @@
 #include <nvvk/default_structs.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
 #include <nvvk/graphics_pipeline.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/helpers.hpp>
-#include <nvvk/sampler_pool.hpp>
 #include <nvvk/staging.hpp>
+
+#include <nvapp/imgui_texture.hpp>
 
 
 // thickness;color;thicknessVar;smoothing;screenSpace;backFaceColor;enableDash;dashRepeats;dashLength;onlyWire;
@@ -111,21 +112,14 @@ public:
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    // GBuffer
+    // Offscreen render target: one color attachment + depth
     m_depthFmt = nvvk::findDepthFormat(app->getPhysicalDevice());
-    m_gBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFmt},  // Only one GBuffer color attachment
-        .depthFormat    = m_depthFmt,
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = &m_alloc,
+        .colorFormats = {m_colorFmt},  // Only one color attachment
+        .depthFormat  = m_depthFmt,
+        .debugName    = "BaryWireframe",
+    }));
 
     m_settings = presets[0];
     createScene();
@@ -141,7 +135,8 @@ public:
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& viewportSize) override
   {
-    NVVK_CHECK(m_gBuffers.update(cmd, viewportSize));
+    NVVK_CHECK(m_renderTarget.update(cmd, viewportSize));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
   }
 
   void onUIRender() override
@@ -181,10 +176,10 @@ public:
     }
 
     {
-      // Display the G-Buffer image
+      // Display the rendered image
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -209,32 +204,20 @@ public:
                            VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
 
-    // Drawing the primitives in a G-Buffer
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
-    colorAttachment.clearValue                = {m_clearColor};
-    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
-    depthAttachment.clearValue                = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
-
-    // Create the rendering info
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.pDepthAttachment     = &depthAttachment;
-
-    // Transition GBuffer images to be used as attachments
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
+    // Build the dynamic-rendering state from the render target. The render target
+    // keeps its images in VK_IMAGE_LAYOUT_GENERAL, so no layout transitions are
+    // needed to render into it or to sample it afterwards.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {m_clearColor};
+    rtState.depthAttachment.clearValue     = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
 
     // Start the rendering
-    vkCmdBeginRendering(cmd, &renderingInfo);
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
+
     // Set the viewport and scissor
-    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
     // Bind the pipeline and descriptor set
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
@@ -255,13 +238,6 @@ public:
       vkCmdDrawIndexed(cmd, numIndices, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-
-    // Transition GBuffer images to be used as texture
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
   }
 
 private:
@@ -394,32 +370,32 @@ private:
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     m_descriptorPack.deinit();
 
-    m_gBuffers.deinit();
-    m_samplerPool.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvapp::Application*     m_app{};          // Application
-  nvvk::ResourceAllocator m_alloc;          // Allocator
-  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
-  VkDevice                m_device{};       // Vulkan device
+  nvapp::Application*     m_app{};     // Application
+  nvvk::ResourceAllocator m_alloc;     // Allocator
+  VkDevice                m_device{};  // Vulkan device
 
   std::shared_ptr<nvutils::CameraManipulator> m_cameraManip;  // Camera manipulator
 
-  // G-Buffers
-  nvvk::GBuffer     m_gBuffers;                                 // G-Buffers: color + depth
-  VkFormat          m_colorFmt   = VK_FORMAT_R8G8B8A8_UNORM;    // Color format of the image
-  VkFormat          m_depthFmt   = VK_FORMAT_UNDEFINED;         // Depth format of the depth buffer
-  VkClearColorValue m_clearColor = {{0.3F, 0.3F, 0.3F, 1.0F}};  // Clear color
+  // Render target
+  nvvk::RenderTarget m_renderTarget;                             // Offscreen render target: color + depth
+  nvapp::ImTexture   m_viewportImage;                            // ImGui texture for the render target color image
+  VkFormat           m_colorFmt   = VK_FORMAT_R8G8B8A8_UNORM;    // Color format of the image
+  VkFormat           m_depthFmt   = VK_FORMAT_UNDEFINED;         // Depth format of the depth buffer
+  VkClearColorValue  m_clearColor = {{0.3F, 0.3F, 0.3F, 1.0F}};  // Clear color
 
   // Pipeline
   VkPipeline           m_pipeline{};        // Graphic pipeline to render

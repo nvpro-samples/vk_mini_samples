@@ -66,7 +66,7 @@ VSout vertexMain(VSin input)
   float4 pos = mul(float4(input.position.xyz, 1.0), pushConst.transfo);
 
   VSout output;
-  output.sv_position = mul(mul(pos, frameInfo.view), frameInfo.proj);
+  output.sv_position    = mul(mul(pos, frameInfo.view), frameInfo.proj);
   output.stage.normal   = input.normal;
   output.stage.position = pos.xyz;
   output.pointSize      = pushConst.pointSize;

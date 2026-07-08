@@ -286,5 +286,3 @@ void rahitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   payload.color  = float3(1.0F, 0.0F, 0.0F);
   payload.weight = 0.5F;
 }
-
-

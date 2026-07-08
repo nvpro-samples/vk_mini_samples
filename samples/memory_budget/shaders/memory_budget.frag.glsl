@@ -41,7 +41,6 @@ layout(push_constant) uniform PushConstant_
 };
 
 
-
 void main()
 {
   vec3 V = normalize(frameInfo.camPos - inFragPos);  // vector that goes from the hit position towards the origin of the ray

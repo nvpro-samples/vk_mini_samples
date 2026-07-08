@@ -66,12 +66,14 @@
 #include <nvvk/default_structs.hpp>        // Default Vulkan structure
 #include <nvvk/descriptors.hpp>            // Help creation descriptor sets
 #include <nvvk/formats.hpp>                // Find format, etc.
-#include <nvvk/gbuffers.hpp>               // Rendering in GBuffers
+#include <nvvk/render_target.hpp>          // Rendering in a render target
 #include <nvvk/graphics_pipeline.hpp>      // Helper to create a graphic pipeline
 #include <nvvk/helpers.hpp>                // Find format
 #include <nvvk/resource_allocator.hpp>     // The GPU resource allocator
 #include <nvvk/sampler_pool.hpp>           // Texture sampler
 #include <nvvk/staging.hpp>                // Staging manager
+
+#include <nvapp/imgui_texture.hpp>
 
 #include "common/utils.hpp"
 
@@ -119,19 +121,13 @@ public:
 
     m_stagingUploader.init(&m_alloc, true);
 
-    // The texture sampler to use
+    // The texture sampler pool (used for the 3D texture, not the render target)
     m_samplerPool.init(m_device);
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
 
-    // Initialization of the G-Buffers we want use
+    // Initialization of the render target we want to use
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
-    m_gBuffers.init({.allocator      = &m_alloc,
-                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},
-                     .depthFormat    = m_depthFormat,
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    NVVK_CHECK(m_renderTarget.init(
+        {.alloc = &m_alloc, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM}, .depthFormat = m_depthFormat, .debugName = "Texture3dSample"}));
 
 
     createComputePipeline();
@@ -156,7 +152,8 @@ public:
     vkDestroyDescriptorSetLayout(m_device, m_computeDescriptorSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_rasterDescriptorSetLayout, nullptr);
 
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_samplerPool.deinit();
 
     m_alloc.destroyBuffer(m_vertices);
@@ -313,7 +310,7 @@ public:
     {
       if(m_image.image != nullptr)
       {
-        ImGui::Image(ImTextureID(m_gBuffers.getDescriptorSet()), ImGui::GetContentRegionAvail());
+        ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
       }
 
       ImGui::End();
@@ -347,30 +344,16 @@ public:
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
-    // Drawing the quad in a G-Buffer
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
-    colorAttachment.clearValue                = {.color = m_clearColor};
-    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
-    depthAttachment.clearValue                = {{{1.0F, 0}}};
+    // Build the dynamic-rendering state from the render target. The render target
+    // keeps its images in VK_IMAGE_LAYOUT_GENERAL, so no layout transitions are
+    // needed to render into it or to sample it afterwards.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {m_clearColor};
+    rtState.depthAttachment.clearValue     = {.depthStencil = DEFAULT_VkClearDepthStencilValue};
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    // Create the rendering info
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.pDepthAttachment     = &depthAttachment;
-
-
-    // Transition GBuffer images to be used as attachments
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-
-    vkCmdBeginRendering(cmd, &renderingInfo);
     {
       const VkDeviceSize offsets{0};
 
@@ -399,13 +382,6 @@ public:
     }
     vkCmdEndRendering(cmd);
 
-    // Transition GBuffer images to be used as textures
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_GENERAL,
-                                      {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-
     VkSemaphoreSubmitInfo signalInfo = {
         .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .semaphore   = m_timelineSemaphore,
@@ -419,7 +395,11 @@ public:
     m_timelineSemaphoreNextValue++;
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
+  }
 
 private:
   void createTexture()
@@ -701,7 +681,7 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -728,8 +708,9 @@ private:
   VkSemaphore m_timelineSemaphore{};
   uint64_t    m_timelineSemaphoreNextValue = 1;
 
-  nvvk::Image   m_image;     // The 3D texture holding the perlin noise
-  nvvk::GBuffer m_gBuffers;  // G-Buffers: color + depth
+  nvvk::Image        m_image;          // The 3D texture holding the perlin noise
+  nvvk::RenderTarget m_renderTarget;   // Offscreen render target: color + depth
+  nvapp::ImTexture   m_viewportImage;  // ImGui texture for the render target color image
 
   nvvk::Buffer m_vertices;   // Buffer of the vertices
   nvvk::Buffer m_indices;    // Buffer of the indices

@@ -84,9 +84,9 @@
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/helpers.hpp>
-#include <nvvk/sampler_pool.hpp>
 #include <nvvk/sbt_generator.hpp>
 #include <nvvk/validation_settings.hpp>
 
@@ -132,20 +132,13 @@ public:
 
     m_micromap = std::make_unique<MicromapProcess>(&m_alloc);
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
-    m_gBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
-        .depthFormat    = m_depthFormat,
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = &m_alloc,
+        .colorFormats = {m_colorFormat},  // Only one GBuffer color attachment
+        .depthFormat  = m_depthFormat,
+        .debugName    = "MmOpacity",
+    }));
 
 
     // Requesting ray tracing properties
@@ -187,7 +180,8 @@ public:
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    m_gBuffers.update(cmd, size);
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
 
     writeRtDesc();
   }
@@ -275,7 +269,7 @@ public:
       ImGui::Begin("Viewport");
 
       // Display the G-Buffer image
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -735,7 +729,7 @@ private:
 
     nvvk::WriteSetContainer writeContainer;
     writeContainer.append(m_descriptorPack.makeWrite(B_tlas), m_tlas);
-    writeContainer.append(m_descriptorPack.makeWrite(B_outImage), m_gBuffers.getColorImageView(), VK_IMAGE_LAYOUT_GENERAL);
+    writeContainer.append(m_descriptorPack.makeWrite(B_outImage), m_renderTarget.getColorAttachmentView(), VK_IMAGE_LAYOUT_GENERAL);
     writeContainer.append(m_descriptorPack.makeWrite(B_frameInfo), m_bFrameInfo);
     writeContainer.append(m_descriptorPack.makeWrite(B_skyParam), m_bSkyParams);
     writeContainer.append(m_descriptorPack.makeWrite(B_materials), m_bMaterials);
@@ -779,15 +773,15 @@ private:
     destroyAccelerationStructures();
     m_micromap.reset();
 
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_sbt.deinit();
-    m_samplerPool.deinit();
     m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -796,7 +790,8 @@ private:
   //
   nvapp::Application*              m_app{nullptr};
   nvvk::ResourceAllocator          m_alloc;
-  nvvk::GBuffer                    m_gBuffers;  // G-Buffers: color + depth
+  nvvk::RenderTarget               m_renderTarget;   // Offscreen color + depth
+  nvapp::ImTexture                 m_viewportImage;  // ImGui texture displaying the rendered image
   std::unique_ptr<MicromapProcess> m_micromap;
 
 
@@ -817,8 +812,6 @@ private:
   nvvk::Buffer                 m_bInstInfoBuffer;
   nvvk::Buffer                 m_bMaterials;
   nvvk::Buffer                 m_bSkyParams;
-
-  nvvk::SamplerPool m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
 
   // Data and setting
   struct Material

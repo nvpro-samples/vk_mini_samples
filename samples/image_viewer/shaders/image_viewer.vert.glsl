@@ -33,8 +33,8 @@ layout(push_constant) uniform RasterPushConstant_
 
 void main()
 {
-  vec4 pos    = transfo * vec4(scale * inPosition, 0.0, 1.0);
-  gl_Position = pos;
-  outFragUv   = inUv;
+  vec4 pos      = transfo * vec4(scale * inPosition, 0.0, 1.0);
+  gl_Position   = pos;
+  outFragUv     = inUv;
   outSamplerIdx = samplerIdx;
 }

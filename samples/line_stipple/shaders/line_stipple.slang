@@ -19,23 +19,24 @@
 
 struct PushConstant
 {
-    float3 color;
-    float rotate;
-    float2 translate;
-    int2 _pad;
+  float3 color;
+  float  rotate;
+  float2 translate;
+  int2   _pad;
 };
 
-[[vk::push_constant]] ConstantBuffer<PushConstant> pushConstants;
+[[vk::push_constant]]
+ConstantBuffer<PushConstant> pushConstants;
 
 struct VSInput
 {
-    float3 position : POSITION;
+  float3 position : POSITION;
 };
 
 struct PSInput
 {
-    float4 position : SV_POSITION;
-    float4 color : COLOR;
+  float4 position : SV_POSITION;
+  float4 color : COLOR;
 };
 
 
@@ -43,26 +44,27 @@ struct PSInput
 [shader("vertex")]
 PSInput vertexMain(VSInput input)
 {
-    PSInput output;
+  PSInput output;
 
-    float2 pos = input.position.xy;
-    pos.y *= -1.0; // Flip the y coordinate
+  float2 pos = input.position.xy;
+  pos.y *= -1.0;  // Flip the y coordinate
 
-    // Translate and rotate the vertex position
-    float angle = pushConstants.rotate;
-    float2x2 rot = float2x2(cos(angle), -sin(angle), sin(angle), cos(angle));
-    pos = mul(rot, pos);
-    pos += pushConstants.translate;
+  // Translate and rotate the vertex position
+  float    angle = pushConstants.rotate;
+  float2x2 rot   = float2x2(cos(angle), -sin(angle), sin(angle), cos(angle));
+  pos            = mul(rot, pos);
+  pos += pushConstants.translate;
 
-    output.position = float4(pos, input.position.z, 1.0);
-    output.color = float4(pushConstants.color, 1.0);
+  output.position = float4(pos, input.position.z, 1.0);
+  output.color    = float4(pushConstants.color, 1.0);
 
-    return output;
+  return output;
 }
 
 // Pixel shader
 [shader("pixel")]
-float4 fragmentMain(PSInput input) : SV_Target
+float4 fragmentMain(PSInput input)
+    : SV_Target
 {
   return input.color;
 }

@@ -152,5 +152,5 @@ void meshMain(uint3                                                         grou
 float4 fragmentMain(MeshOutput input)
     : SV_Target
 {
-    return float4(input.color, 1.0f);
+  return float4(input.color, 1.0f);
 }

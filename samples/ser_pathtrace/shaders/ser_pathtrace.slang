@@ -411,4 +411,3 @@ void rmissMain(inout HitPayload payload)
 {
   payload.hitT = INFINITE;
 }
-

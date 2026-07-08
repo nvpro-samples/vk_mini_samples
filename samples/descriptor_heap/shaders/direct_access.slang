@@ -27,7 +27,7 @@
 // Texture2D.Handle(uint2(index, 0)) and SamplerState.Handle(uint2(index, 0)).
 [require(spvDescriptorHeapEXT)]
 [shader("vertex")]
-VSout vertexMain(VSin input, int instanceIndex : SV_InstanceID)
+VSout vertexMain(VSin input, int instanceIndex: SV_InstanceID)
 {
   return instancedVertex(input, instanceIndex);
 }

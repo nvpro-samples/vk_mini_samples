@@ -26,4 +26,3 @@ void main()
 {
   outColor = vec4(inColor, 1.0);
 }
-

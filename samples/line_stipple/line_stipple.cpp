@@ -46,11 +46,11 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
-#include <nvvk/sampler_pool.hpp>
 #include <nvvk/staging.hpp>
 
 constexpr int32_t numStripVertices = 300;
@@ -92,30 +92,16 @@ public:
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    // GBuffer
+    // Offscreen render target with built-in MSAA: the scene is rendered into a
+    // multisampled color+depth image and the color is resolved to a single-sample
+    // image for display. RenderTarget creates and resolves those images itself,
+    // so the sample no longer manages any MSAA image/view by hand.
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
-    m_gBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
-        .depthFormat    = m_depthFormat,
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
-
-    m_msaaGBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
-        .depthFormat    = m_depthFormat,
-        .sampleCount    = m_settings.msaaSamples,  // <--- Super-sampling
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    NVVK_CHECK(m_renderTarget.init({.alloc        = &m_alloc,
+                                    .colorFormats = {m_colorFormat},
+                                    .depthFormat  = m_depthFormat,
+                                    .msaa = {.samples = m_settings.msaaSamples, .colorResolve = VK_RESOLVE_MODE_AVERAGE_BIT},
+                                    .debugName = "LineStipple"}));
 
 
     // Check which features are supported
@@ -142,9 +128,8 @@ public:
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
     m_alloc.destroyBuffer(m_vertexBuffer);
-    m_gBuffers.deinit();
-    m_msaaGBuffers.deinit();
-    m_samplerPool.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_alloc.deinit();
   }
 
@@ -152,91 +137,29 @@ public:
   {
     NVVK_DBG_SCOPE(cmd);
 
-    VkRenderingAttachmentInfoKHR colorAttachment{
-        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView   = m_gBuffers.getColorImageView(),
-        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue  = {{0.2f, 0.2f, 0.3f, 1.0f}},
-    };
+    // #MSAA - RenderTarget owns the multisampled color+depth images and the
+    // single-sample resolve target. fillState() wires the resolve automatically
+    // when the sample count is > 1, so there is no manual MSAA bookkeeping here.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {{0.2f, 0.2f, 0.3f, 1.0f}};
+    rtState.depthAttachment.clearValue     = {.depthStencil = {1.0f, 0}};
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    VkRenderingAttachmentInfoKHR depthAttachment{
-        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView   = m_gBuffers.getDepthImageView(),
-        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue  = {1.0f, 0},
-    };
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+    drawStippledLines(cmd);
 
-    VkRenderingInfoKHR renderingInfo{
-        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea           = {{0, 0}, m_app->getViewportSize()},
-        .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &colorAttachment,
-        .pDepthAttachment     = &depthAttachment,
-    };
-
-    // Transition GBuffer images to be used as attachments
-    if(m_settings.msaaSamples == VK_SAMPLE_COUNT_1_BIT)
-    {
-      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                        VK_IMAGE_LAYOUT_GENERAL,
-                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-    }
-    else
-    {
-      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getDepthImage(),
-                                        VK_IMAGE_LAYOUT_GENERAL,
-                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-
-      // Render to MSAA image and resolve to G-Buffer
-      colorAttachment.imageView          = m_msaaGBuffers.getColorImageView();
-      colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-      colorAttachment.resolveImageView   = m_gBuffers.getColorImageView();
-      colorAttachment.resolveMode        = VK_RESOLVE_MODE_AVERAGE_BIT;
-      depthAttachment.imageView          = m_msaaGBuffers.getDepthImageView();
-    }
-
-    vkCmdBeginRendering(cmd, &renderingInfo);
-    {
-      const VkDeviceSize offsets{0};
-
-      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
-      drawStippledLines(cmd);
-    }
     vkCmdEndRendering(cmd);
-
-    // Transition GBuffer images to be used as textures
-    if(m_settings.msaaSamples == VK_SAMPLE_COUNT_1_BIT)
-    {
-      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-      nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getDepthImage(),
-                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                        VK_IMAGE_LAYOUT_GENERAL,
-                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-    }
-    else
-    {
-      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
-      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaGBuffers.getDepthImage(),
-                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                        VK_IMAGE_LAYOUT_GENERAL,
-                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-    }
   }
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    m_gBuffers.update(cmd, size);
-    createMsaaImage(cmd);
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    // Views are recreated on resize: refresh the ImGui texture that displays the
+    // resolved image in the viewport.
+    m_viewportImage.update(m_renderTarget.getUiImageView());
   }
 
   void onUIMenu() override
@@ -415,7 +338,7 @@ private:
         ImGui::Separator();
         ImGui::Text("MSAA Settings");
         VkImageFormatProperties image_format_properties;
-        NVVK_CHECK(vkGetPhysicalDeviceImageFormatProperties(m_app->getPhysicalDevice(), m_gBuffers.getColorFormat(),
+        NVVK_CHECK(vkGetPhysicalDeviceImageFormatProperties(m_app->getPhysicalDevice(), m_renderTarget.getColorFormat(),
                                                             VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
                                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &image_format_properties));
         // sampleCounts is 3, 7 or 15, following line find n, in 2^n == sampleCounts+1
@@ -432,15 +355,19 @@ private:
 
           NVVK_CHECK(vkDeviceWaitIdle(m_device));  // Flushing the graphic pipeline
 
+          // Reconfigure the render target for the new sample count and recreate its
+          // GPU resources. MSAA requires a resolve mode; a 1x sample count uses none.
+          const VkResolveModeFlagBits resolveMode =
+              m_settings.msaaSamples == VK_SAMPLE_COUNT_1_BIT ? VK_RESOLVE_MODE_NONE : VK_RESOLVE_MODE_AVERAGE_BIT;
+          NVVK_CHECK(m_renderTarget.setSampleCount(m_settings.msaaSamples, resolveMode));
+          VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+          NVVK_CHECK(m_renderTarget.update(cmd, m_app->getViewportSize()));
+          m_app->submitAndWaitTempCmdBuffer(cmd);
+          m_viewportImage.update(m_renderTarget.getUiImageView());
+
           // The graphic pipeline contains MSAA information
           vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
           vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-
-          {
-            VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-            createMsaaImage(cmd);
-            m_app->submitAndWaitTempCmdBuffer(cmd);
-          }
           createGraphicsPipeline();
         }
       }
@@ -496,47 +423,31 @@ private:
     }
   }
 
-  void createMsaaImage(VkCommandBuffer cmd)
-  {
-    VkExtent2D viewSize = m_app->getViewportSize();
-    VkSampler  linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-
-    m_msaaGBuffers.deinit();
-    m_msaaGBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {m_colorFormat},  // Only one GBuffer color attachment
-        .depthFormat    = m_depthFormat,
-        .sampleCount    = m_settings.msaaSamples,
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
-
-    m_msaaGBuffers.update(cmd, m_app->getViewportSize());
-  }
-
   // Display the G-Buffer image in Viewport
   void displayGbuffer()
   {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
     ImGui::Begin("Viewport");
-    ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
+
+    // Display the resolved image
+    ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
+
     ImGui::End();
     ImGui::PopStyleVar();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    // Save the displayed image (resolved single-sample when MSAA is active).
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //-------------------------------------------------------------------------------------------------
   nvapp::Application*     m_app{};          // Application
-  nvvk::GBuffer           m_gBuffers;       // G-Buffers: color + depth
-  nvvk::GBuffer           m_msaaGBuffers;   // Multi-sample G-Buffers: color + depth
+  nvvk::RenderTarget      m_renderTarget;   // Offscreen MSAA target (color+depth) with color resolve
+  nvapp::ImTexture        m_viewportImage;  // ImGui texture displaying the resolved image
   nvvk::ResourceAllocator m_alloc;          // Allocator
-  nvvk::SamplerPool       m_samplerPool{};  // The sampler pool, used to create a sampler for the texture
 
 
   VkDevice         m_device           = VK_NULL_HANDLE;            // Convenient

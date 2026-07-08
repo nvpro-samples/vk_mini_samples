@@ -74,11 +74,11 @@ struct MatPrimitiveMesh : public nvutils::PrimitiveMesh
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/formats.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
-#include <nvvk/sampler_pool.hpp>
 #include <nvvk/sbt_generator.hpp>
 #include <nvvk/staging.hpp>
 #include "common/utils.hpp"
@@ -111,19 +111,9 @@ public:
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });  // Allocator
 
-    // The texture sampler to use
-    m_samplerPool.init(m_device);
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    // GBuffer for the ray tracing
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
-    m_gBuffers.init({.allocator      = &m_alloc,
-                     .colorFormats   = {m_colorFormat},
-                     .depthFormat    = m_depthFormat,
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    NVVK_CHECK(m_renderTarget.init(
+        {.alloc = &m_alloc, .colorFormats = {m_colorFormat}, .depthFormat = m_depthFormat, .debugName = "RayTraceMotionBlur"}));
 
 
     // Requesting ray tracing properties
@@ -152,7 +142,8 @@ public:
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    m_gBuffers.update(cmd, size);
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
     writeRtDesc();
   }
 
@@ -171,7 +162,7 @@ public:
     {  // Rendering Viewport
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());  // Display the G-Buffer image
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());  // Display the G-Buffer image
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -708,7 +699,7 @@ private:
 
     nvvk::WriteSetContainer writes{};
     writes.append(m_descriptorPack.makeWrite(B_tlas), m_tlas);
-    writes.append(m_descriptorPack.makeWrite(B_outImage), m_gBuffers.getColorImageView(), VK_IMAGE_LAYOUT_GENERAL);
+    writes.append(m_descriptorPack.makeWrite(B_outImage), m_renderTarget.getColorAttachmentView(), VK_IMAGE_LAYOUT_GENERAL);
     writes.append(m_descriptorPack.makeWrite(B_frameInfo), m_bFrameInfo);
     writes.append(m_descriptorPack.makeWrite(B_materials), m_bMaterials);
     writes.append(m_descriptorPack.makeWrite(B_instances), m_bInstInfoBuffer);
@@ -741,14 +732,14 @@ private:
       m_alloc.destroyAcceleration(blas);
     m_alloc.destroyAcceleration(m_tlas);
 
-    m_samplerPool.deinit();
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string(), 95);
   }
 
@@ -758,8 +749,8 @@ private:
   //
   nvapp::Application*     m_app{};
   nvvk::ResourceAllocator m_alloc;
-  nvvk::GBuffer           m_gBuffers;  // G-Buffers: color + depth
-  nvvk::SamplerPool       m_samplerPool{};
+  nvvk::RenderTarget      m_renderTarget;   // Offscreen color + depth
+  nvapp::ImTexture        m_viewportImage;  // ImGui texture displaying the rendered image
 
   VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
   VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;       // Depth format of the depth buffer

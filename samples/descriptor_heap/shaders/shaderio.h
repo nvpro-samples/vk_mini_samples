@@ -29,9 +29,9 @@ static const float animationCubeDelay    = 0.01;
 static const float animationFallDuration = 0.4;
 static const float animationRestDuration = 1.5;
 #else
-const float animationCubeDelay    = 0.01;
-const float animationFallDuration = 0.4;
-const float animationRestDuration = 1.5;
+const float animationCubeDelay    = 0.01F;
+const float animationFallDuration = 0.4F;
+const float animationRestDuration = 1.5F;
 #endif
 
 /*

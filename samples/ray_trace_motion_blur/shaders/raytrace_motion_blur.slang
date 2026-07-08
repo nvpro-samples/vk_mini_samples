@@ -231,4 +231,3 @@ void rmissMain(inout HitPayload payload)
   payload.color += pushConst.clearColor.xyz;
   payload.depth = MISS_DEPTH;  // Stop
 }
-

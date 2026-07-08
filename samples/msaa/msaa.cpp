@@ -21,8 +21,11 @@
 //////////////////////////////////////////////////////////////////////////
 /*
 
- This sample renders in a Multi-sampled image and resolved it in the
- common G-Buffer
+ This sample demonstrates multisample anti-aliasing (MSAA) using nvvk::RenderTarget.
+ The render target owns the multisampled color+depth images and a single-sample
+ color resolve target; the scene is rendered multisampled and resolved to the
+ single-sample image (displayed via ImGui). The sample count can be changed at
+ runtime, which reconfigures and recreates the render target.
 
 */
 //////////////////////////////////////////////////////////////////////////
@@ -49,6 +52,7 @@
 #include <nvapp/elem_default_menu.hpp>     // Display a menu
 #include <nvapp/elem_default_title.hpp>    // Change the window title
 #include <nvgui/camera.hpp>                // Camera widget
+#include <nvapp/imgui_texture.hpp>         // nvapp::ImTexture for ImGui display
 #include <nvgui/property_editor.hpp>       // Formatting UI
 #include <nvslang/slang.hpp>               // Slang compiler
 #include <nvutils/camera_manipulator.hpp>  // To manipulate the camera
@@ -59,14 +63,12 @@
 #include <nvvk/check_error.hpp>            // Vulkan error checking
 #include <nvvk/context.hpp>                // Vulkan context creation
 #include <nvvk/debug_util.hpp>             // Debug names and more
-#include <nvvk/default_structs.hpp>        // Default Vulkan structure
 #include <nvvk/descriptors.hpp>            // Help creation descriptor sets
 #include <nvvk/formats.hpp>
-#include <nvvk/gbuffers.hpp>            // Rendering in GBuffers
 #include <nvvk/graphics_pipeline.hpp>   // Helper to create a graphic pipeline
 #include <nvvk/helpers.hpp>             // Find format
+#include <nvvk/render_target.hpp>       // Offscreen render target with built-in MSAA + resolve
 #include <nvvk/resource_allocator.hpp>  // The GPU resource allocator
-#include <nvvk/sampler_pool.hpp>        // Texture sampler
 #include <nvvk/staging.hpp>             // Staging buffer for upload
 
 
@@ -110,19 +112,16 @@ public:
                                  {slang::CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_NONE}});
     }
 
-    // The texture sampler to use
-    m_samplerPool.init(m_device);
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    // Initialization of the G-Buffers we want use
+    // Offscreen render target with built-in MSAA: the scene is rendered into a
+    // multisampled color+depth image and the color is resolved to a single-sample
+    // image for display. RenderTarget creates and resolves those images itself,
+    // so the sample no longer manages any MSAA image/view by hand.
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
-    m_gBuffers.init({.allocator      = &m_alloc,
-                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},
-                     .depthFormat    = m_depthFormat,
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    NVVK_CHECK(m_renderTarget.init({.alloc        = &m_alloc,
+                                    .colorFormats = {m_colorFormat},
+                                    .depthFormat  = m_depthFormat,
+                                    .msaa = {.samples = m_msaaSamples, .colorResolve = VK_RESOLVE_MODE_AVERAGE_BIT},
+                                    .debugName = "MSAA"}));
 
 
     createSceneBuffers();
@@ -146,13 +145,8 @@ public:
     }
     m_alloc.destroyBuffer(m_frameInfo);
 
-    m_gBuffers.deinit();
-    m_samplerPool.deinit();
-
-    m_alloc.destroyImage(m_msaaColor);
-    m_alloc.destroyImage(m_msaaDepth);
-    vkDestroyImageView(m_device, m_msaaColorIView, nullptr);
-    vkDestroyImageView(m_device, m_msaaDepthIView, nullptr);
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
 
     vkDestroyShaderEXT(m_device, m_vertShader, nullptr);
     vkDestroyShaderEXT(m_device, m_fragShader, nullptr);
@@ -196,8 +190,10 @@ public:
   // This function is called when the application is resized.
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    NVVK_CHECK(m_gBuffers.update(cmd, size));
-    createMsaaBuffers(size);  // #MSAA
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    // Views are recreated on resize: refresh the ImGui texture that displays the
+    // resolved image in the viewport.
+    m_viewportImage.update(m_renderTarget.getUiImageView());
   }
 
   // This function is called when the UI is rendered.
@@ -212,7 +208,7 @@ public:
       ImGui::Separator();
       ImGui::Text("MSAA Settings");
       VkImageFormatProperties image_format_properties;
-      vkGetPhysicalDeviceImageFormatProperties(m_app->getPhysicalDevice(), m_gBuffers.getColorFormat(),
+      vkGetPhysicalDeviceImageFormatProperties(m_app->getPhysicalDevice(), m_renderTarget.getColorFormat(),
                                                VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
                                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &image_format_properties);
       // sampleCounts is 3, 7 or 15, following line find n, in 2^n == sampleCounts+1
@@ -227,8 +223,16 @@ public:
         auto samples  = static_cast<int32_t>(powf(2, static_cast<float>(item_combo)));
         m_msaaSamples = static_cast<VkSampleCountFlagBits>(samples);
 
+        // Reconfigure the render target for the new sample count and recreate its
+        // GPU resources. MSAA requires a resolve mode; a 1x sample count uses none.
         vkDeviceWaitIdle(m_device);  // Flushing the graphic pipeline
-        createMsaaBuffers(m_app->getViewportSize());
+        const VkResolveModeFlagBits resolveMode =
+            m_msaaSamples == VK_SAMPLE_COUNT_1_BIT ? VK_RESOLVE_MODE_NONE : VK_RESOLVE_MODE_AVERAGE_BIT;
+        NVVK_CHECK(m_renderTarget.setSampleCount(m_msaaSamples, resolveMode));
+        VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+        NVVK_CHECK(m_renderTarget.update(cmd, m_app->getViewportSize()));
+        m_app->submitAndWaitTempCmdBuffer(cmd);
+        m_viewportImage.update(m_renderTarget.getUiImageView());
       }
 
       ImGui::End();
@@ -238,8 +242,8 @@ public:
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
       ImGui::Begin("Viewport");
 
-      // Display the G-Buffer image
-      ImGui::Image(ImTextureID(m_gBuffers.getDescriptorSet()), ImGui::GetContentRegionAvail());
+      // Display the resolved image
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -250,10 +254,10 @@ public:
       dirty_timer += ImGui::GetIO().DeltaTime;
       if(dirty_timer > 1.0F)  // Refresh every seconds
       {
-        std::string title =
-            fmt::format("{} {}x{} | {} FPS / {:.3f}ms", nvutils::getExecutablePath().stem().string(),
-                        static_cast<int>(m_gBuffers.getSize().width), static_cast<int>(m_gBuffers.getSize().height),
-                        static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
+        std::string title = fmt::format("{} {}x{} | {} FPS / {:.3f}ms", nvutils::getExecutablePath().stem().string(),
+                                        static_cast<int>(m_renderTarget.getSize().width),
+                                        static_cast<int>(m_renderTarget.getSize().height),
+                                        static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
 
         glfwSetWindowTitle(m_app->getWindowHandle(), title.c_str());
       }
@@ -274,38 +278,18 @@ public:
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
-    // GBuffer attachment information
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.clearValue                = {.color = m_clearColor};
-    VkRenderingAttachmentInfo depthAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    depthAttachment.imageView                 = m_gBuffers.getDepthImageView();
-    depthAttachment.clearValue                = {{{1.0F, 0}}};
-    VkRenderingInfo renderingInfo             = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea                  = DEFAULT_VkRect2D(m_gBuffers.getSize());
-    renderingInfo.colorAttachmentCount        = 1;
-    renderingInfo.pColorAttachments           = &colorAttachment;
-    renderingInfo.pDepthAttachment            = &depthAttachment;
+    // #MSAA - RenderTarget owns the multisampled color+depth images and the
+    // single-sample resolve target. fillState() wires the resolve automatically
+    // when the sample count is > 1, so there is no manual MSAA bookkeeping here.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {.color = m_clearColor};
+    rtState.depthAttachment.clearValue     = {.depthStencil = {1.0F, 0}};
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    // #MSAA
-    if((m_msaaSamples & VK_SAMPLE_COUNT_1_BIT) == VK_SAMPLE_COUNT_1_BIT)
-    {
-      // Not using MSAA
-      colorAttachment.imageView = m_gBuffers.getColorImageView();
-    }
-    else
-    {
-      // Using MSAA image and resolving to the G-Buffer
-      colorAttachment.imageView          = m_msaaColorIView;
-      colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-      colorAttachment.resolveImageView   = m_gBuffers.getColorImageView();  // Resolving MSAA to offscreen
-      colorAttachment.resolveMode        = VK_RESOLVE_MODE_AVERAGE_BIT;
-      depthAttachment.imageView          = m_msaaDepthIView;
-    }
-
-
-    vkCmdBeginRendering(cmd, &renderingInfo);
-    // Set the dynamic graphics pipeline state
-    m_gfxState.multisampleState.rasterizationSamples = m_msaaSamples;  // #MSAA
+    // Set the dynamic graphics pipeline state (rasterization samples must match the target)
+    m_gfxState.multisampleState.rasterizationSamples = m_renderTarget.getSampleCount();  // #MSAA
     m_gfxState.cmdApplyAllStates(cmd);
     m_gfxState.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
     m_gfxState.cmdBindShaders(cmd, {m_vertShader, m_fragShader});
@@ -322,13 +306,6 @@ public:
 
     renderScene(cmd);
     vkCmdEndRendering(cmd);
-
-    // Adding a barrier to the color image
-    VkImageMemoryBarrier2 barrier =
-        nvvk::makeImageMemoryBarrier({m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL});
-    const VkDependencyInfo depInfo{
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
-    vkCmdPipelineBarrier2(cmd, &depInfo);
   }
 
 private:
@@ -453,66 +430,6 @@ private:
     }
   }
 
-  // This function is called to create the MSAA image buffers.
-  // The scene is rendered into the MSAA image, and then resolved to the G-Buffer.
-  void createMsaaBuffers(const VkExtent2D& size)
-  {
-    m_alloc.destroyImage(m_msaaColor);
-    m_alloc.destroyImage(m_msaaDepth);
-    vkDestroyImageView(m_device, m_msaaColorIView, nullptr);
-    vkDestroyImageView(m_device, m_msaaDepthIView, nullptr);
-
-    // Default create image info
-    VkImageCreateInfo imageCreateInfo = {
-        .sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType   = VK_IMAGE_TYPE_2D,
-        .extent      = {size.width, size.height, 1},
-        .mipLevels   = 1,
-        .arrayLayers = 1,
-        .samples     = m_msaaSamples,
-    };
-
-    // Creating color
-    {
-      imageCreateInfo.format = m_gBuffers.getColorFormat();
-      imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;  // #MSAA - Optimization
-      NVVK_CHECK(m_alloc.createImage(m_msaaColor, imageCreateInfo));
-      NVVK_DBG_NAME(m_msaaColor.image);
-      VkImageViewCreateInfo imageViewCreateInfo = DEFAULT_VkImageViewCreateInfo;
-      imageViewCreateInfo.image                 = m_msaaColor.image;
-      imageViewCreateInfo.format                = imageCreateInfo.format;
-      NVVK_CHECK(vkCreateImageView(m_device, &imageViewCreateInfo, nullptr, &m_msaaColorIView));
-      NVVK_DBG_NAME(m_msaaColorIView);
-    }
-
-    // Creating the depth buffer
-    {
-      imageCreateInfo.format = m_gBuffers.getDepthFormat();
-      imageCreateInfo.usage  = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-
-      NVVK_CHECK(m_alloc.createImage(m_msaaDepth, imageCreateInfo));
-      NVVK_DBG_NAME(m_msaaDepth.image);
-      VkImageViewCreateInfo imageViewCreateInfo       = DEFAULT_VkImageViewCreateInfo;
-      imageViewCreateInfo.image                       = m_msaaDepth.image;
-      imageViewCreateInfo.format                      = imageCreateInfo.format;
-      imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-      NVVK_CHECK(vkCreateImageView(m_device, &imageViewCreateInfo, nullptr, &m_msaaDepthIView));
-      NVVK_DBG_NAME(m_msaaDepthIView);
-    }
-
-    // Setting the image layout for both color and depth
-    {
-      VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-
-      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaColor.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-      nvvk::cmdImageMemoryBarrier(cmd, {m_msaaDepth.image,
-                                        VK_IMAGE_LAYOUT_UNDEFINED,
-                                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                        {VK_IMAGE_ASPECT_DEPTH_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}});
-      m_app->submitAndWaitTempCmdBuffer(cmd);
-    }
-  }
-
   void createSceneBuffers()
   {
     nvvk::StagingUploader stagingUploader;
@@ -542,23 +459,20 @@ private:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    // Save the displayed image (resolved single-sample when MSAA is active).
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   //
   //
-  nvapp::Application*     m_app{nullptr};  // The application instance
-  nvvk::ResourceAllocator m_alloc;         // The resource allocator
-  nvvk::SamplerPool       m_samplerPool;   // The sampler pool
-  nvvk::GBuffer           m_gBuffers;      // G-Buffers: color + depth
+  nvapp::Application*     m_app{nullptr};   // The application instance
+  nvvk::ResourceAllocator m_alloc;          // The resource allocator
+  nvvk::RenderTarget      m_renderTarget;   // Offscreen MSAA target (color+depth) with color resolve
+  nvapp::ImTexture        m_viewportImage;  // ImGui texture displaying the resolved image
 
   // #MSAA
-  nvvk::Image           m_msaaColor;                           // The MSAA color image
-  nvvk::Image           m_msaaDepth;                           // The MSAA depth image
-  VkImageView           m_msaaColorIView{};                    // The MSAA color image view
-  VkImageView           m_msaaDepthIView{};                    // The MSAA depth image view
   VkSampleCountFlagBits m_msaaSamples{VK_SAMPLE_COUNT_4_BIT};  // The MSAA samples
 
   VkFormat          m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image

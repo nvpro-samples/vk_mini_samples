@@ -32,7 +32,6 @@ layout(descriptor_heap) uniform sampler heapSamplers[];
 
 void main()
 {
-  vec3 color =
-      texture(sampler2D(heapTextures[nonuniformEXT(0)], heapSamplers[nonuniformEXT(inSamplerIdx)]), inFragUv).xyz;
+  vec3 color = texture(sampler2D(heapTextures[nonuniformEXT(0)], heapSamplers[nonuniformEXT(inSamplerIdx)]), inFragUv).xyz;
   outColor = vec4(color, 1.0);
 }

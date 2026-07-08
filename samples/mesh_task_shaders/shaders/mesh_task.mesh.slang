@@ -88,7 +88,7 @@ void meshMain(uint3                                                         grou
 
     // Ripple animation: calculate distance from grid center
     float distanceFromCenter = length(float2(xOffset, zOffset));
-    float yOffset = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
+    float yOffset            = calculateRippleOffset(pushConst.time, pushConst.animSpeed, distanceFromCenter);
 
     float3 boxCenter = float3(xOffset, yOffset, zOffset);
     float  halfSize  = boxSize * 0.5f;
@@ -98,11 +98,11 @@ void meshMain(uint3                                                         grou
     cornerLocal.x = ((cornerIndex & 1) != 0 ? halfSize : -halfSize);
     cornerLocal.y = ((cornerIndex & 2) != 0 ? halfSize : -halfSize);
     cornerLocal.z = ((cornerIndex & 4) != 0 ? halfSize : -halfSize);
-    
+
     // Apply rotation around box's own Y axis
-    float rotationAngle = calculateBoxRotation(pushConst.time, pushConst.animSpeed, distanceFromCenter, yOffset);
+    float  rotationAngle = calculateBoxRotation(pushConst.time, pushConst.animSpeed, distanceFromCenter, yOffset);
     float3 cornerRotated = rotateY(cornerLocal, rotationAngle);
-    
+
     // Final world position
     float3 corner = boxCenter + cornerRotated;
 

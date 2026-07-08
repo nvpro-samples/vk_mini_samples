@@ -36,12 +36,13 @@ struct PSin
 // Output of the vertex shader
 struct VSout
 {
-  PSin stage;
+  PSin   stage;
   float4 sv_position : SV_Position;
 };
 
 
-[[vk::push_constant]] ConstantBuffer<PushConstant> pushConst;
+[[vk::push_constant]]
+ConstantBuffer<PushConstant> pushConst;
 
 
 // Vertex  Shader
@@ -57,7 +58,8 @@ VSout vertexMain(VSin input)
 
 // Fragment Shader
 [shader("pixel")]
-float4 fragmentMain(PSin stage, float4 sv_fragCoord : SV_Position) : SV_Target
+float4 fragmentMain(PSin stage, float4 sv_fragCoord: SV_Position)
+    : SV_Target
 {
   // Check if the mouse is over the fragment, if yes, print values
   int2 fragCoord = int2(floor(sv_fragCoord.xy));

@@ -56,13 +56,13 @@ namespace fs = std::filesystem;
 #include "nvutils/logger.hpp"
 #include "nvutils/parameter_parser.hpp"
 #include "nvutils/timers.hpp"
-#include "nvvk/barriers.hpp"
 #include "nvvk/check_error.hpp"
 #include "nvvk/context.hpp"
 #include "nvvk/debug_util.hpp"
 #include "nvvk/default_structs.hpp"
 #include "nvvk/descriptors.hpp"
-#include "nvvk/gbuffers.hpp"
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include "nvvk/graphics_pipeline.hpp"
 #include "nvvk/resource_allocator.hpp"
 #include "nvvk/sampler_pool.hpp"
@@ -159,15 +159,12 @@ public:
 
     // The texture sampler to use
     m_samplerPool.init(m_device);
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_linearSampler));
+    NVVK_DBG_NAME(m_linearSampler);
 
     // Initialization of the G-Buffers we want use
-    m_gBuffers.init({.allocator      = &m_alloc,
-                     .colorFormats   = {m_rgba32Format, m_rgba32Format, m_rgba32Format},
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    NVVK_CHECK(m_renderTarget.init(
+        {.alloc = &m_alloc, .colorFormats = {m_rgba32Format, m_rgba32Format, m_rgba32Format}, .debugName = "TinyShaderToy"}));
 
     // Setting up the Slang compiler
     m_slangCompiler.addSearchPaths(nvsamples::getShaderDirs());
@@ -200,7 +197,11 @@ public:
     destroyResources();
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size)
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView(eImage));
+  }
 
   void onUIRender() override
   {
@@ -283,7 +284,7 @@ public:
       updateUniforms();
 
       // Display the G-Buffer image
-      ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(eImage), ImGui::GetContentRegionAvail());
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
       ImGui::End();
       ImGui::PopStyleVar();
     }
@@ -304,20 +305,6 @@ public:
     }
 
     renderToBuffer(cmd, m_pipelineBufA, in_image, out_image);
-
-    // Barrier - making sure the rendered image from BufferA is ready to be used
-    const VkImageMemoryBarrier2 image_memory_barrier = nvvk::makeImageMemoryBarrier({
-        .image     = m_gBuffers.getColorImage(out_image),
-        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-    });
-
-    const VkDependencyInfo depInfo{.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                   .imageMemoryBarrierCount = 1,
-                                   .pImageMemoryBarriers    = &image_memory_barrier};
-
-    vkCmdPipelineBarrier2(cmd, &depInfo);
-
 
     renderToBuffer(cmd, m_pipelineImg, out_image, eImage);
 
@@ -404,25 +391,24 @@ private:
   {
     NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-    // Rendering to GBuffer: attachment information
+    // Rendering into the render target (images stay in VK_IMAGE_LAYOUT_GENERAL)
     VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    colorAttachment.imageView                 = m_renderTarget.getColorAttachmentView(outImage);
+    colorAttachment.imageLayout               = VK_IMAGE_LAYOUT_GENERAL;
     colorAttachment.clearValue                = {.color = m_clearColor};
     colorAttachment.loadOp                    = VK_ATTACHMENT_LOAD_OP_LOAD;
     VkRenderingInfo renderingInfo             = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea                  = DEFAULT_VkRect2D(m_gBuffers.getSize());
+    renderingInfo.renderArea                  = DEFAULT_VkRect2D(m_renderTarget.getSize());
     renderingInfo.colorAttachmentCount        = 1;
     renderingInfo.pColorAttachments           = &colorAttachment;
 
-
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
     vkCmdBeginRendering(cmd, &renderingInfo);
     {
-      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
+      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
 
       // Writing descriptor
       nvvk::WriteSetContainer writeContainer;
-      writeContainer.append(m_bindings.getWriteSet(0), m_gBuffers.getDescriptorImageInfo(inImage));
+      writeContainer.append(m_bindings.getWriteSet(0), m_renderTarget.getColorSampleDescriptorImageInfo(inImage, m_linearSampler));
       vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0,
                                 static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
 
@@ -436,7 +422,6 @@ private:
       vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   }
 
 
@@ -657,20 +642,23 @@ private:
     m_alloc.destroyBuffer(m_indices);
     m_vertices = {};
     m_indices  = {};
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_samplerPool.deinit();
     m_alloc.deinit();
   }
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(eImage), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
   //--------------------------------------------------------------------------------------------------
   nvapp::Application*     m_app{};
-  nvvk::GBuffer           m_gBuffers{};
+  nvvk::RenderTarget      m_renderTarget{};
+  nvapp::ImTexture        m_viewportImage{};
+  VkSampler               m_linearSampler{};
   nvvk::ResourceAllocator m_alloc{};
   nvvkglsl::GlslCompiler  m_glslCompiler{};
   nvslang::SlangCompiler  m_slangCompiler{};

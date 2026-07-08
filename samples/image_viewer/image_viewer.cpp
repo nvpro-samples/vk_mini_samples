@@ -20,7 +20,7 @@
 /*
 
  This sample shows how to load and display an image.
- - Render to a GBuffer and displayed using ImGui
+ - Render to a render target and displayed using ImGui
  - The image is applied as a texture on a quad.
  - Texturing uses VK_EXT_descriptor_heap bindless-style: nvvk::DescriptorHeap + shaders that
    index layout(descriptor_heap) / Slang DescriptorHandle with spvDescriptorHeapEXT. Push data
@@ -64,13 +64,15 @@
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
 #include <nvvk/descriptor_heap.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/mipmaps.hpp>
 #include <nvvk/resource_allocator.hpp>
 #include <nvvk/sampler_pool.hpp>
 #include <nvvk/staging.hpp>
+
+#include <nvapp/imgui_texture.hpp>
 
 #include "common/utils.hpp"
 
@@ -170,13 +172,13 @@ public:
     m_stagingUploader.init(&m_alloc, true);
 
     m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-    m_gBuffers.init({.allocator      = &m_alloc,
-                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+
+    // Offscreen render target: color only (no depth)
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = &m_alloc,
+        .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM},
+        .debugName    = "ImageViewer",
+    }));
 
     // No buffers needed in this sample's resource heap (0 buffer count).
     NVVK_CHECK(m_heap.init(app->getPhysicalDevice(), app->getDevice()));
@@ -266,7 +268,8 @@ public:
     m_stagingUploader.deinit();
     m_samplerPool.deinit();
     m_texture.reset();
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_alloc.deinit();
   }
 
@@ -294,7 +297,11 @@ public:
     }
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
+  }
 
   void onUIRender() override
   {
@@ -324,7 +331,7 @@ public:
       if(ImGui::Button("1:1"))
       {
         g_imageViewerSettings.zoom =
-            static_cast<float>(m_texture->getSize().width) / static_cast<float>(m_gBuffers.getSize().width);
+            static_cast<float>(m_texture->getSize().width) / static_cast<float>(m_renderTarget.getSize().width);
         g_imageViewerSettings.pan = {0, 0};
       }
 
@@ -368,8 +375,8 @@ public:
         g_imageViewerSettings.pan += drag * (2.F / g_imageViewerSettings.zoom) / size;  // Drag in image space
       }
 
-      // Display the G-Buffer image
-      ImGui::Image(ImTextureID(m_gBuffers.getDescriptorSet()), ImGui::GetContentRegionAvail());
+      // Display the rendered image
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -383,7 +390,7 @@ public:
       {
         std::array<char, 256> buf{};
         snprintf(buf.data(), buf.size(), "%s %dx%d | %d FPS / %.3fms", nvutils::getExecutablePath().stem().string().c_str(),
-                 static_cast<int>(m_gBuffers.getSize().width), static_cast<int>(m_gBuffers.getSize().height),
+                 static_cast<int>(m_renderTarget.getSize().width), static_cast<int>(m_renderTarget.getSize().height),
                  static_cast<int>(ImGui::GetIO().Framerate), 1000.F / ImGui::GetIO().Framerate);
         glfwSetWindowTitle(m_app->getWindowHandle(), buf.data());
         dirtyTimer = 0;
@@ -397,7 +404,7 @@ public:
 
     // Adjusting the aspect ratio of the image
     const float imgAspectRatio  = m_texture->getAspect();
-    const float viewAspectRatio = m_gBuffers.getAspectRatio();
+    const float viewAspectRatio = m_renderTarget.getAspectRatio();
 
     m_pushData.scale = {1.0F, 1.0F};
 
@@ -421,28 +428,19 @@ public:
     m_pushData.transfo    = ortho * scale * trans;
     m_pushData.samplerIdx = m_samplerIdx;
 
-    // Drawing the quad in a G-Buffer
-    VkRenderingAttachmentInfo colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                 = m_gBuffers.getColorImageView();
+    // Drawing the quad in the render target. The render target keeps its images
+    // in VK_IMAGE_LAYOUT_GENERAL, so no layout transitions are needed to render
+    // into it or to sample it afterwards.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    // Create the rendering info
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-
-    nvvk::cmdImageMemoryBarrier(cmd, {.image        = m_gBuffers.getColorImage(),
-                                      .oldLayout    = VK_IMAGE_LAYOUT_GENERAL,
-                                      .newLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                      .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                      .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT});
-
-    vkCmdBeginRendering(cmd, &renderingInfo);
     {
       const VkDeviceSize offsets[] = {0};
 
       m_dynamicPipeline.cmdApplyAllStates(cmd);
-      m_dynamicPipeline.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+      m_dynamicPipeline.cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
       m_dynamicPipeline.cmdBindShaders(cmd, {.vertex = m_vertexShader, .fragment = m_fragmentShader});
 
       m_heap.cmdBindHeaps(cmd, m_samplerHeapBuffer.address, m_resourceHeapBuffer.address);
@@ -457,12 +455,6 @@ public:
       vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
-
-    nvvk::cmdImageMemoryBarrier(cmd, {.image        = m_gBuffers.getColorImage(),
-                                      .oldLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                      .newLayout    = VK_IMAGE_LAYOUT_GENERAL,
-                                      .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                      .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT});
   }
 
 private:
@@ -570,7 +562,7 @@ private:
   // Saving the buffer to disk
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -582,7 +574,8 @@ private:
   nvvk::DescriptorHeap    m_heap{};
   nvvk::StagingUploader   m_stagingUploader{};
   nvvk::SamplerPool       m_samplerPool;
-  nvvk::GBuffer           m_gBuffers;
+  nvvk::RenderTarget      m_renderTarget;   // Offscreen render target: color only
+  nvapp::ImTexture        m_viewportImage;  // ImGui texture for the render target color image
 
   VkDevice m_device{};
 

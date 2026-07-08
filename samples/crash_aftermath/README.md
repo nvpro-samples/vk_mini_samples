@@ -4,7 +4,7 @@
 
 This sample demonstrates how to integrate the NVIDIA Nsight Aftermath SDK to capture GPU crash dumps when `VK_ERROR_DEVICE_LOST` occurs. It includes 7 crash scenarios that deliberately trigger device lost through two mechanisms:
 
-- **TDR (Timeout Detection and Recovery):** Infinite loops in shaders that stall the GPU beyond the Windows ~2-second timeout.
+- **TDR (Timeout Detection and Recovery):** Infinite loops in shaders that stall the GPU beyond the Windows timeout, which is normally ~2 seconds on a default system.
 - **GPU page faults via BDA (Buffer Device Address):** Writing to unmapped GPU virtual memory through `buffer_reference` pointers.
 
 ## Prerequisites
@@ -71,6 +71,16 @@ Vulkan error: VK_ERROR_DEVICE_LOST
 ```
 
 The `.nv-gpudmp` file is the GPU crash dump. The `.json` file contains a human-readable summary.
+
+### If TDR crashes take several minutes
+
+Some development machines have the Windows TDR timeout overridden in the registry. On those systems the infinite-loop TDR tests still work, but Windows may wait up to 10 minutes before resetting the driver. Restore the default timeout before using this sample:
+
+1. Open **Registry Editor** as Administrator.
+2. Go to `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\GraphicsDrivers`.
+3. Look for `TdrDelay` and `TdrDdiDelay`.
+4. Delete those values to return to the Windows defaults, or set `TdrDelay` to `2` and `TdrDdiDelay` to `5` as decimal `REG_DWORD` values.
+5. Reboot Windows so the graphics driver picks up the change.
 
 ### 2. Open the dump in Nsight Graphics
 

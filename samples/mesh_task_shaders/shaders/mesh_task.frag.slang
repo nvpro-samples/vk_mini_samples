@@ -30,9 +30,8 @@ struct MeshOutput
 // Fragment Shader - simple color output
 //--------------------------------------------------------------------------------------------------
 [shader("pixel")]
-float4 fragmentMain(MeshOutput input) : SV_Target
+float4 fragmentMain(MeshOutput input)
+    : SV_Target
 {
   return float4(input.color, 1.0f);
 }
-
-

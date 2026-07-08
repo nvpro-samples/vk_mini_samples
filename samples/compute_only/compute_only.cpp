@@ -41,10 +41,10 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvapp/imgui_texture.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
-#include <nvvk/sampler_pool.hpp>
 
 
 class ComputeOnlyElement : public nvapp::IAppElement
@@ -64,19 +64,12 @@ public:
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });
 
-    // Acquiring the sampler which will be used for displaying the GBuffer
-    m_samplerPool.init(app->getDevice());
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
-
-    // GBuffer
-    m_gBuffers.init({
-        .allocator      = &m_alloc,
-        .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
-        .imageSampler   = linearSampler,
-        .descriptorPool = m_app->getTextureDescriptorPool(),
-    });
+    // Offscreen render target: single color image
+    NVVK_CHECK(m_renderTarget.init({
+        .alloc        = &m_alloc,
+        .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
+        .debugName    = "ComputeOnly",
+    }));
 
     createShaderObjectAndLayout();
   }
@@ -89,8 +82,8 @@ public:
     vkDestroyPipelineLayout(m_app->getDevice(), m_pipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_app->getDevice(), m_descriptorSetLayout, nullptr);
 
-    m_samplerPool.deinit();
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_alloc.deinit();
   }
 
@@ -107,7 +100,7 @@ public:
 
     // Rendered image displayed fully in 'Viewport' window
     ImGui::Begin("Viewport");
-    ImGui::Image((ImTextureID)m_gBuffers.getDescriptorSet(), ImGui::GetContentRegionAvail());
+    ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
     ImGui::End();
   }
 
@@ -115,7 +108,7 @@ public:
   {
     // Push descriptor set
     nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(m_bindings.getWriteSet(0), m_gBuffers.getDescriptorImageInfo());
+    writeContainer.append(m_bindings.getWriteSet(0), m_renderTarget.getColorStorageImageInfo());
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0,
                               static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
 
@@ -128,7 +121,7 @@ public:
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant), &m_pushConst);
 
     // Dispatch compute shader
-    VkExtent2D group_counts = nvvk::getGroupCounts(m_gBuffers.getSize(), WORKGROUP_SIZE);
+    VkExtent2D group_counts = nvvk::getGroupCounts(m_renderTarget.getSize(), WORKGROUP_SIZE);
     vkCmdDispatch(cmd, group_counts.width, group_counts.height, 1);
   }
 
@@ -145,7 +138,11 @@ public:
       m_app->close();
   }
 
-  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override { NVVK_CHECK(m_gBuffers.update(cmd, size)); }
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
+  {
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    m_viewportImage.update(m_renderTarget.getUiImageView());
+  }
 
   //-------------------------------------------------------------------------------------------------
   // Creating the pipeline layout and shader object
@@ -192,16 +189,16 @@ public:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getSampleImage(), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
 private:
-  nvapp::Application*      m_app{};        // Application instance
-  nvvk::ResourceAllocator  m_alloc;        // Allocator
-  nvvk::GBuffer            m_gBuffers;     // G-Buffers: color + depth
-  nvvk::SamplerPool        m_samplerPool;  // The sampler pool, used to create a sampler for the texture
-  nvvk::DescriptorBindings m_bindings;     // Descriptor bindings helper
+  nvapp::Application*      m_app{};          // Application instance
+  nvvk::ResourceAllocator  m_alloc;          // Allocator
+  nvvk::RenderTarget       m_renderTarget;   // Offscreen color image
+  nvapp::ImTexture         m_viewportImage;  // ImGui texture displaying the rendered image
+  nvvk::DescriptorBindings m_bindings;       // Descriptor bindings helper
 
   VkShaderEXT           m_shader{};
   VkPipelineLayout      m_pipelineLayout{};       // Pipeline layout

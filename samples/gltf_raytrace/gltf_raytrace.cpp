@@ -66,6 +66,7 @@
 #include <nvapp/elem_default_title.hpp>
 #include <nvgui/camera.hpp>
 #include <nvgui/property_editor.hpp>
+#include <nvapp/imgui_texture.hpp>
 #include <nvgui/sky.hpp>
 #include <nvgui/tonemapper.hpp>
 #include <nvshaders_host/tonemapper.hpp>
@@ -77,10 +78,10 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/descriptors.hpp>
-#include <nvvk/gbuffers.hpp>
 #include <nvvk/hdr_ibl.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/ray_picker.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/resource_allocator.hpp>
 #include <nvvk/staging.hpp>
 #include <nvvk/validation_settings.hpp>
@@ -129,23 +130,20 @@ public:
         .vulkanApiVersion = VK_API_VERSION_1_4,
     });  // Allocator
 
-    // The texture sampler to use
+    // The texture sampler to use (needed to sample the rendered image in the tonemapper)
     m_samplerPool.init(m_device);
-    VkSampler linearSampler{};
-    NVVK_CHECK(m_samplerPool.acquireSampler(linearSampler));
-    NVVK_DBG_NAME(linearSampler);
+    NVVK_CHECK(m_samplerPool.acquireSampler(m_linearSampler));
+    NVVK_DBG_NAME(m_linearSampler);
 
     // IBL environment map
     m_hdrIbl.init(&m_allocator, &m_samplerPool);
 
-    // G-Buffer
-    m_gBuffers.init({.allocator      = &m_allocator,
-                     .colorFormats   = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT},
-                     .imageSampler   = linearSampler,
-                     .descriptorPool = m_app->getTextureDescriptorPool()});
+    // Offscreen render target: rendered (HDR) + tonemapped color images, no depth
+    NVVK_CHECK(m_renderTarget.init(
+        {.alloc = &m_allocator, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32B32A32_SFLOAT}, .debugName = "GltfRaytrace"}));
     {
       VkCommandBuffer cmd = app->createTempCmdBuffer();
-      m_gBuffers.update(cmd, {100, 100});
+      NVVK_CHECK(m_renderTarget.update(cmd, {100, 100}));
       app->submitAndWaitTempCmdBuffer(cmd);
     }
 
@@ -198,7 +196,10 @@ public:
 
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
-    m_gBuffers.update(cmd, size);
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
+    // The image views are recreated on resize: refresh the ImGui texture that
+    // displays the tonemapped image in the viewport.
+    m_viewportImage.update(m_renderTarget.getUiImageView(eImgTonemapped));
     resetFrame();  // Reset frame to restart the rendering
   }
 
@@ -267,15 +268,15 @@ public:
         if(pickResult.instanceID > -1)  // Hit something
         {
           // Set the camera CENTER to the hit position
-          glm::vec3 worldPos = pickResult.worldRayOrigin + pickResult.worldRayDirection * pickResult.hitT;
+          glm::vec3  worldPos = pickResult.worldRayOrigin + pickResult.worldRayDirection * pickResult.hitT;
           glm::dvec3 eye, center, up;
           g_cameraManip->getLookat(eye, center, up);
           g_cameraManip->setLookat(eye, worldPos, up, false);  // Nice with CameraManip.updateAnim();
         }
       }
 
-      // Display the G-Buffer tonemapped image
-      ImGui::Image(ImTextureID(m_gBuffers.getDescriptorSet(eImgTonemapped)), ImGui::GetContentRegionAvail());
+      // Display the tonemapped image
+      ImGui::Image(m_viewportImage, ImGui::GetContentRegionAvail());
 
       ImGui::End();
       ImGui::PopStyleVar();
@@ -347,8 +348,10 @@ public:
 
   void tonemap(VkCommandBuffer cmd)
   {
-    m_tonemapper.runCompute(cmd, m_gBuffers.getSize(), m_tonemapperData, m_gBuffers.getDescriptorImageInfo(eImgRendered),
-                            m_gBuffers.getDescriptorImageInfo(eImgTonemapped));
+    // Input is sampled (COMBINED_IMAGE_SAMPLER) so it needs a sampler; output is a storage image.
+    m_tonemapper.runCompute(cmd, m_renderTarget.getSize(), m_tonemapperData,
+                            m_renderTarget.getColorSampleDescriptorImageInfo(eImgRendered, m_linearSampler),
+                            m_renderTarget.getColorSampleDescriptorImageInfo(eImgTonemapped));
   }
 
   void onUIMenu() override
@@ -369,7 +372,7 @@ public:
 
   void onLastHeadlessFrame() override
   {
-    m_app->saveImageToFile(m_gBuffers.getColorImage(eImgTonemapped), m_gBuffers.getSize(),
+    m_app->saveImageToFile(m_renderTarget.getColorImage(eImgTonemapped), m_renderTarget.getSize(),
                            nvutils::getExecutablePath().replace_extension(".jpg").string());
   }
 
@@ -401,11 +404,11 @@ private:
     if(!m_scene.load(filename))  // Loading the scene
     {
       LOGE("%sError loading scene: %s\n", st.indent().c_str(), nvutils::utf8FromPath(filename).c_str());
-      // Clear the GBuffer
+      // Clear the displayed image
       VkCommandBuffer         cmd        = m_app->createTempCmdBuffer();
       const VkClearColorValue clearValue = {{0.F, 0.F, 0.F, 0.F}};
       VkImageSubresourceRange range      = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1};
-      vkCmdClearColorImage(cmd, m_gBuffers.getColorImage(eImgTonemapped), VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &range);
+      vkCmdClearColorImage(cmd, m_renderTarget.getColorImage(eImgTonemapped), VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &range);
       m_app->submitAndWaitTempCmdBuffer(cmd);  // Submit and wait for the command buffer
       return;
     }
@@ -565,7 +568,7 @@ private:
   {
     nvvk::WriteSetContainer write{};
     write.append(m_descriptorPack[1].makeWrite(B_tlas), m_sceneRtx.tlas());
-    write.append(m_descriptorPack[1].makeWrite(B_outImage), m_gBuffers.getColorImageView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
+    write.append(m_descriptorPack[1].makeWrite(B_outImage), m_renderTarget.getColorAttachmentView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 1, write.size(), write.data());
   }
 
@@ -645,7 +648,8 @@ private:
     vkDestroyShaderEXT(m_device, m_shader, nullptr);
 
     m_tonemapper.deinit();
-    m_gBuffers.deinit();
+    m_viewportImage.deinit();
+    m_renderTarget.deinit();
     m_sceneVk.deinit();
     m_sceneRtx.deinit();
     m_hdrIbl.deinit();
@@ -676,9 +680,11 @@ private:
   nvvk::HdrIbl m_hdrIbl;
 
   // Resources
-  nvvk::GBuffer m_gBuffers;     // G-Buffers: color + depth
-  nvvk::Buffer  m_bCameraInfo;  // Camera information
-  nvvk::Buffer  m_bSkyParams;   // Sky parameters
+  nvvk::RenderTarget m_renderTarget;     // Offscreen target: rendered (HDR) + tonemapped color images
+  nvapp::ImTexture   m_viewportImage;    // ImGui texture displaying the tonemapped image
+  VkSampler          m_linearSampler{};  // Sampler used to feed the rendered image to the tonemapper
+  nvvk::Buffer       m_bCameraInfo;      // Camera information
+  nvvk::Buffer       m_bSkyParams;       // Sky parameters
 
   // Data and setting
   shaderio::SkyPhysicalParameters m_skyParams = {};

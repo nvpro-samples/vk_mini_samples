@@ -7,5 +7,6 @@
     ".",
     "../nvpro_core2/"
   ],
-  "slang.enableCommitCharactersInAutoCompletion": "on"
+  "slang.enableCommitCharactersInAutoCompletion": "on",
+  "slang.format.clangFormatStyle": "file"
 }

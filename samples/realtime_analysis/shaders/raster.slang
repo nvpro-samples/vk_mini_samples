@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
- #version 460
+#version 460
 #include "common/shaders/functions.hlsli"
 #include "device_host.h"
 
@@ -27,30 +27,35 @@
 #define INSPECTOR_METADATA_BINDING eFragInspectorMeta
 #include "common/shaders/dh_inspector.hlsli"
 
-[[vk::push_constant]] ConstantBuffer<PushConstant> pushConst;
-[[vk::binding(eFrameInfo)]] ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(eParticles)]] RWStructuredBuffer<Particle> particles;
+[[vk::push_constant]]
+ConstantBuffer<PushConstant> pushConst;
+[[vk::binding(eFrameInfo)]]
+ConstantBuffer<FrameInfo> frameInfo;
+[[vk::binding(eParticles)]]
+RWStructuredBuffer<Particle> particles;
 
 #define M_PI_OVER_2 1.570796
 
 // Per-vertex attributes to be assembled from bound vertex buffers.
 struct VSin
 {
-  [[vk::location(0)]] float3 position : POSITION;
-  [[vk::location(1)]] float2 uv : TEXCOORD;
+  [[vk::location(0)]]
+  float3 position : POSITION;
+  [[vk::location(1)]]
+  float2 uv : TEXCOORD;
 };
 
 // Output of the vertex shader, and input to the fragment shader.
 struct PSin
 {
   nointerpolation uint id : DRAW_ID;
-  float2 uv : TEXCOORD;
+  float2               uv : TEXCOORD;
 };
 
 // Output of the vertex shader
 struct VSout
 {
-  PSin stage;
+  PSin   stage;
   float4 sv_position : SV_Position;
 };
 
@@ -66,11 +71,11 @@ struct PSout
 VSout vertexMain(VSin input, uint particleID: SV_InstanceID)
 {
   float2 particle = input.position.xy * frameInfo.radius + (particles[particleID].position * frameInfo.scale * 2);
-  
+
   VSout output;
   output.sv_position = mul(frameInfo.proj, float4(particle, 0.0, 1.0));
-  output.stage.uv = input.uv;
-  output.stage.id = particleID;
+  output.stage.uv    = input.uv;
+  output.stage.id    = particleID;
 
   return output;
 }
@@ -79,24 +84,24 @@ VSout vertexMain(VSin input, uint particleID: SV_InstanceID)
 // Fragment Shader
 [shader("pixel")]
 PSout fragmentMain(PSin stage)
-{  
+{
   uint particleID = stage.id;
-  
-  float2 centerOffset = (stage.uv - 0.5) * 2.0;
-  float sqrDstFromDistance = dot(centerOffset, centerOffset);
-  float circleAlpha = cos(sqrDstFromDistance * sqrDstFromDistance * M_PI_OVER_2);
-  float delta = fwidth(sqrt(sqrDstFromDistance));
-  circleAlpha = min(circleAlpha, 1 - smoothstep(1 - delta, 1 + delta, sqrDstFromDistance));
 
-  float maxVelocity = 0.5 / frameInfo.scale;
-  float velocity = length(particles[particleID].velocity);
-  float3 col = clamp(temperature(velocity / maxVelocity), 0, 1);
+  float2 centerOffset       = (stage.uv - 0.5) * 2.0;
+  float  sqrDstFromDistance = dot(centerOffset, centerOffset);
+  float  circleAlpha        = cos(sqrDstFromDistance * sqrDstFromDistance * M_PI_OVER_2);
+  float  delta              = fwidth(sqrt(sqrDstFromDistance));
+  circleAlpha               = min(circleAlpha, 1 - smoothstep(1 - delta, 1 + delta, sqrDstFromDistance));
+
+  float  maxVelocity = 0.5 / frameInfo.scale;
+  float  velocity    = length(particles[particleID].velocity);
+  float3 col         = clamp(temperature(velocity / maxVelocity), 0, 1);
 
   // #INSPECTOR
   inspect32BitValue(0, asuint(velocity));
-  
+
   PSout output;
   output.color = float4(col.xyz, circleAlpha);
-  
+
   return output;
 }

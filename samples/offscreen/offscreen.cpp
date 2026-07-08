@@ -48,8 +48,7 @@
 #include <nvvk/commands.hpp>
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
-#include <nvvk/default_structs.hpp>
-#include <nvvk/gbuffers.hpp>
+#include <nvvk/render_target.hpp>
 #include <nvvk/graphics_pipeline.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
@@ -71,8 +70,8 @@ public:
     // Initialize the resource allocator
     m_alloc.init({.physicalDevice = physicalDevice, .device = device, .instance = instance});
 
-    // Initialize the GBuffer
-    m_gBuffers.init({.allocator = &m_alloc, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM}});
+    // Offscreen render target (color only, no depth)
+    NVVK_CHECK(m_renderTarget.init({.alloc = &m_alloc, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM}, .debugName = "Offscreen"}));
 
     // Create a command pool, for creating the command buffer
     const VkCommandPoolCreateInfo commandPoolCreateInfo{
@@ -90,33 +89,24 @@ public:
   {
     const nvutils::ScopedTimer s_timer("Offline rendering");
 
-    std::array<VkClearValue, 2> clear_values{};
-    clear_values[0].color        = {{0.1F, 0.1F, 0.4F, 0.F}};
-    clear_values[1].depthStencil = {1.0F, 0};
-
     // Preparing the rendering
     VkCommandBuffer cmd;
     NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_device, m_commandPool));
 
-    // Render the scene to the frame buffer (GBuffer)
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_gBuffers.getSize());
+    // Render the scene to the offscreen frame buffer. RenderTarget keeps its
+    // images in VK_IMAGE_LAYOUT_GENERAL, so no layout transitions are needed.
+    nvvk::RenderTargetState rtState;
+    m_renderTarget.fillState(rtState);
+    rtState.colorAttachments[0].clearValue = {{0.1F, 0.1F, 0.4F, 0.F}};
+    nvvk::RenderTargetState::AttachmentOps ops{};  // default: clear+store on color & depth, don't care on stencil
+    rtState.cmdBeginRendering(cmd, ops);
 
-    // Dynamic rendering
-    VkRenderingAttachmentInfoKHR colorAttachment = DEFAULT_VkRenderingAttachmentInfo;
-    colorAttachment.imageView                    = m_gBuffers.getColorImageView();
-
-    VkRenderingInfo renderingInfo      = DEFAULT_VkRenderingInfo;
-    renderingInfo.renderArea           = DEFAULT_VkRect2D(m_gBuffers.getSize());
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-
-    vkCmdBeginRendering(cmd, &renderingInfo);
+    nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
 
     // Pushing the time and aspect ratio to the shader
     shaderio::PushConstant pushConstant{
         .iTime       = animTime,
-        .aspectRatio = m_gBuffers.getAspectRatio(),
+        .aspectRatio = m_renderTarget.getAspectRatio(),
     };
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(shaderio::PushConstant), &pushConstant);
 
@@ -126,7 +116,6 @@ public:
 
     // Done and submit execution
     vkCmdEndRendering(cmd);
-    nvvk::cmdImageMemoryBarrier(cmd, {m_gBuffers.getColorImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
     NVVK_CHECK(nvvk::endSingleTimeCommands(cmd, m_device, m_commandPool, m_queue.queue));
   }
 
@@ -139,21 +128,21 @@ public:
 
     // Create a temporary buffer to hold the pixels of the image
     const VkBufferUsageFlags usage{VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT};
-    const VkDeviceSize bufferSize = 4 * sizeof(uint8_t) * m_gBuffers.getSize().width * m_gBuffers.getSize().height;
-    nvvk::Buffer       pixelBuffer;
+    const VkDeviceSize bufferSize = 4 * sizeof(uint8_t) * m_renderTarget.getSize().width * m_renderTarget.getSize().height;
+    nvvk::Buffer pixelBuffer;
     NVVK_CHECK(m_alloc.createBuffer(pixelBuffer, bufferSize, usage, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                                     VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT));
     NVVK_DBG_NAME(pixelBuffer.buffer);
 
-    imageToBuffer(m_gBuffers.getColorImage(), pixelBuffer.buffer);
+    imageToBuffer(m_renderTarget.getColorImage(), pixelBuffer.buffer);
 
     // Write the buffer to disk
     const std::string outFilenameUtf8 = nvutils::utf8FromPath(outFilename);
-    LOGI(" - Size: %d, %d\n", m_gBuffers.getSize().width, m_gBuffers.getSize().height);
-    LOGI(" - Bytes: %d\n", m_gBuffers.getSize().width * m_gBuffers.getSize().height * 4);
+    LOGI(" - Size: %d, %d\n", m_renderTarget.getSize().width, m_renderTarget.getSize().height);
+    LOGI(" - Bytes: %d\n", m_renderTarget.getSize().width * m_renderTarget.getSize().height * 4);
     LOGI(" - Out name: %s\n", outFilenameUtf8.c_str());
     const void* data = pixelBuffer.mapping;
-    stbi_write_jpg(outFilenameUtf8.c_str(), m_gBuffers.getSize().width, m_gBuffers.getSize().height, 4, data, 100);
+    stbi_write_jpg(outFilenameUtf8.c_str(), m_renderTarget.getSize().width, m_renderTarget.getSize().height, 4, data, 100);
 
     // Destroy temporary buffer
     m_alloc.destroyBuffer(pixelBuffer);
@@ -176,7 +165,7 @@ public:
     // Copy the image to the buffer
     VkBufferImageCopy copyRegion{};
     copyRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copyRegion.imageExtent      = VkExtent3D{m_gBuffers.getSize().width, m_gBuffers.getSize().height, 1};
+    copyRegion.imageExtent      = VkExtent3D{m_renderTarget.getSize().width, m_renderTarget.getSize().height, 1};
     vkCmdCopyImageToBuffer(cmd, imageIn, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixelBufferOut, 1, &copyRegion);
 
     // Put back the image as it was
@@ -233,7 +222,7 @@ public:
     const nvutils::ScopedTimer s_timer("Create Framebuffer");
     VkCommandBuffer            cmd;
     nvvk::beginSingleTimeCommands(cmd, m_device, m_commandPool);
-    NVVK_CHECK(m_gBuffers.update(cmd, size));
+    NVVK_CHECK(m_renderTarget.update(cmd, size));
     nvvk::endSingleTimeCommands(cmd, m_device, m_commandPool, m_queue.queue);
   }
 
@@ -243,13 +232,13 @@ public:
     vkDestroyPipeline(m_device, m_pipeline, nullptr);
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 
-    m_gBuffers.deinit();
+    m_renderTarget.deinit();
     m_alloc.deinit();
   }
 
 private:
-  nvvk::ResourceAllocator m_alloc;     // Resource allocator for the buffers
-  nvvk::GBuffer           m_gBuffers;  // GBuffer for the offscreen rendering
+  nvvk::ResourceAllocator m_alloc;         // Resource allocator for the buffers
+  nvvk::RenderTarget      m_renderTarget;  // Offscreen render target for the rendering
 
   nvvk::QueueInfo  m_queue;             // Queue information
   VkCommandPool    m_commandPool{};     // Command pool for the command buffer

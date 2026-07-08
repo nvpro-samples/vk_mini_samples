@@ -62,9 +62,9 @@ struct PSout
 VSout vertexMain(VSin input)
 {
   VSout output;
-  output.sv_position   = mul(float4(input.position, 1), frameInfo.mpv);
-  output.stage.color   = 0.5 + 0.5 * input.normal;
-  output.stage.uv      = input.uv;
+  output.sv_position = mul(float4(input.position, 1), frameInfo.mpv);
+  output.stage.color = 0.5 + 0.5 * input.normal;
+  output.stage.uv    = input.uv;
   return output;
 }
 
@@ -128,7 +128,7 @@ PSout fragmentMain(PSin stage, float4 fragCoord: SV_Position)
     // Writing through this BDA pointer causes a GPU page fault that the
     // driver cannot recover from -> VK_ERROR_DEVICE_LOST.
     float* ptr = (float*)(frameInfo.bufferAddr);
-    *ptr = 1.0;
+    *ptr       = 1.0;
     color += *ptr;
   }
 
@@ -147,7 +147,7 @@ PSout fragmentMain(PSin stage, float4 fragCoord: SV_Position)
     addr &= ~uint64_t(3);              // 4-byte alignment
     addr += 4096u;                     // skip null page region
     float* ptr = (float*)(addr);
-    *ptr = 1.0;
+    *ptr       = 1.0;
     color += *ptr;
   }
 
@@ -165,7 +165,7 @@ PSout fragmentMain(PSin stage, float4 fragCoord: SV_Position)
     uint64_t* indirect   = (uint64_t*)(frameInfo.bufferAddr);
     uint64_t  targetAddr = *indirect;
     float*    target     = (float*)(targetAddr);
-    *target = 1.0;
+    *target              = 1.0;
     color += *target;
   }
 
