@@ -43,9 +43,6 @@
     printf("\n");                                                                                                      \
   }
 
-#define USE_SLANG 1
-#define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
-
 #include <imgui/imgui.h>
 
 #include "shaders/shaderio_rt_gltf.h"
@@ -82,6 +79,7 @@
 #include <nvvk/check_error.hpp>
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
+#include <nvvk/descriptor_heap.hpp>
 #include <nvvk/descriptors.hpp>
 #include <nvvk/formats.hpp>
 #include <nvapp/imgui_texture.hpp>
@@ -144,7 +142,7 @@ public:
       m_slangCompiler.defaultTarget();
       m_slangCompiler.defaultOptions();
       m_slangCompiler.addOption({slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, 1}});
-      m_slangCompiler.addOption({slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, 0}});
+      m_slangCompiler.addCapability("spvDescriptorHeapEXT");
     }
 
     // Default camera
@@ -178,7 +176,7 @@ public:
 
     // Create the G-Buffer
     NVVK_CHECK(m_renderTarget.init({.alloc = &m_allocator,
-                                    .colorFormats = {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM},  // Only one GBuffer color attachment
+                                    .colorFormats = {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM},  // Two GBuffer color attachments: HDR (float) + display (unorm)
                                     .depthFormat = nvvk::findDepthFormat(m_app->getPhysicalDevice()),
                                     .debugName   = "RayTrace"}));
 
@@ -198,6 +196,7 @@ public:
     createResources();
     createBottomLevelAS();
     createTopLevelAS();
+    createDescriptorHeap();
     createRtxPipeline();
 
     // Fit the camera to the scene
@@ -237,8 +236,9 @@ public:
     m_allocator.destroyBuffer(m_sbtBuffer);
 
     vkDestroyPipeline(device, m_rtPipeline, nullptr);
-    vkDestroyPipelineLayout(device, m_rtPipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(device, m_rtDescriptorSetLayout, nullptr);
+
+    m_heap.deinit();
+    m_allocator.destroyBuffer(m_resourceHeapBuffer);
 
     m_tonemapper.deinit();
     m_viewportImage.deinit();
@@ -256,6 +256,7 @@ public:
   {
     NVVK_CHECK(m_renderTarget.update(cmd, size));
     m_viewportImage.update(m_renderTarget.getUiImageView(1));
+    writeHeapDescriptors();
   }
 
   //---------------------------------------------------------------------------------------------------------------
@@ -276,8 +277,12 @@ public:
 
       // Update the shader information
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipeline);
-      pushDescSet(cmd);
-      vkCmdPushConstants(cmd, m_rtPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::RtGltfPushConstant), &m_pushConst);
+      m_heap.cmdBindHeaps(cmd, 0, m_resourceHeapBuffer.address);
+      m_pushConst.tlasAddress = m_tlas.address;
+      VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                                 .offset = 0,
+                                 .data   = {.address = &m_pushConst, .size = sizeof(shaderio::RtGltfPushConstant)}};
+      vkCmdPushDataEXT(cmd, &pushInfo);
 
       // Ray trace
       const VkExtent2D& size = m_app->getViewportSize();
@@ -598,6 +603,38 @@ public:
   }
 
 
+  void createDescriptorHeap()
+  {
+    NVVK_CHECK(m_heap.init(m_app->getPhysicalDevice(), m_app->getDevice()));
+
+    constexpr VkBufferUsageFlags2 heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    const VkDeviceSize            resourceBufSize = m_heap.setupResourceHeap(1, 1);
+
+    constexpr VmaAllocationCreateFlags kMappedFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    NVVK_CHECK(m_allocator.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                        kMappedFlags, m_heap.getResourceHeapAlignment()));
+    NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
+
+    m_pushConst.imageHeapBase  = m_heap.imageShaderIndexBase();
+    m_pushConst.bufferHeapBase = m_heap.bufferShaderIndexBase();
+
+    writeHeapDescriptors();
+  }
+
+  void writeHeapDescriptors()
+  {
+    if(m_resourceHeapBuffer.mapping == nullptr)
+      return;
+    // Render target color image is created in onResize; skip until it exists.
+    if(m_renderTarget.getSize().width == 0 || m_renderTarget.getSize().height == 0)
+      return;
+    NVVK_CHECK(m_heap.writeStorageImageDescriptor(shaderio::kHeapImgOutput, m_renderTarget.getColorImage(0),
+                                                  m_renderTarget.getColorFormat(0), VK_IMAGE_LAYOUT_GENERAL,
+                                                  m_resourceHeapBuffer.mapping));
+    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufSceneInfo, m_bSceneInfo,
+                                            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, m_resourceHeapBuffer.mapping));
+  }
+
   //--------------------------------------------------------------------------------------------------
   // Pipeline for the ray tracer: all shaders, raygen, chit, miss
   //
@@ -609,33 +646,13 @@ public:
 
     if(!m_slangCompiler.compileFile("raytrace.slang"))
     {
-      LOGE("Error compiling gltf.rast.slang\n");
+      LOGE("Error compiling raytrace.slang\n");
       return;
     }
 
     // Clean the previous pipeline
     vkDestroyPipeline(device, m_rtPipeline, nullptr);
-    vkDestroyPipelineLayout(device, m_rtPipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(device, m_rtDescriptorSetLayout, nullptr);
-
-    // Create the descriptor set layout
-    m_rtDescriptorBindings.clear();
-    m_rtDescriptorBindings.addBinding({.binding         = shaderio::BindingIndex::eTlas,
-                                       .descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
-                                       .descriptorCount = 1,
-                                       .stageFlags      = VK_SHADER_STAGE_ALL});
-    m_rtDescriptorBindings.addBinding({.binding         = shaderio::BindingIndex::eOutImage,
-                                       .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                       .descriptorCount = 1,
-                                       .stageFlags      = VK_SHADER_STAGE_ALL});
-    m_rtDescriptorBindings.addBinding({.binding         = shaderio::BindingIndex::eSceneDesc,
-                                       .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                                       .descriptorCount = 1,
-                                       .stageFlags      = VK_SHADER_STAGE_ALL});
-
-    NVVK_CHECK(m_rtDescriptorBindings.createDescriptorSetLayout(m_app->getDevice(), VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT,
-                                                                &m_rtDescriptorSetLayout));
-    NVVK_DBG_NAME(m_rtDescriptorSetLayout);
+    m_rtPipeline = VK_NULL_HANDLE;
 
     // Creating all shaders: raygen, miss, chit
     enum StageIndices
@@ -690,26 +707,19 @@ public:
     group.closestHitShader = eClosestHit;
     shader_groups.push_back(group);
 
-    // Push constant: we want to be able to update constants used by the shaders
-    const VkPushConstantRange pushConstantRange{
-        .stageFlags = VK_SHADER_STAGE_ALL,
-        .offset     = 0,
-        .size       = sizeof(shaderio::RtGltfPushConstant),
-    };
-
-    // Create the pipeline layout
-    NVVK_CHECK(nvvk::createPipelineLayout(device, &m_rtPipelineLayout, {m_rtDescriptorSetLayout}, {pushConstantRange}));
-    NVVK_DBG_NAME(m_rtPipelineLayout);
+    VkPipelineCreateFlags2CreateInfo flags2Info{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO};
+    flags2Info.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
     VkRayTracingPipelineCreateInfoKHR ray_pipeline_info{
         .sType                        = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+        .pNext                        = &flags2Info,
         .stageCount                   = static_cast<uint32_t>(stages.size()),  // Stages are shader
         .pStages                      = stages.data(),
         .groupCount                   = static_cast<uint32_t>(shader_groups.size()),
         .pGroups                      = shader_groups.data(),
         .maxPipelineRayRecursionDepth = m_pushConst.maxDepth,  // Ray depth (maximal number of reflection)
-        .layout                       = m_rtPipelineLayout,
+        .layout                       = VK_NULL_HANDLE,
     };
     NVVK_CHECK(vkCreateRayTracingPipelinesKHR(device, {}, {}, 1, &ray_pipeline_info, nullptr, &m_rtPipeline));
     NVVK_DBG_NAME(m_rtPipeline);
@@ -737,17 +747,6 @@ public:
 
       sbtGenerator.deinit();
     }
-  }
-
-  void pushDescSet(VkCommandBuffer cmd) const
-  {
-    nvvk::WriteSetContainer writes{};
-    writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eTlas), m_tlas);
-    writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eOutImage),
-                  m_renderTarget.getColorAttachmentView(0), VK_IMAGE_LAYOUT_GENERAL);
-    writes.append(m_rtDescriptorBindings.getWriteSet(shaderio::BindingIndex::eSceneDesc), m_bSceneInfo);
-
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipelineLayout, 0, writes.size(), writes.data());
   }
 
   void onLastHeadlessFrame() override
@@ -811,6 +810,7 @@ public:
     createResources();
     createBottomLevelAS();
     createTopLevelAS();
+    createDescriptorHeap();
     createRtxPipeline();
   }
 
@@ -935,15 +935,17 @@ public:
 
 
   //--------------------------------------------------------------------------------------------------
-  nvapp::Application*      m_app{};
-  nvvk::ResourceAllocator  m_allocator{};  // The VMA allocator
-  nvvk::StagingUploader    m_stagingUploader{};
-  nvvk::RenderTarget       m_renderTarget{};          // The G-Buffer
-  nvapp::ImTexture         m_viewportImage{};         // ImGui texture displaying the tonemapped image
-  VkSampler                m_linearSampler{};         // Sampler used to feed the rendered image to the tonemapper
-  nvvk::SamplerPool        m_samplerPool{};           // The sampler pool, used to create a sampler for the texture
-  nvvk::DescriptorBindings m_rtDescriptorBindings{};  // The descriptor binding helper
-  nvslang::SlangCompiler   m_slangCompiler{};         // The compiler for the shaders
+  nvapp::Application*     m_app{};
+  nvvk::ResourceAllocator m_allocator{};  // The VMA allocator
+  nvvk::StagingUploader   m_stagingUploader{};
+  nvvk::RenderTarget      m_renderTarget{};   // The G-Buffer
+  nvapp::ImTexture        m_viewportImage{};  // ImGui texture displaying the tonemapped image
+  VkSampler               m_linearSampler{};  // Sampler used to feed the rendered image to the tonemapper
+  nvvk::SamplerPool       m_samplerPool{};    // The sampler pool, used to create a sampler for the texture
+  nvvk::DescriptorHeap    m_heap{};
+  nvvk::Buffer            m_resourceHeapBuffer{};
+
+  nvslang::SlangCompiler m_slangCompiler{};  // The compiler for the shaders
 
   RaytraceGltfSettings m_settings{};
 
@@ -953,9 +955,7 @@ public:
   nvvk::Buffer              m_bMeshInfo{};  // All our meshes (array of mesh accessors)
   nvvk::Buffer              m_bInstInfo{};  // All our instances (array of instance accessors)
 
-  VkDescriptorSetLayout m_rtDescriptorSetLayout{};  // Descriptor set layout for the scene info (set 1)
-  VkPipelineLayout      m_rtPipelineLayout{};       // The pipeline layout use with graphics pipeline
-  VkPipeline            m_rtPipeline{};             // The pipeline
+  VkPipeline m_rtPipeline{};  // The ray tracing pipeline
 
 
   std::vector<nvvk::AccelerationStructure> m_blas{};        // Bottom-level AS
@@ -1001,20 +1001,23 @@ int main(int argc, char** argv)
 
   //--------------------------------------------------------------------------------------------------
   // Vulkan setup
-  // clang-format off
-    VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
-  // clang-format on
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+  VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+  VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+  VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
+
   vkSetup = {
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
       .deviceExtensions =
           {
-              {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
               {VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME},
               {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures},
               {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature},
               {VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature},
+              {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, &heapFeatures},
+              {VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME, &untypedPtrFeatures},
+              {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},  // used by the tonemapper compute pass
           },
       .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_TRANSFER_BIT},
   };

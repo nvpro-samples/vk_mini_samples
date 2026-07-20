@@ -38,18 +38,65 @@ struct Ray
   float3 direction;
 };
 
-// Bindings
-// clang-format off
-[[vk::push_constant]]           ConstantBuffer<PushConstant> pushConst;
-[[vk::binding(B_textures, 0)]]  Sampler2D allTextures[];
-[[vk::binding(B_tlas, 1)]]      RaytracingAccelerationStructure topLevelAS;
-[[vk::binding(B_outImage, 1)]]  RWTexture2D<float4> outImage;
+// All resources are accessed bindless through nvvk::DescriptorHeap (VK_EXT_descriptor_heap):
+// there are no descriptor-set bindings; handles are built from the absolute heap indices carried
+// in the push constant. Images and samplers live in separate heaps, so textures are decoupled
+// Texture2D + SamplerState (not combined Sampler2D).
+[[vk::push_constant]]
+ConstantBuffer<PushConstant> pushConst;
 
-// HDR Environment
-[[vk::binding(EnvBindings::eHdr, 2)]]           Sampler2D hdrIBL;
-[[vk::binding(EnvBindings::eImpSamples, 2)]]    StructuredBuffer<EnvAccel> envSamplingData;
+// --- Descriptor-heap accessors -------------------------------------------------------------------
+// Default sampler (slot 0): used for the HDR/env map and any texture without an explicit glTF sampler.
+SamplerState getDefaultSampler()
+{
+  return SamplerState.Handle(uint2(pushConst.samplerHeapBase + kHeapSmpDefault, 0));
+}
+// Sampler for a glTF texture: maps the texture's glTF sampler index to its sampler-heap slot.
+SamplerState getSceneSampler(int samplerIndex)
+{
+  uint slot = (samplerIndex < 0) ? kHeapSmpDefault : (kHeapSmpSceneStart + uint(samplerIndex));
+  return SamplerState.Handle(uint2(pushConst.samplerHeapBase + slot, 0));
+}
+RWTexture2D<float4> getOutImage()
+{
+  return RWTexture2D<float4>.Handle(uint2(pushConst.imageHeapBase + kHeapImgOutput, 0));
+}
+RaytracingAccelerationStructure getTLAS()
+{
+  return RaytracingAccelerationStructure(pushConst.tlasAddress);
+}
+Texture2D getHdrTexture()
+{
+  return Texture2D.Handle(uint2(pushConst.imageHeapBase + kHeapImgHdr, 0));
+}
+StructuredBuffer<EnvAccel> getEnvSampling()
+{
+  return StructuredBuffer<EnvAccel>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufEnvSampling, 0));
+}
+Texture2D getSceneTexture(uint localIndex)
+{
+  return Texture2D.Handle(uint2(pushConst.imageHeapBase + kHeapImgTexturesStart + localIndex, 0));
+}
 
-// clang-format on
+// Resolves glTF textures from the resource heap for evaluateMaterial (see nvshaders
+// IGltfTextureFetcher). Mirrors getTexture() in pbr_material_eval.h.slang, but with decoupled
+// texture + sampler heap handles.
+struct HeapTextureFetcher : IGltfTextureFetcher
+{
+  float4 fetch(in GltfTextureInfo textureInfo, in float2 texCoords[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS], float texGrad)
+  {
+    float2       tt   = mul(float3(texCoords[textureInfo.texCoord], 1), textureInfo.uvTransform).xy;
+    Texture2D    tex  = getSceneTexture(textureInfo.index);
+    SamplerState samp = getSceneSampler(textureInfo.samplerIndex);
+    if(texGrad > 0.0f)
+    {
+      float2 ddx_uv = textureInfo.uvTransform[0] * texGrad;
+      float2 ddy_uv = textureInfo.uvTransform[1] * texGrad;
+      return tex.SampleGrad(samp, tt, ddx_uv, ddy_uv);
+    }
+    return tex.Sample(samp, tt);
+  }
+}
 
 //-----------------------------------------------------------------------
 // Hit state information
@@ -101,8 +148,8 @@ void sampleLights(in float3 pos, float3 normal, in float3 worldRayDirection, ino
   }
   else
   {
-    float3 randVal      = float3(rand(seed), rand(seed), rand(seed));
-    float4 radiance_pdf = environmentSample(hdrIBL, envSamplingData, randVal, directLight.direction);
+    float3 randVal = float3(rand(seed), rand(seed), rand(seed));
+    float4 radiance_pdf = environmentSample(getHdrTexture(), getDefaultSampler(), getEnvSampling(), randVal, directLight.direction);
 
     float  envPdf   = radiance_pdf.w;
     float3 radiance = radiance_pdf.xyz / envPdf;
@@ -246,7 +293,7 @@ bool hitTest(in RayQuery rayQuery, inout uint seed)
     GltfTextureInfo tinfo    = texInfos[material.pbrBaseColorTexture];
     float2          texCoord = mul(float3(texcoord0.xy, 1), tinfo.uvTransform).xy;
 
-    baseColorAlpha *= allTextures[tinfo.index].SampleLevel(texCoord, 0).a;
+    baseColorAlpha *= getSceneTexture(tinfo.index).SampleLevel(getSceneSampler(tinfo.samplerIndex), texCoord, 0).a;
   }
 
   float opacity;
@@ -276,7 +323,7 @@ void traceRay(Ray ray, inout HitPayload payload, inout uint seed)
 
   RayDesc  r = { ray.origin, 0, ray.direction, INFINITE };
   RayQuery q;
-  q.TraceRayInline(topLevelAS, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, r);
+  q.TraceRayInline(getTLAS(), RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, r);
 
   while(q.Proceed())
   {
@@ -320,7 +367,7 @@ bool traceShadow(Ray ray, float maxDist, inout uint seed)
 {
   RayDesc  r = { ray.origin, 0, ray.direction, maxDist };
   RayQuery q;
-  q.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xFF, r);
+  q.TraceRayInline(getTLAS(), RAY_FLAG_NONE, 0xFF, r);
 
   while(q.Proceed())
   {
@@ -371,7 +418,7 @@ float3 pathTrace(Ray ray, inout uint seed)
       else
       {
         float2 uv       = getSphericalUv(ray.direction);
-        float4 hdrColor = hdrIBL.SampleLevel(uv, 0);
+        float4 hdrColor = getHdrTexture().SampleLevel(getDefaultSampler(), uv, 0);
         return radiance + (hdrColor.xyz * throughput);
       }
     }
@@ -387,9 +434,10 @@ float3 pathTrace(Ray ray, inout uint seed)
 
     material.pbrBaseColorFactor *= hit.color;  // Modulate the base color with the vertex color
 
-    // Evaluate the material at the hit point
-    MeshState   mesh   = MeshState(hit.nrm, hit.tangent, hit.bitangent, hit.geonrm, hit.uv, isInside);
-    PbrMaterial pbrMat = evaluateMaterial(material, mesh, allTextures, texInfos);
+    // Evaluate the material at the hit point (textures resolved from the descriptor heap)
+    MeshState          mesh = MeshState(hit.nrm, hit.tangent, hit.bitangent, hit.geonrm, hit.uv, isInside);
+    HeapTextureFetcher texFetcher;
+    PbrMaterial        pbrMat = evaluateMaterial(material, mesh, texFetcher, texInfos);
 
     // Adding emissive
     radiance += pbrMat.emissive * throughput;
@@ -519,10 +567,15 @@ float3 samplePixel(inout uint seed, float2 launchID, float2 launchSize)
 //-----------------------------------------------------------------------
 // RAY GENERATION
 //-----------------------------------------------------------------------
+// spvDescriptorHeapEXT: bindless resource/sampler heaps via SPV_EXT_descriptor_heap (the accessor
+// helpers above emit ResourceHeapEXT/SamplerHeapEXT builtins). spvRayQueryKHR: inline ray queries.
+[require(spvDescriptorHeapEXT, spvRayQueryKHR)]
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)]
 void computeMain(uint3 threadIdx: SV_DispatchThreadID)
 {
+  RWTexture2D<float4> outImage = getOutImage();
+
   float2 launchID = (float2)threadIdx.xy;
   uint2  launchSize;
   outImage.GetDimensions(launchSize.x, launchSize.y);
@@ -547,15 +600,6 @@ void computeMain(uint3 threadIdx: SV_DispatchThreadID)
   pixel_color /= pushConst.maxSamples;
 
   bool first_frame = (pushConst.frame == 0);
-
-  // float2 uv = launchID / launchSize;
-  // pixel_color = float3(uv, 0);
-  // uint width;
-  // uint height;
-  // allTextures[0].GetDimensions(width, height);
-  // if (doDebug)
-  //     printf("Width: %d, Height:%d\n", width, height);
-  // pixel_color = allTextures[0][int2(threadIdx.xy)].xyz;
 
   // Saving result
   if(first_frame)

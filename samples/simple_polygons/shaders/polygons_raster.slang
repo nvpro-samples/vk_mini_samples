@@ -49,17 +49,17 @@ struct PSout
   float4 color : SV_Target;
 };
 
-
 [[vk::push_constant]]
 ConstantBuffer<PushConstant> pushConst;
-[[vk::binding(0)]]
-ConstantBuffer<FrameInfo> frameInfo;
 
 
 // Vertex  Shader
+[require(spvDescriptorHeapEXT)]
 [shader("vertex")]
 VSout vertexMain(VSin input)
 {
+  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(kHeapBufFrameInfo, 0));
+
   float4 pos = mul(float4(input.position.xyz, 1.0), pushConst.transfo);
 
   VSout output;
@@ -72,10 +72,13 @@ VSout vertexMain(VSin input)
 
 
 // Fragment Shader
+[require(spvDescriptorHeapEXT)]
 [shader("pixel")]
 PSout fragmentMain(PSin stage)
 {
-  float3 V = normalize(frameInfo.camPos - stage.position);  // vector that goes from the hit position towards the origin of the ray
+  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(kHeapBufFrameInfo, 0));
+
+  float3 V     = normalize(frameInfo.camPos - stage.position);
   float3 color = simpleShading(V, V, stage.normal, pushConst.color.xyz, 16.0);
 
   PSout output;

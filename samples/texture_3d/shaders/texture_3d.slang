@@ -17,7 +17,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// #include "common/shaders/functions.hlsli"
 #include <nvshaders/simple_shading.h.slang>
 
 #include "shaderio.h"
@@ -50,11 +49,6 @@ struct PSout
 
 [[vk::push_constant]]
 ConstantBuffer<PushConstant> pushConst;
-[[vk::binding(0, 0)]]
-ConstantBuffer<FrameInfo> frameInfo;
-[[vk::binding(1)]]
-Sampler3D g_Volume;
-
 
 // Ray structure
 struct Ray
@@ -69,10 +63,6 @@ struct Bbox
   float3 bMax;
 };
 
-// Determines whether a ray intersects with a bounding box (bbox) representing a cube.
-// If an intersection occurs, it calculates the two points of intersection and returns
-// them as output.
-// The function returns a boolean value indicating whether an intersection took place.
 bool intersectCube(in Ray ray, in Bbox bbox, out float3 p1, out float3 p2)
 {
   p1 = float3(0.0, 0.0, 0.0);
@@ -89,7 +79,6 @@ bool intersectCube(in Ray ray, in Bbox bbox, out float3 p1, out float3 p2)
   float tNear = max(max(t1.x, t1.y), t1.z);
   float tFar  = min(min(t2.x, t2.y), t2.z);
 
-
   if(tNear > tFar || tFar < 0.0)
   {
     return false;
@@ -101,29 +90,26 @@ bool intersectCube(in Ray ray, in Bbox bbox, out float3 p1, out float3 p2)
   return true;
 }
 
-// Computes the gradient of a 3D volume at a given position by sampling neighboring voxels and estimating
-// the rate of change in each direction using finite differences. The resulting gradient vector represents
-// the direction (normal) and magnitude of the steepest ascent/descent in the volume at that position.
-float3 computeVolumeGradient(Sampler3D volume, float3 p, float voxelSize)
+float3 computeVolumeGradient(Texture3D volume, SamplerState volumeSampler, float3 p, float voxelSize)
 {
   float inc = voxelSize * 0.5F;
-  float dx  = (volume.Sample(p - float3(inc, 0, 0)).r - volume.Sample(p + float3(inc, 0, 0)).r) / voxelSize;
-  float dy  = (volume.Sample(p - float3(0, inc, 0)).r - volume.Sample(p + float3(0, inc, 0)).r) / voxelSize;
-  float dz  = (volume.Sample(p - float3(0, 0, inc)).r - volume.Sample(p + float3(0, 0, inc)).r) / voxelSize;
+  float dx =
+      (volume.Sample(volumeSampler, p - float3(inc, 0, 0)).r - volume.Sample(volumeSampler, p + float3(inc, 0, 0)).r) / voxelSize;
+  float dy =
+      (volume.Sample(volumeSampler, p - float3(0, inc, 0)).r - volume.Sample(volumeSampler, p + float3(0, inc, 0)).r) / voxelSize;
+  float dz =
+      (volume.Sample(volumeSampler, p - float3(0, 0, inc)).r - volume.Sample(volumeSampler, p + float3(0, 0, inc)).r) / voxelSize;
 
   return normalize(float3(dx, dy, dz));
 }
 
-// Traces a ray through a volume by taking multiple steps and sampling the volume texture at each step.
-// It stops when the sampled value exceeds a threshold, and then performs interpolation to refine the hit point.
-// The function returns a boolean indicating if a hit point was found and outputs the final hit point position.
-bool rayMarching(const Sampler3D volume, const float3 p1, const float3 p2, const int numSteps, const float threshold, out float3 hitPoint)
+bool rayMarching(Texture3D volume, SamplerState volumeSampler, const float3 p1, const float3 p2, const int numSteps, const float threshold, out float3 hitPoint)
 {
   const float3 stepSize = (p2 - p1) / float(numSteps);
   hitPoint              = p1;
 
   float3 prevPoint = hitPoint;
-  float  value     = volume.Sample(hitPoint).r;
+  float  value     = volume.Sample(volumeSampler, hitPoint).r;
   float  prevValue = value;
 
   for(int i = 0; i < numSteps; ++i)
@@ -138,16 +124,18 @@ bool rayMarching(const Sampler3D volume, const float3 p1, const float3 p2, const
     prevValue = value;
     prevPoint = hitPoint;
     hitPoint += stepSize;
-    value = volume.Sample(hitPoint).r;
+    value = volume.Sample(volumeSampler, hitPoint).r;
   }
 
   return false;
 }
 
-// Vertex  Shader
+[require(spvDescriptorHeapEXT)]
 [shader("vertex")]
 VSout vertexMain(VSin input)
 {
+  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufFrameInfo, 0));
+
   float4 pos = mul(float4(input.position.xyz, 1.0), pushConst.transfo);
 
   VSout output;
@@ -158,44 +146,44 @@ VSout vertexMain(VSin input)
 }
 
 
-// Fragment Shader
+[require(spvDescriptorHeapEXT)]
 [shader("pixel")]
 PSout fragmentMain(PSin stage, bool isFrontFacing: SV_IsFrontFace)
 {
+  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufFrameInfo, 0));
+
+  Texture3D    volume        = Texture3D.Handle(uint2(kHeapImgVolume, 0));
+  SamplerState volumeSampler = SamplerState.Handle(uint2(kHeapSmpVolume, 0));
+
   PSout output;
 
   Ray ray;
   ray.origin    = frameInfo.camPos;
   ray.direction = normalize(stage.position - frameInfo.camPos);
 
-  // Intersection against the cube
   float3 p1, p2;
   Bbox   bbox = { float3(-0.5, -0.5, -0.5), float3(0.5, 0.5, 0.5) };
   bool   hit  = intersectCube(ray, bbox, p1, p2);
   if(!hit)
     discard;
 
-  // Avoid drawing triangle that can't be seen
   bool isInside = all(p1 == ray.origin);
   if((isInside && isFrontFacing) || (!isInside && !isFrontFacing))
     discard;
 
-  // Uniform position [0,1] for sampling in the volume
   p1 = p1 - bbox.bMin / (bbox.bMax - bbox.bMin);
   p2 = p2 - bbox.bMin / (bbox.bMax - bbox.bMin);
 
-  // Ray-marching
   float3 hitPoint;
-  hit = rayMarching(g_Volume, p1, p2, pushConst.steps, pushConst.threshold, hitPoint);
+  hit = rayMarching(volume, volumeSampler, p1, p2, pushConst.steps, pushConst.threshold, hitPoint);
   if(!hit)
     discard;
 
-  // Find normal at position
   uint3 dim;
   uint  levels;
-  g_Volume.GetDimensions(0, dim.x, dim.y, dim.z, levels);
-  float3 normal = computeVolumeGradient(g_Volume, hitPoint, 1.0 / dim.x);
-  if(dot(ray.direction, normal) > 0)  // Make nornal pointing toward origin
+  volume.GetDimensions(0, dim.x, dim.y, dim.z, levels);
+  float3 normal = computeVolumeGradient(volume, volumeSampler, hitPoint, 1.0 / dim.x);
+  if(dot(ray.direction, normal) > 0)
     normal *= -1;
 
   float3 lightDir  = (frameInfo.headlight == 1) ? -ray.direction : normalize(frameInfo.toLight);

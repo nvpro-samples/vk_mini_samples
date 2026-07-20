@@ -21,22 +21,32 @@
 
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_descriptor_heap : enable
+#extension GL_EXT_nonuniform_qualifier : enable  // variable indexing into the heap-mapped arrays
 
 #include "shaderio.h"
 
 layout(location = 0) in vec3 inFragPos;
 layout(location = 0) out vec4 outColor;
 
-
-layout(set = 0, binding = 0, scalar) uniform FrameInfo_
+layout(descriptor_heap, scalar) uniform FrameInfo_
 {
   FrameInfo frameInfo;
-};
-layout(set = 0, binding = 1) uniform sampler3D inVolume;
+}
+heapFrameInfo[];
+layout(descriptor_heap) uniform texture3D heapTextures3D[];
+layout(descriptor_heap) uniform sampler heapSamplers[];
+
 layout(push_constant) uniform PushConstant_
 {
   PushConstant pushC;
 };
+
+// Combined sampler built from separate heap texture/sampler resources.
+// A constructed combined sampler must appear at its point of use (inside a
+// texture built-in) and heap handles cannot cross a function boundary, so the
+// helpers reference this macro directly rather than taking a sampler argument.
+#define inVolume sampler3D(heapTextures3D[kHeapImgVolume], heapSamplers[kHeapSmpVolume])
 
 // Ray structure
 struct Ray
@@ -103,12 +113,12 @@ bool intersectCube(in Ray ray, in Bbox bbox, out vec3 p1, out vec3 p2)
 // Computes the gradient of a 3D volume at a given position by sampling neighboring voxels and estimating
 // the rate of change in each direction using finite differences. The resulting gradient vector represents
 // the direction (normal) and magnitude of the steepest ascent/descent in the volume at that position.
-vec3 computeVolumeGradient(sampler3D volume, vec3 p, float voxelSize)
+vec3 computeVolumeGradient(vec3 p, float voxelSize)
 {
   float inc = voxelSize * 0.5F;
-  float dx  = (texture(volume, p - vec3(inc, 0, 0)).r - texture(volume, p + vec3(inc, 0, 0)).r) / voxelSize;
-  float dy  = (texture(volume, p - vec3(0, inc, 0)).r - texture(volume, p + vec3(0, inc, 0)).r) / voxelSize;
-  float dz  = (texture(volume, p - vec3(0, 0, inc)).r - texture(volume, p + vec3(0, 0, inc)).r) / voxelSize;
+  float dx  = (texture(inVolume, p - vec3(inc, 0, 0)).r - texture(inVolume, p + vec3(inc, 0, 0)).r) / voxelSize;
+  float dy  = (texture(inVolume, p - vec3(0, inc, 0)).r - texture(inVolume, p + vec3(0, inc, 0)).r) / voxelSize;
+  float dz  = (texture(inVolume, p - vec3(0, 0, inc)).r - texture(inVolume, p + vec3(0, 0, inc)).r) / voxelSize;
 
   return normalize(vec3(dx, dy, dz));
 }
@@ -116,13 +126,13 @@ vec3 computeVolumeGradient(sampler3D volume, vec3 p, float voxelSize)
 // Traces a ray through a volume by taking multiple steps and sampling the volume texture at each step.
 // It stops when the sampled value exceeds a threshold, and then performs interpolation to refine the hit point.
 // The function returns a boolean indicating if a hit point was found and outputs the final hit point position.
-bool rayMarching(const sampler3D volume, const vec3 p1, const vec3 p2, const int numSteps, const float threshold, out vec3 hitPoint)
+bool rayMarching(const vec3 p1, const vec3 p2, const int numSteps, const float threshold, out vec3 hitPoint)
 {
   const vec3 stepSize = (p2 - p1) / float(numSteps);
   hitPoint            = p1;
 
   vec3  prevPoint = hitPoint;
-  float value     = texture(volume, hitPoint).r;
+  float value     = texture(inVolume, hitPoint).r;
   float prevValue = value;
 
   for(int i = 0; i < numSteps; ++i)
@@ -137,7 +147,7 @@ bool rayMarching(const sampler3D volume, const vec3 p1, const vec3 p2, const int
     prevValue = value;
     prevPoint = hitPoint;
     hitPoint += stepSize;
-    value = texture(volume, hitPoint).r;
+    value = texture(inVolume, hitPoint).r;
   }
 
   return false;
@@ -146,6 +156,8 @@ bool rayMarching(const sampler3D volume, const vec3 p1, const vec3 p2, const int
 
 void main()
 {
+  FrameInfo frameInfo = heapFrameInfo[pushC.bufferHeapBase + kHeapBufFrameInfo].frameInfo;
+
   Ray ray;
   ray.origin    = frameInfo.camPos;
   ray.direction = normalize(inFragPos - frameInfo.camPos);
@@ -169,12 +181,12 @@ void main()
 
   // Ray-marching
   vec3 hitPoint;
-  hit = rayMarching(inVolume, p1, p2, pushC.steps, pushC.threshold, hitPoint);
+  hit = rayMarching(p1, p2, pushC.steps, pushC.threshold, hitPoint);
   if(!hit)
     discard;
 
   // Find normal at position
-  vec3 normal = computeVolumeGradient(inVolume, hitPoint, 1.0 / textureSize(inVolume, 0).x);
+  vec3 normal = computeVolumeGradient(hitPoint, 1.0 / textureSize(inVolume, 0).x);
   if(dot(ray.direction, normal) > 0)  // Make nornal pointing toward origin
     normal *= -1;
 

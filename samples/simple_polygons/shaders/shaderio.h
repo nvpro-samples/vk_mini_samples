@@ -24,6 +24,10 @@
 
 NAMESPACE_SHADERIO_BEGIN()
 
+// Descriptor-heap slot layout (local buffer indices within the buffer region).
+static const uint kHeapBufFrameInfo = 0;  // buffer region: per-frame camera UBO
+static const uint kHeapBufCount     = 1;  // number of buffer slots
+
 struct PushConstant
 {
   float4x4 transfo;

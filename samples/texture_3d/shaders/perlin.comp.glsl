@@ -20,11 +20,11 @@
 
 #version 450
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_descriptor_heap : enable
 
 precision highp float;
 
-
-layout(set = 0, binding = 0, r32f) writeonly uniform image3D g_out_image;
+layout(descriptor_heap, r32f) writeonly uniform image3D heapImages3D[];
 
 #include "shaderio.h"
 
@@ -145,5 +145,5 @@ void main()
   }
 
   //v += 0.5;
-  imageStore(g_out_image, ivec3(gl_GlobalInvocationID.xyz), vec4(v));
+  imageStore(heapImages3D[kHeapImgVolume], ivec3(gl_GlobalInvocationID.xyz), vec4(v));
 }

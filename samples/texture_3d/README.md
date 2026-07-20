@@ -14,6 +14,14 @@ The image that is generated is always of power-of-two size, which means the imag
 
 A cube is rendered, and in the fragment shader, the intersection P1 and P2 is found, a ray-marching will be done between those points until it goes over a threshold value. Once the intersection point is found, the gradient is calculated to find the normal at the surface. This normal is used for shading. See [`raster.frag.glsl`](shaders/raster.frag.glsl) for the shading code.
 
+## Descriptor Heap
+
+Resources are bound **bindless** through [`VK_EXT_descriptor_heap`](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_descriptor_heap.html) via `nvvk::DescriptorHeap`, instead of descriptor sets. Shaders are created as shader objects with `VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT`, and push data is sent with `vkCmdPushDataEXT`.
+
+This sample is a good example of a **mixed resource heap**: the 3D texture image + its sampler live in the image/sampler regions, while the per-frame uniform buffer lives in the buffer region. Because a resource heap packs images first and buffers after, buffer slots are addressed from `bufferShaderIndexBase()` (threaded to the shader through a push-constant field), not from raw index 0 — a detail that matters whenever a single heap mixes images and buffers.
+
+See the [`descriptor_heap`](../descriptor_heap/) sample for the concept in depth.
+
 ## Settings
 
 ### Shading

@@ -36,11 +36,16 @@ set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
 
 
 
+set(SLANG_CAP
+    spvDescriptorHeapEXT
+)
+
 compile_slang(
     "${SHADER_SLANG_FILES}"
      "${SHADER_OUTPUT_DIR}"
     HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
-    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+    CAPABILITIES ${SLANG_CAP}
+    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR};-fvk-use-scalar-layout"
 )
 
 compile_glsl(

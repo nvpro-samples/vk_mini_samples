@@ -17,12 +17,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#version 460
-
 #include "shaderio.h"
-
-
-RWTexture3D<float> g_out_image;
 
 [[vk::push_constant]]
 ConstantBuffer<PerlinSettings> perlinSettings;
@@ -55,12 +50,12 @@ float3 fade(float3 t)
 
 float perlin(float3 P)
 {
-  float3 Pi0 = floor(P);                     // Integer part for indexing
-  float3 Pi1 = Pi0 + float3(1.0, 1.0, 1.0);  // Integer part + 1
+  float3 Pi0 = floor(P);
+  float3 Pi1 = Pi0 + float3(1.0, 1.0, 1.0);
   Pi0        = mod289(Pi0);
   Pi1        = mod289(Pi1);
-  float3 Pf0 = frac(P);                      // Fractional part for interpolation
-  float3 Pf1 = Pf0 - float3(1.0, 1.0, 1.0);  // Fractional part - 1.0
+  float3 Pf0 = frac(P);
+  float3 Pf1 = Pf0 - float3(1.0, 1.0, 1.0);
   float4 ix  = float4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);
   float4 iy  = float4(Pi0.yy, Pi1.yy);
   float4 iz0 = Pi0.zzzz;
@@ -122,10 +117,13 @@ float perlin(float3 P)
   return 2.2 * n_xyz;
 }
 
+[require(spvDescriptorHeapEXT)]
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)]
 void computeMain(uint3 threadIdx: SV_DispatchThreadID)
 {
+  RWTexture3D<float> outImage = RWTexture3D<float>.Handle(uint2(kHeapImgVolume, 0));
+
   float v     = 0.0F;
   float scale = perlinSettings.power;
   float freq  = perlinSettings.frequency;
@@ -134,10 +132,9 @@ void computeMain(uint3 threadIdx: SV_DispatchThreadID)
   {
     v += perlin(float3(threadIdx.xyz) * freq) / scale;
 
-    freq *= 2.0F;                   // Double the frequency
-    scale *= perlinSettings.power;  // Next power of b
+    freq *= 2.0F;
+    scale *= perlinSettings.power;
   }
 
-  //v += 0.5;
-  g_out_image[uint3(threadIdx.xyz)] = v;
+  outImage[uint3(threadIdx.xyz)] = v;
 }

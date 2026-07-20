@@ -19,12 +19,21 @@
 //////////////////////////////////////////////////////////////////////////
 /*
 
- This sample creates a 3D cube and render using the builtin camera
+ This sample renders many simple polygons with the builtin camera.
+
+ It demonstrates VK_EXT_descriptor_heap on a *classic graphics pipeline* (VkPipeline),
+ without shader objects. The per-frame camera UBO is reached through a bound descriptor
+ heap instead of a descriptor set: the pipeline opts in with
+ VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT (the pipeline-path counterpart of the
+ shader-object flag VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT). A descriptor-heap pipeline
+ uses NO VkPipelineLayout (the spec requires layout == VK_NULL_HANDLE), so push data is
+ sent with vkCmdPushDataEXT rather than vkCmdPushConstants. vkCmdBindPipeline and the rest
+ of the raster setup are unchanged. See the `descriptor_heap` sample for the concept in depth.
 
 */
 //////////////////////////////////////////////////////////////////////////
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 
@@ -60,7 +69,7 @@
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
-#include <nvvk/descriptors.hpp>
+#include <nvvk/descriptor_heap.hpp>  // nvvk::DescriptorHeap (bindless resources)
 #include <nvapp/imgui_texture.hpp>
 #include <nvvk/formats.hpp>
 #include <nvvk/graphics_pipeline.hpp>
@@ -125,9 +134,9 @@ public:
 
     m_allocator->destroyBuffer(m_frameInfo);
     m_allocator->destroyBuffer(m_pixelBuffer);
+    m_allocator->destroyBuffer(m_resourceHeapBuffer);
 
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    m_descriptorPack.deinit();
+    m_heap.deinit();
 
     m_viewportImage.deinit();
     m_renderTarget.deinit();
@@ -196,7 +205,9 @@ public:
     m_graphicState.cmdSetViewportAndScissor(cmd, m_renderTarget.getSize());
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, m_descriptorPack.getSetPtr(), 0, nullptr);
+    // Bind the resource descriptor heap in place of vkCmdBindDescriptorSets. This sample has no
+    // sampler heap, so the sampler-heap address is 0. Shaders then index resources by heap slot.
+    m_heap.cmdBindHeaps(cmd, 0, m_resourceHeapBuffer.address);
 
     VkBuffer lastVertexBuffer = {};
     VkBuffer lastIndexBuffer  = {};
@@ -204,11 +215,14 @@ public:
     for(const nvutils::Node& node : m_nodes)
     {
       PrimitiveMeshVk& mesh = m_meshVk[node.mesh];
-      // Push constant information
+      // Push constant information. A descriptor-heap pipeline has no VkPipelineLayout, so push data
+      // is delivered with vkCmdPushDataEXT instead of vkCmdPushConstants.
       m_pushConst.transfo = node.localMatrix();
       m_pushConst.color   = m_materials[node.material].color;
-      vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(shaderio::PushConstant), &m_pushConst);
+      const VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                                       .offset = 0,
+                                       .data   = {.address = &m_pushConst, .size = sizeof(shaderio::PushConstant)}};
+      vkCmdPushDataEXT(cmd, &pushInfo);
 
       nvvk::BufferRange vertexBufferRange = m_meshAllocator.subRange(mesh.vertices);
       nvvk::BufferRange indexBufferRange  = m_meshAllocator.subRange(mesh.indices);
@@ -281,33 +295,10 @@ private:
 
   void createPipeline()
   {
-    // There is only one resource in the shader
-    nvvk::DescriptorBindings bindings;
-    bindings.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL | VK_SHADER_STAGE_FRAGMENT_BIT);
-
-    // Create the descriptor layout, pool, and 1 set
-    NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 1));
-    NVVK_DBG_NAME(m_descriptorPack.getLayout());
-    NVVK_DBG_NAME(m_descriptorPack.getPool());
-    NVVK_DBG_NAME(m_descriptorPack.getSet(0));
-
-    // Writing to the descriptors
-    nvvk::WriteSetContainer writes{};
-    writes.append(m_descriptorPack.makeWrite(0), m_frameInfo);
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
-    VkPipelineRenderingCreateInfo prend_info{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
-    prend_info.colorAttachmentCount    = 1;
-    prend_info.pColorAttachmentFormats = &m_colorFormat;
-    prend_info.depthAttachmentFormat   = m_depthFormat;
-
-    // The push constant information
-    const VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                                .offset     = 0,
-                                                .size       = sizeof(shaderio::PushConstant)};
-    // Create PipelineLayout
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout, {m_descriptorPack.getLayout()}, {pushConstantRange}));
-    NVVK_DBG_NAME(m_pipelineLayout);
+    // Descriptor-heap pipelines use NO VkPipelineLayout at all: the spec requires layout ==
+    // VK_NULL_HANDLE when VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT is set (see
+    // VUID-VkGraphicsPipelineCreateInfo-flags-11311). Resources are reached through the bound heap,
+    // and push data is sent later with vkCmdPushDataEXT.
 
     // Creating the Pipeline
     m_graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
@@ -325,9 +316,14 @@ private:
 
     // Helper to create the graphic pipeline
     nvvk::GraphicsPipelineCreator creator;
-    creator.pipelineInfo.layout                  = m_pipelineLayout;
+    creator.pipelineInfo.layout                  = VK_NULL_HANDLE;  // required by the descriptor-heap flag
     creator.colorFormats                         = {m_colorFormat};
     creator.renderingState.depthAttachmentFormat = m_depthFormat;
+
+    // Opt the pipeline into descriptor-heap access. This is the pipeline-path equivalent of the
+    // shader-object flag VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT; the creator chains it into the
+    // VkGraphicsPipelineCreateInfo for us.
+    creator.flags2 = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
 
 
     // Adding the shaders to the pipeline
@@ -372,7 +368,9 @@ private:
       NVVK_CHECK(uploader.appendBufferRange(m_meshAllocator.subRange(m.indices), std::span(m_meshes[i].triangles)));
     }
 
-    NVVK_CHECK(m_allocator->createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT,
+    // The heap descriptor references the buffer by device address, so it needs SHADER_DEVICE_ADDRESS.
+    NVVK_CHECK(m_allocator->createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo),
+                                         VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
                                          VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
     NVVK_DBG_NAME(m_frameInfo.buffer);
 
@@ -383,6 +381,20 @@ private:
     uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
     uploader.deinit();
+
+    // Descriptor heap: size a resource heap for this sample's buffer slots (no images), back it with
+    // a host-visible mapped buffer, and register the per-frame UBO into slot kHeapBufFrameInfo. The
+    // shader then reaches the UBO through the heap instead of a descriptor set.
+    NVVK_CHECK(m_heap.init(m_app->getPhysicalDevice(), m_device));
+    const VkDeviceSize resourceBufSize = m_heap.setupResourceHeap(0, shaderio::kHeapBufCount);
+    constexpr auto     heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    NVVK_CHECK(m_allocator->createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                         VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                                         m_heap.getResourceHeapAlignment()));
+    NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
+
+    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufFrameInfo, m_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                            m_resourceHeapBuffer.mapping));
   }
 
 
@@ -520,9 +532,11 @@ private:
   shaderio::PushConstant      m_pushConst{};   // Information sent to the shader
   nvvk::GraphicsPipelineState m_graphicState;  // State of the graphic pipeline
 
-  VkPipeline           m_pipeline{};        // Graphic pipeline to render
-  VkPipelineLayout     m_pipelineLayout{};  // Pipeline layout
-  nvvk::DescriptorPack m_descriptorPack{};  // Descriptor bindings, pool, layout, and set
+  VkPipeline m_pipeline{};  // Graphic pipeline (no VkPipelineLayout: descriptor-heap pipeline)
+
+  // Descriptor heap (bindless): replaces the descriptor pool/layout/set
+  nvvk::DescriptorHeap m_heap{};                // Resource heap for this sample's buffer(s)
+  nvvk::Buffer         m_resourceHeapBuffer{};  // Host-visible buffer backing the resource heap
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -545,6 +559,17 @@ int main(int argc, char** argv)
     vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
   vkSetup.instanceExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+  // Descriptor heap on a classic pipeline: only the heap extension (and the untyped-pointer
+  // extension it relies on) are required. Note there is intentionally no VK_EXT_shader_object or
+  // VK_EXT_extended_dynamic_state3 here -- this sample keeps a traditional VkPipeline.
+  VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+  VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
+  vkSetup.deviceExtensions.insert(vkSetup.deviceExtensions.begin(),
+                                  {
+                                      {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, &heapFeatures},
+                                      {VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME, &untypedPtrFeatures},
+                                  });
 
   // Adding validation layers
   nvvk::ValidationSettings vvlInfo{};

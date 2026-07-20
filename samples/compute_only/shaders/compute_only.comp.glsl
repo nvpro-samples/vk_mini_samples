@@ -20,12 +20,13 @@
 #version 450
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_descriptor_heap : enable
 
 #include "shaderio.h"
 #include "common_shaders/palette.h"
 
 layout(local_size_x = WORKGROUP_SIZE, local_size_y = WORKGROUP_SIZE, local_size_z = 1) in;
-layout(set = 0, binding = 0) writeonly uniform image2D outImage;
+layout(descriptor_heap) writeonly uniform image2D heapImages[];
 layout(push_constant) uniform PushConstant_
 {
   PushConstant pushConst;
@@ -35,7 +36,7 @@ layout(push_constant) uniform PushConstant_
 void main()
 {
   vec2 fragCoord   = gl_GlobalInvocationID.xy;
-  vec2 iResolution = imageSize(outImage);
+  vec2 iResolution = imageSize(heapImages[kHeapImgOutput]);
   if(fragCoord.x >= iResolution.x || fragCoord.y >= iResolution.y)
     return;
   float iTime = pushConst.time;
@@ -59,5 +60,5 @@ void main()
     finalColor += col * d;
   }
 
-  imageStore(outImage, ivec2(fragCoord), vec4(finalColor, 1.0F));
+  imageStore(heapImages[kHeapImgOutput], ivec2(fragCoord), vec4(finalColor, 1.0F));
 }

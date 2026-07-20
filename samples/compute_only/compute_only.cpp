@@ -17,20 +17,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #define VMA_IMPLEMENTATION
-#include <glm/glm.hpp>
-#include <vector>
 
-
-#include "shaders/shaderio.h"                 // Shared between host and device
+#include "shaders/shaderio.h"  // Shared between host and device
+#include "common/utils.hpp"
 #include "_autogen/compute_only.comp.glsl.h"  // Generated compiled shader
 #include "_autogen/compute_only.slang.h"
 
-#define SHOW_MENU 1      // Enabling the standard Window menu.
-#define SHOW_SETTINGS 1  // Show the setting panel
+#define SHOW_MENU true      // Enabling the standard Window menu.
+#define SHOW_SETTINGS true  // Show the setting panel
 
 #include <nvapp/application.hpp>
 #include <nvutils/file_operations.hpp>
@@ -40,10 +38,9 @@
 #include <nvvk/compute_pipeline.hpp>
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
-#include <nvvk/descriptors.hpp>
+#include <nvvk/descriptor_heap.hpp>
 #include <nvapp/imgui_texture.hpp>
 #include <nvvk/render_target.hpp>
-#include <nvvk/helpers.hpp>
 #include <nvvk/resource_allocator.hpp>
 
 
@@ -71,16 +68,18 @@ public:
         .debugName    = "ComputeOnly",
     }));
 
-    createShaderObjectAndLayout();
+    createDescriptorHeap();
+    createShaderObject();
   }
 
   void onDetach() override
   {
     NVVK_CHECK(vkDeviceWaitIdle(m_app->getDevice()));
-    vkDestroyShaderEXT(m_app->getDevice(), m_shader, NULL);
+    vkDestroyShaderEXT(m_app->getDevice(), m_shader, nullptr);
 
-    vkDestroyPipelineLayout(m_app->getDevice(), m_pipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(m_app->getDevice(), m_descriptorSetLayout, nullptr);
+    m_alloc.destroyBuffer(m_resourceHeapBuffer);
+    m_resourceHeapBuffer = {};
+    m_heap.deinit();
 
     m_viewportImage.deinit();
     m_renderTarget.deinit();
@@ -104,21 +103,19 @@ public:
     ImGui::End();
   }
 
-  void onRender(VkCommandBuffer cmd)
+  void onRender(VkCommandBuffer cmd) override
   {
-    // Push descriptor set
-    nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(m_bindings.getWriteSet(0), m_renderTarget.getColorStorageImageInfo());
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0,
-                              static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
-
     // Bind compute shader
-    const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
-    vkCmdBindShadersEXT(cmd, 1, stages, &m_shader);
+    const std::array<VkShaderStageFlagBits, 1> stages = {VK_SHADER_STAGE_COMPUTE_BIT};
+    vkCmdBindShadersEXT(cmd, 1, stages.data(), &m_shader);
 
-    // Pushing constants
+    m_heap.cmdBindHeaps(cmd, 0, m_resourceHeapBuffer.address);
+
     m_pushConst.time = static_cast<float>(ImGui::GetTime());
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant), &m_pushConst);
+    VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                               .offset = 0,
+                               .data   = {.address = &m_pushConst, .size = sizeof(shaderio::PushConstant)}};
+    vkCmdPushDataEXT(cmd, &pushInfo);
 
     // Dispatch compute shader
     VkExtent2D group_counts = nvvk::getGroupCounts(m_renderTarget.getSize(), WORKGROUP_SIZE);
@@ -141,50 +138,44 @@ public:
   void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override
   {
     NVVK_CHECK(m_renderTarget.update(cmd, size));
+    writeOutputImageDescriptor();
     m_viewportImage.update(m_renderTarget.getUiImageView());
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // Creating the pipeline layout and shader object
-  void createShaderObjectAndLayout()
+  void createShaderObject()
   {
-    VkPushConstantRange pushConstant = {.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(shaderio::PushConstant)};
-
-    // Create the layout used by the shader
-    m_bindings.addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    NVVK_CHECK(m_bindings.createDescriptorSetLayout(m_app->getDevice(), VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
-                                                    &m_descriptorSetLayout));
-    NVVK_DBG_NAME(m_descriptorSetLayout);
-
-    NVVK_CHECK(nvvk::createPipelineLayout(m_app->getDevice(), &m_pipelineLayout, {m_descriptorSetLayout}, {pushConstant}));
-    NVVK_DBG_NAME(m_pipelineLayout);
-
-    // Compute shader description
-    VkShaderCreateInfoEXT shaderCreateInfos = {
-        .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
-        .pNext                  = NULL,
-        .flags                  = VK_SHADER_CREATE_DISPATCH_BASE_BIT_EXT,
-        .stage                  = VK_SHADER_STAGE_COMPUTE_BIT,
-        .nextStage              = 0,
-        .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-        .setLayoutCount         = 1,
-        .pSetLayouts            = &m_descriptorSetLayout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &pushConstant,
-        .pSpecializationInfo    = NULL,
-    };
+    const VkShaderCreateInfoEXT shaderCreateInfos =
 #if USE_SLANG
-    shaderCreateInfos.codeSize = compute_only_slang_sizeInBytes;
-    shaderCreateInfos.pCode    = compute_only_slang;
-    shaderCreateInfos.pName    = "computeMain";
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT, 0, compute_only_slang, "computeMain",
+                                        VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT);
 #else
-    shaderCreateInfos.codeSize = std::span(compute_only_comp_glsl).size_bytes();
-    shaderCreateInfos.pCode    = std::span(compute_only_comp_glsl).data();
-    shaderCreateInfos.pName    = "main";
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT, 0, compute_only_comp_glsl, "main",
+                                        VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT);
 #endif
 
-    // Create the shader
-    NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), 1, &shaderCreateInfos, NULL, &m_shader));
+    NVVK_CHECK(vkCreateShadersEXT(m_app->getDevice(), 1, &shaderCreateInfos, nullptr, &m_shader));
+    NVVK_DBG_NAME(m_shader);
+  }
+
+  void createDescriptorHeap()
+  {
+    NVVK_CHECK(m_heap.init(m_app->getPhysicalDevice(), m_app->getDevice()));
+
+    constexpr VkBufferUsageFlags2 heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    const VkDeviceSize            resourceBufSize = m_heap.setupResourceHeap(1, 0);  // 1 storage image, 0 buffers
+
+    constexpr VmaAllocationCreateFlags kMappedFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    NVVK_CHECK(m_alloc.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                    kMappedFlags, m_heap.getResourceHeapAlignment()));
+    NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
+  }
+
+  void writeOutputImageDescriptor()
+  {
+    assert(m_resourceHeapBuffer.buffer != VK_NULL_HANDLE);
+    NVVK_CHECK(m_heap.writeStorageImageDescriptor(shaderio::kHeapImgOutput, m_renderTarget.getColorImage(),
+                                                  m_renderTarget.getColorFormat(), VK_IMAGE_LAYOUT_GENERAL,
+                                                  m_resourceHeapBuffer.mapping));
   }
 
   void onLastHeadlessFrame() override
@@ -194,15 +185,14 @@ public:
   }
 
 private:
-  nvapp::Application*      m_app{};          // Application instance
-  nvvk::ResourceAllocator  m_alloc;          // Allocator
-  nvvk::RenderTarget       m_renderTarget;   // Offscreen color image
-  nvapp::ImTexture         m_viewportImage;  // ImGui texture displaying the rendered image
-  nvvk::DescriptorBindings m_bindings;       // Descriptor bindings helper
+  nvapp::Application*     m_app{};  // Application instance
+  nvvk::ResourceAllocator m_alloc;  // Allocator
+  nvvk::DescriptorHeap    m_heap;
+  nvvk::RenderTarget      m_renderTarget;   // Offscreen color image
+  nvapp::ImTexture        m_viewportImage;  // ImGui texture displaying the rendered image
+  nvvk::Buffer            m_resourceHeapBuffer;
 
-  VkShaderEXT           m_shader{};
-  VkPipelineLayout      m_pipelineLayout{};       // Pipeline layout
-  VkDescriptorSetLayout m_descriptorSetLayout{};  // Descriptor set layout
+  VkShaderEXT m_shader{};
 
   shaderio::PushConstant m_pushConst = {.zoom = 1.5f, .iter = 2};
 };
@@ -218,15 +208,17 @@ int main(int argc, char** argv)
   cli.add(reg);
   cli.parse(argc, argv);
 
-  // Extension feature needed.
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+  VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
 
   nvvk::ContextInitInfo vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
       .deviceExtensions =
           {
               {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjFeature},
-              {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+              {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, &heapFeatures},
+              {VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME, &untypedPtrFeatures},
           },
   };
   if(!appInfo.headless)

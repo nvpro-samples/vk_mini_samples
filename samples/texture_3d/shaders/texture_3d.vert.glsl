@@ -19,6 +19,9 @@
 #version 450
 
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_descriptor_heap : enable
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_nonuniform_qualifier : enable  // variable indexing into the heap-mapped arrays
 
 #include "shaderio.h"
 
@@ -26,10 +29,11 @@ layout(location = 0) in vec3 inPosition;
 
 layout(location = 0) out vec3 outFragPos;
 
-layout(set = 0, binding = 0) uniform FrameInfo_
+layout(descriptor_heap, scalar) uniform FrameInfo_
 {
   FrameInfo frameInfo;
-};
+}
+heapFrameInfo[];
 
 layout(push_constant) uniform PushConstant_
 {
@@ -38,7 +42,8 @@ layout(push_constant) uniform PushConstant_
 
 void main()
 {
-  vec4 pos    = pushC.transfo * vec4(inPosition.xyz, 1.0);
-  gl_Position = frameInfo.proj * frameInfo.view * vec4(pos);
-  outFragPos  = pos.xyz;
+  FrameInfo frameInfo = heapFrameInfo[pushC.bufferHeapBase + kHeapBufFrameInfo].frameInfo;
+  vec4      pos       = pushC.transfo * vec4(inPosition.xyz, 1.0);
+  gl_Position         = frameInfo.proj * frameInfo.view * vec4(pos);
+  outFragPos          = pos.xyz;
 }

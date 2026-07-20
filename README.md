@@ -45,7 +45,7 @@ Start with these foundational samples to understand the framework:
 |--------|-------------|-------|------|-------|
 | [barycentric_wireframe](samples/barycentric_wireframe) | Single-pass solid-wireframe rendering using `gl_BaryCoordNV` | ![](samples/barycentric_wireframe/docs/bary_wireframe_th.jpg) | ✅ | ✅ |
 | [descriptor_heap](samples/descriptor_heap) | VK_EXT_descriptor_heap with per-draw and bindless rendering modes | ![](samples/descriptor_heap/docs/descriptor_heap_th.jpg) | ✅ | ✅ |
-| [gltf_raytrace](samples/gltf_raytrace) | glTF scene loading with path-tracing renderer | ![](samples/gltf_raytrace/docs/gltf_th.jpg) | ❌ | ✅ |
+| [gltf_raytrace](samples/gltf_raytrace) | glTF path tracer, fully bindless with `VK_EXT_descriptor_heap` | ![](samples/gltf_raytrace/docs/gltf_th.jpg) | ❌ | ✅ |
 | [image_ktx](samples/image_ktx) | KTX image display with tonemapping post-processing | ![](samples/image_ktx/docs/image_ktx_th.jpg) | ✅ | ✅ |
 | [image_viewer](samples/image_viewer) | Image loading with zoom and pan functionality | ![](samples/image_viewer/docs/image_viewer_th.jpg) | ✅ | ✅ |
 | [line_stipple](samples/line_stipple) | Dashed line rendering with stipple pattern | ![](samples/line_stipple/docs/line_stipple_th.jpg) | ✅ | ✅ |
@@ -55,16 +55,16 @@ Start with these foundational samples to understand the framework:
 | [msaa](samples/msaa) | Hardware Multi-Sampling Anti-Aliasing demonstration | ![](samples/msaa/docs/msaa_th.jpg) | ✅ | ✅ |
 | [offscreen](samples/offscreen) | Windowless rendering with image save functionality | ![](samples/offscreen/docs/offline_th.jpg) | ✅ | ✅ |
 | [rectangle](samples/rectangle) | 2D rectangle rendering to GBuffer | ![](samples/rectangle/docs/rectangle_th.jpg) | ✅ | ✅ |
-| [simple_polygons](samples/simple_polygons) | Multi-polygon object rasterization | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | ✅ | ✅ |
+| [simple_polygons](samples/simple_polygons) | Multi-polygon rasterization; `VK_EXT_descriptor_heap` on a classic pipeline | ![](samples/simple_polygons/docs/simple_polygons_th.jpg) | ✅ | ✅ |
 | [solid_color](samples/solid_color) | Single-pixel texture creation and display | ![](samples/solid_color/docs/solid_color_th.jpg) | ✅ | ✅ |
-| [texture_3d](samples/texture_3d) | 3D texture creation and ray marching | ![](samples/texture_3d/docs/texture_3d_th.jpg) | ✅ | ✅ |
+| [texture_3d](samples/texture_3d) | 3D texture creation and ray marching; bindless `VK_EXT_descriptor_heap` | ![](samples/texture_3d/docs/texture_3d_th.jpg) | ✅ | ✅ |
 
 ### Ray Tracing & Advanced Graphics
 | Sample | Description | Image | GLSL | Slang |
 |--------|-------------|-------|------|-------|
 | [ray_query](samples/ray_query) | Inline raytracing in compute shaders | ![](samples/ray_query/docs/ray_query_th.jpg) | ✅ | ✅ |
 | [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray query | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | ✅ | ✅ |
-| [ray_trace](samples/ray_trace) | Basic ray tracer with metallic-roughness shading | ![](samples/ray_trace/docs/raytrace_th.jpg) | ❌ | ✅ |
+| [ray_trace](samples/ray_trace) | Basic ray tracer; `VK_EXT_descriptor_heap` on a ray-tracing pipeline | ![](samples/ray_trace/docs/raytrace_th.jpg) | ❌ | ✅ |
 
 More raytracing examples can be found in the  **[vk_raytracing_tutorial_KHR](https://github.com/nvpro-samples/vk_raytracing_tutorial_KHR/tree/v2?tab=readme-ov-file#complete-tutorial-series)**.
 
@@ -73,7 +73,7 @@ More raytracing examples can be found in the  **[vk_raytracing_tutorial_KHR](htt
 | Sample | Description | Image | GLSL | Slang |
 |--------|-------------|-------|------|-------|
 | [compute_multi_threaded](samples/compute_multi_threaded) | Executing compute shaders in separate threads | ![](samples/compute_multi_threaded/docs/multi_threaded_th.jpg) | ✅ | ✅ |
-| [compute_only](samples/compute_only) | Basic compute and display example | ![](samples/compute_only/docs/compute_only_th.jpg) | ✅ | ✅ |
+| [compute_only](samples/compute_only) | Basic compute and display; bindless `VK_EXT_descriptor_heap` | ![](samples/compute_only/docs/compute_only_th.jpg) | ✅ | ✅ |
 | [memory_budget](samples/memory_budget) | Dynamic memory allocation within budget constraints | ![](samples/memory_budget/docs/mem_budget_th.jpg) | ✅ | ✅ |
 | [realtime_analysis](samples/realtime_analysis) | Real-time GPU information display | ![](samples/realtime_analysis/docs/realtime_analysis_th.jpg) | ✅ | ❌ |
 

@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.22...3.31)
 project(vk_mini_samples VERSION 2.0 LANGUAGES C CXX)
 
+# Oveload the Slang version to 2026.8
+# set(Slang_VERSION "2026.11")
+
 # Add the cmake folder to the module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(NvproCore2 REQUIRED)

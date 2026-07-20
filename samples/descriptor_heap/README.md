@@ -20,6 +20,24 @@ Descriptor heaps replace descriptor pools and sets with simple GPU-visible buffe
 - **Bindless patterns**: direct heap indexing enables flexible, data-driven rendering without rebinding.
 - **Modern API alignment**: matches the resource binding model of D3D12 and Metal.
 
+## Descriptor Heaps Across the Samples
+
+This sample is the in-depth tutorial. Several other samples use descriptor heaps in a realistic context. A shader opts into the heap in one of two ways:
+
+- **Shader objects** — `VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT` on `vkCreateShadersEXT`.
+- **Pipelines** — `VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT` on the `VkPipeline`, which must then be created with `layout == VK_NULL_HANDLE`.
+
+Either way there is no descriptor set and no `VkPipelineLayout`, and push data is sent with `vkCmdPushDataEXT`.
+
+| Sample | Heap opt-in | What it shows |
+|--------|-------------|---------------|
+| **descriptor_heap** (this) | shader object | Set/binding mapping modes and direct heap access, side by side |
+| [simple_polygons](../simple_polygons/) | pipeline | Minimal heap on a **classic graphics pipeline** (no shader objects) |
+| [texture_3d](../texture_3d/) | shader object | A **mixed** image + sampler + buffer heap; compute-generated 3D texture |
+| [compute_only](../compute_only/) | shader object | Minimal bindless **compute** |
+| [ray_trace](../ray_trace/) | pipeline | Heap on a **ray-tracing pipeline**; TLAS by device address |
+| [gltf_raytrace](../gltf_raytrace/) | shader object | Full sampler + image + buffer heaps **at scale** (ray-query compute) |
+
 ## Common Setup
 
 All three modes share the same setup and frame-level flow:
@@ -95,7 +113,7 @@ Search for `#DESC_HEAP` in `descriptor_heap.cpp`:
 
 ## Converting from Legacy Descriptor Sets
 
-If you're familiar with traditional descriptor sets (e.g., the [gltf_raytrace](../gltf_raytrace/) sample), this table maps legacy concepts to descriptor heaps:
+If you're familiar with traditional descriptor sets (used by most other samples in this repository), this table maps legacy concepts to descriptor heaps:
 
 | Legacy Concept           | Example                                              | Descriptor Heap Equivalent                                                                                  |
 |--------------------------|------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|

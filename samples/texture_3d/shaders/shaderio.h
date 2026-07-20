@@ -26,14 +26,10 @@ NAMESPACE_SHADERIO_BEGIN()
 
 #define WORKGROUP_SIZE 16
 
-struct PushConstant
-{
-  float4x4 transfo;
-  float4   color;
-  float    threshold;
-  int      steps;
-  int      size;
-};
+// Descriptor-heap slot layout (local indices within each heap region).
+static const uint kHeapBufFrameInfo = 0;  // buffer region: per-frame camera UBO
+static const uint kHeapImgVolume    = 0;  // image region: 3D volume texture
+static const uint kHeapSmpVolume    = 0;  // sampler region: volume sampler
 
 struct FrameInfo
 {
@@ -43,6 +39,17 @@ struct FrameInfo
   float3   toLight;
   int      headlight;
 };
+
+struct PushConstant
+{
+  float4x4 transfo;
+  float4   color;
+  float    threshold;
+  int      steps;
+  int      size;
+  uint     bufferHeapBase;
+};
+
 
 struct PerlinSettings
 {

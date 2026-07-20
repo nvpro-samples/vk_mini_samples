@@ -41,6 +41,7 @@ list(APPEND SHADER_SLANG_FILES ${NVSHADERS_DIR}/nvshaders/tonemapper.slang)
 
 # Define required SPIR-V capabilities for ray tracing and advanced features
 set(SHADER_CAPABILITIES 
+  spvDescriptorHeapEXT
   spvGroupNonUniformBallot            # Ballot operations for subgroup functionality
   spvGroupNonUniformArithmetic        # Arithmetic operations across subgroups
   spvGroupNonUniform                  # Tonemapper uses subgroup operations
@@ -51,7 +52,7 @@ compile_slang(
      "${SHADER_OUTPUT_DIR}"
     HEADERS_VAR GENERATED_SHADER_SLANG_HEADERS
     CAPABILITIES ${SHADER_CAPABILITIES}  # List expands and is automatically joined with `+`
-    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+    EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR};-fvk-use-scalar-layout"
 )
 
 

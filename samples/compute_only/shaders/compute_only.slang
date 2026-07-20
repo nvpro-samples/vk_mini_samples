@@ -20,19 +20,19 @@
 #include "shaderio.h"
 #include "common_shaders/palette.h"
 
-[[vk::binding(0)]]
-RWTexture2D<float4> outImage;
 [[vk::push_constant]]
 ConstantBuffer<PushConstant> pushConst;
 
-
+[require(spvDescriptorHeapEXT)]
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)]
 void computeMain(uint3 threadIdx: SV_DispatchThreadID)
 {
+  RWTexture2D<float4> outImage = RWTexture2D<float4>.Handle(uint2(kHeapImgOutput, 0));
+
   float2 fragCoord = threadIdx.xy;
   uint2  iResolution;
-  outImage.GetDimensions(iResolution.x, iResolution.y);  //DispatchRaysDimensions();
+  outImage.GetDimensions(iResolution.x, iResolution.y);
 
   if(fragCoord.x >= iResolution.x || fragCoord.y >= iResolution.y)
     return;

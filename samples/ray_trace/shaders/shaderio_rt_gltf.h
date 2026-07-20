@@ -7,12 +7,9 @@
 
 NAMESPACE_SHADERIO_BEGIN()
 
-enum BindingIndex
-{
-  eTlas      = 0,
-  eOutImage  = 1,
-  eSceneDesc = 2,
-};
+// Descriptor-heap slot layout (local indices within each region).
+static const uint kHeapImgOutput    = 0;  // image region: ray-trace output (storage image)
+static const uint kHeapBufSceneInfo = 0;  // buffer region: scene description UBO
 
 // GLTF
 struct BufferView
@@ -44,11 +41,11 @@ struct RtInstanceInfo
 
 struct RtGltfSceneInfo
 {
+  SkyPhysicalParameters skyParams = {};
   float4x4              projInvMatrix;
   float4x4              viewInvMatrix;
   RtInstanceInfo*       instances = nullptr;
   RtMeshInfo*           meshes    = nullptr;
-  SkyPhysicalParameters skyParams = {};
 };
 
 
@@ -64,6 +61,9 @@ struct RtGltfPushConstant
   float    metallic  = 0.2f;
   float    roughness = 0.5f;
   uint32_t maxDepth  = 3;
+  uint     imageHeapBase;
+  uint     bufferHeapBase;
+  uint64_t tlasAddress;
 };
 
 NAMESPACE_SHADERIO_END()

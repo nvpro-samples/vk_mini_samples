@@ -26,6 +26,8 @@ NAMESPACE_SHADERIO_BEGIN()
 
 #define WORKGROUP_SIZE 32
 
+static const uint kHeapImgOutput = 0;
+
 // Shared between Host and Device
 struct PushConstant
 {

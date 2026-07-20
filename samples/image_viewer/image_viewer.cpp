@@ -29,7 +29,7 @@
 
 */
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #define VMA_IMPLEMENTATION
@@ -232,7 +232,7 @@ public:
     // --- Method B: persistently mapped buffer (resource heap is host-visible) ---
     // vkWriteResourceDescriptorsEXT writes land directly in device-visible memory;
     // no staging upload needed at all.
-    NVVK_CHECK(m_heap.writeImageDescriptor(0, m_texture->getImage(), m_texture->getFormat(),
+    NVVK_CHECK(m_heap.writeSampledImageDescriptor(0, m_texture->getImage(), m_texture->getFormat(),
                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_resourceHeapBuffer.mapping));
 
     m_app->submitAndWaitTempCmdBuffer(cmd);

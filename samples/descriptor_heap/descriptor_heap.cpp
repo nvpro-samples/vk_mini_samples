@@ -50,7 +50,7 @@
 */
 //////////////////////////////////////////////////////////////////////////
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #include <array>
@@ -68,6 +68,7 @@
 #define VMA_IMPLEMENTATION
 
 #if USE_SLANG
+#include "common/utils.hpp"
 #include "_autogen/constant_offset.slang.h"
 #include "_autogen/direct_access.slang.h"
 #include "_autogen/push_index.slang.h"
@@ -776,28 +777,13 @@ private:
                          const char*                                    vertEntry = "main",
                          const char*                                    fragEntry = "main")
   {
-    VkShaderCreateFlagsEXT flags = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT | VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT;
-
-    std::array<VkShaderCreateInfoEXT, 2> createInfos{};
-    createInfos[0].sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
-    createInfos[0].pNext     = mappingInfo;
-    createInfos[0].flags     = flags;
-    createInfos[0].stage     = VK_SHADER_STAGE_VERTEX_BIT;
-    createInfos[0].nextStage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    createInfos[0].codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT;
-    createInfos[0].codeSize  = sizeof(vertSpirv);
-    createInfos[0].pCode     = vertSpirv;
-    createInfos[0].pName     = vertEntry;
-
-    createInfos[1].sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
-    createInfos[1].pNext     = mappingInfo;
-    createInfos[1].flags     = flags;
-    createInfos[1].stage     = VK_SHADER_STAGE_FRAGMENT_BIT;
-    createInfos[1].nextStage = 0;
-    createInfos[1].codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT;
-    createInfos[1].codeSize  = sizeof(fragSpirv);
-    createInfos[1].pCode     = fragSpirv;
-    createInfos[1].pName     = fragEntry;
+    const VkShaderCreateFlagsEXT flags{VK_SHADER_CREATE_LINK_STAGE_BIT_EXT | VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT};
+    std::array<VkShaderCreateInfoEXT, 2> createInfos{
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, vertSpirv, vertEntry, flags),
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, 0, fragSpirv, fragEntry, flags),
+    };
+    createInfos[0].pNext = mappingInfo;
+    createInfos[1].pNext = mappingInfo;
 
     NVVK_CHECK(vkCreateShadersEXT(m_device, 2, createInfos.data(), nullptr, shaders.data()));
   }
@@ -948,12 +934,8 @@ int main(int argc, char** argv)
 
   // Vulkan context setup
   VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
-  heapFeatures.descriptorHeap = VK_TRUE;
-
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-
   VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
-  untypedPtrFeatures.shaderUntypedPointers = VK_TRUE;
 
   nvvk::ContextInitInfo vkSetup = {.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
                                    .deviceExtensions   = {

@@ -31,7 +31,7 @@
 #include <array>
 #include <vulkan/vulkan_core.h>
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #define VMA_IMPLEMENTATION

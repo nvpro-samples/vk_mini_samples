@@ -16,9 +16,12 @@
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
-#version 450
+#version 460
 
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_descriptor_heap : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
 #include "shaderio.h"
 
@@ -28,11 +31,12 @@ layout(location = 1) in vec3 inNrm;
 layout(location = 0) out vec3 outFragPos;
 layout(location = 1) out vec3 outFragNrm;
 
-layout(set = 0, binding = 0) uniform FrameInfo_
+// Bindless: descriptor-heap UBO accessed by local buffer index (heap slot 0 = FrameInfo).
+layout(descriptor_heap, scalar) uniform FrameInfo_
 {
-  FrameInfo frameInfo;
-};
-
+  FrameInfo info;
+}
+heapFrameInfo[];
 layout(push_constant) uniform PushConstant_
 {
   PushConstant pushC;
@@ -40,6 +44,8 @@ layout(push_constant) uniform PushConstant_
 
 void main()
 {
+  FrameInfo frameInfo = heapFrameInfo[kHeapBufFrameInfo].info;
+
   vec4 pos    = pushC.transfo * vec4(inPosition.xyz, 1.0);
   gl_Position = frameInfo.proj * frameInfo.view * vec4(pos);
 

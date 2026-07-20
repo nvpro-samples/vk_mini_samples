@@ -35,7 +35,7 @@
 
 */
 //////////////////////////////////////////////////////////////////////////
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #include <imgui/imgui.h>
@@ -270,7 +270,7 @@ public:
 
     m_heapSamplerIdx = m_heap.acquireSamplerDescriptor(DEFAULT_VkSamplerCreateInfo, m_samplerHeapBuffer.mapping);
     assert(m_heapSamplerIdx != ~0u);
-    NVVK_CHECK(m_heap.writeImageDescriptor(0, m_texture->m_image, m_resourceHeapBuffer.mapping));
+    NVVK_CHECK(m_heap.writeSampledImageDescriptor(0, m_texture->m_image, m_resourceHeapBuffer.mapping));
 
 
     createScene();

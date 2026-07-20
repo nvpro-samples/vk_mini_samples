@@ -20,9 +20,17 @@
 //////////////////////////////////////////////////////////////////////////
 /*
 
-    This shows the rendering of a GLTF scene.
-    It uses the ray tracing extension to render the scene.
-    It also used many of the helper classes to create the scene, the ray tracing structures and the rendering.
+    This shows the rendering of a glTF scene with a ray-query path tracer.
+
+    Resource binding is fully bindless via nvvk::DescriptorHeap (VK_EXT_descriptor_heap): a sampler
+    heap (one shared linear sampler) and a host-visible resource heap holding the output storage
+    image, the HDR environment, the glTF textures, and the environment importance-sampling table.
+    The compute shader is a VK_EXT_shader_object created with VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT
+    and reads every resource via <Resource>.Handle(...); per-frame data is delivered with
+    vkCmdPushDataEXT. The TLAS is passed by device address in the push constant and turned into an
+    acceleration structure in-shader (RaytracingAccelerationStructure(address))
+
+    It also uses many helper classes to create the scene, the ray tracing structures and the rendering.
 
 */
 //////////////////////////////////////////////////////////////////////////
@@ -38,7 +46,6 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 
-#include <array>
 #include <string>
 #include <vector>
 
@@ -77,7 +84,7 @@
 #include <nvvk/check_error.hpp>
 #include <nvvk/context.hpp>
 #include <nvvk/debug_util.hpp>
-#include <nvvk/descriptors.hpp>
+#include <nvvk/descriptor_heap.hpp>
 #include <nvvk/hdr_ibl.hpp>
 #include <nvvk/helpers.hpp>
 #include <nvvk/ray_picker.hpp>
@@ -108,18 +115,22 @@ class GltfRaytrace : public nvapp::IAppElement
     eImgRendered
   };
 
+  // The per-region heap slot layout (kHeapImg* / kHeapBuf*) is shared with the shader in shaderio.h.
+  // Only the region bases (imageShaderIndexBase / bufferShaderIndexBase) are pushed; the shader adds
+  // the slot constants to form the absolute heap index. By default the TLAS is NOT in the heap - it is
+  // passed by device address and converted to an acceleration structure in the shader.
+  static constexpr uint32_t kMaxTextures    = 500;  // Reserved texture slots (matches legacy reservation)
+  static constexpr uint32_t kImageHeapSize  = shaderio::kHeapImgTexturesStart + kMaxTextures;
+  static constexpr uint32_t kBufferHeapSize = 1;  // env alias-table
+
 public:
   GltfRaytrace()           = default;
   ~GltfRaytrace() override = default;
 
   void onAttach(nvapp::Application* app) override
   {
-    VkDevice         device         = app->getDevice();
-    VkPhysicalDevice physicalDevice = app->getPhysicalDevice();
-
-    m_app                        = app;
-    m_device                     = device;
-    const uint32_t c_queue_index = app->getQueue(1).familyIndex;
+    m_app    = app;
+    m_device = app->getDevice();
 
     // Create the Vulkan allocator (VMA)
     m_allocator.init({
@@ -169,6 +180,7 @@ public:
           {CompilerOptionName::DebugInformation, {CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_STANDARD}});
       m_slangCompiler.addOption({CompilerOptionName::Optimization, {CompilerOptionValueKind::Int, SLANG_OPTIMIZATION_LEVEL_DEFAULT}});
       m_slangCompiler.addCapability("spvRayQueryKHR");
+      m_slangCompiler.addCapability("spvDescriptorHeapEXT");  // Bindless via VK_EXT_descriptor_heap
 
 #if defined(AFTERMATH_AVAILABLE)
       // This aftermath callback is used to report the shader hash (Spirv) to the Aftermath library.
@@ -179,13 +191,16 @@ public:
 #endif
     }
 
+    // Bindless descriptor heap: created before any descriptor writes (HDR / scene / textures).
+    createDescriptorHeap();
+
     // Create resources
     createHDR();
-    createCompPipelines();
     createScene();
     createVkBuffers();
     compileShader();
     updateTextures();
+    updateSamplers();
   }
 
   void onDetach() override
@@ -198,9 +213,10 @@ public:
   {
     NVVK_CHECK(m_renderTarget.update(cmd, size));
     // The image views are recreated on resize: refresh the ImGui texture that
-    // displays the tonemapped image in the viewport.
+    // displays the tonemapped image, and the output storage-image heap slot.
     m_viewportImage.update(m_renderTarget.getUiImageView(eImgTonemapped));
-    resetFrame();  // Reset frame to restart the rendering
+    writeOutputImageDescriptor();  // The render target image view changed; refresh its heap slot
+    resetFrame();                  // Reset frame to restart the rendering
   }
 
   void onUIRender() override
@@ -313,13 +329,13 @@ public:
     vkCmdUpdateBuffer(cmd, m_bCameraInfo.buffer, 0, sizeof(shaderio::CameraInfo), &finfo);
     vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(shaderio::SkyPhysicalParameters), &m_skyParams);  // Update the sky
 
-    // Update the push constant: the camera information, sky parameters and the scene to render
+    // Update the push constant: the camera information, sky parameters and the scene to render.
+    // (The heap region bases / sampler index were set once in createDescriptorHeap.)
     m_pushConst.frame      = m_frame;
     m_pushConst.cameraInfo = (shaderio::CameraInfo*)m_bCameraInfo.address;
     m_pushConst.skyParams  = (shaderio::SkyPhysicalParameters*)m_bSkyParams.address;
     m_pushConst.gltfScene  = (shaderio::GltfScene*)m_sceneVk.sceneDesc().address;
     m_pushConst.mouseCoord = nvapp::ElementDbgPrintf::getMouseCoord();  // Use for debugging: printf in shader
-    vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant), &m_pushConst);
 
     // Make sure buffer is ready to be used
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
@@ -328,14 +344,14 @@ public:
     VkShaderStageFlagBits stage = VK_SHADER_STAGE_COMPUTE_BIT;
     vkCmdBindShadersEXT(cmd, 1, &stage, &m_shader);
 
-    // Bind the descriptor set: TLAS, output image, textures, etc. (Set: 0)
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, m_descriptorPack[0].getSetPtr(), 0, nullptr);
+    // Bind the bindless heaps (sampler + resource); the shader resolves everything via .Handle()
+    m_heap.cmdBindHeaps(cmd, m_samplerHeapBuffer.address, m_resourceHeapBuffer.address);
 
-    // Set the Descriptor for HDR (Set: 2)
-    VkDescriptorSet hdrDescSet = m_hdrIbl.getDescriptorSet();
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 2, 1, &hdrDescSet, 0, nullptr);
-
-    pushDescriptorSet(cmd);
+    // Push the constant data straight from SPIR-V layout (no pipeline layout with descriptor heap)
+    VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                               .offset = 0,
+                               .data   = {.address = &m_pushConst, .size = sizeof(shaderio::PushConstant)}};
+    vkCmdPushDataEXT(cmd, &pushInfo);
 
     // Dispatch the raytracing shader
     const VkExtent2D& size      = m_app->getViewportSize();
@@ -384,6 +400,7 @@ public:
       g_sceneFilename = filename;
       createScene();
       updateTextures();
+      updateSamplers();
     }
     else if(nvutils::extensionMatches(filename, ".hdr"))
     {
@@ -454,12 +471,15 @@ private:
         VkCommandBuffer cmd = m_app->createTempCmdBuffer();
         m_sceneRtx.cmdCreateBuildTopLevelAccelerationStructure(cmd, staging, m_scene);
         staging.cmdUploadAppended(cmd);
-        m_app->submitAndWaitTempCmdBuffer(cmd);  // Submit and wait for the command buffer/nvpro_core/nvvk/shaders/compile.bat
+        m_app->submitAndWaitTempCmdBuffer(cmd);  // Submit and wait for the command buffer
       }
 
 
       staging.deinit();
     }
+
+    // The TLAS was (re)built: refresh its device address used by the shader.
+    m_pushConst.tlasAddress = m_sceneRtx.tlasAccel().address;
 
     nvvkgltf::addSceneCamerasToWidget(g_cameraManip, filename, m_scene.getRenderCameras(), m_scene.getSceneBounds());  // Set camera from scene
 
@@ -489,65 +509,80 @@ private:
   }
 
   //--------------------------------------------------------------------------------------------------
-  // Creating the pipeline: shader ...
+  // Creating the bindless descriptor heap (VK_EXT_descriptor_heap). Both heaps are host-visible and
+  // persistently mapped (Method B), so descriptors are written directly into the mapping:
+  // - The sampler heap holds a default sampler (slot 0) plus one slot per glTF scene sampler.
+  // - The resource heap is sized for (outImage + HDR + kMaxTextures) images and 1 buffer (the env
+  //   importance-sampling table).
+  // Only the region bases + sampler index are stored in the push constant here.
   //
-  void createCompPipelines()
+  void createDescriptorHeap()
   {
-    // Reserve 500 textures
-    VkPhysicalDeviceProperties deviceProperties;
-    vkGetPhysicalDeviceProperties(m_app->getPhysicalDevice(), &deviceProperties);
-    uint32_t maxTextures = std::min(500U, deviceProperties.limits.maxDescriptorSetSampledImages - 1);
+    nvutils::ScopedTimer st(__FUNCTION__);
 
-    // 0: Descriptor SET: all textures
-    nvvk::DescriptorBindings bindings0;
-    bindings0.addBinding(B_textures, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, maxTextures, VK_SHADER_STAGE_ALL, nullptr,
-                         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT
-                             | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
-    NVVK_CHECK(m_descriptorPack[0].init(bindings0, m_device, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-                                        VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT |  // allows descriptor sets to be updated after they have been bound to a command buffer
-                                            VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT));  // individual descriptor sets can be freed from the descriptor pool
-    NVVK_DBG_NAME(m_descriptorPack[0].getLayout());
-    NVVK_DBG_NAME(m_descriptorPack[0].getPool());
-    NVVK_DBG_NAME(m_descriptorPack[0].getSet(0));
+    NVVK_CHECK(m_heap.init(m_app->getPhysicalDevice(), m_app->getDevice()));
 
-    // 1: Descriptor PUSH: top level acceleration structure and the output image
-    nvvk::DescriptorBindings bindings1;
-    bindings1.addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-    bindings1.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-    NVVK_CHECK(m_descriptorPack[1].init(bindings1, m_device, 0,  // 0 == Don't allocate pool or sets
-                                        VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
-    NVVK_DBG_NAME(m_descriptorPack[1].getLayout());
+    constexpr VkBufferUsageFlags2 heapUsage = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    const VkDeviceSize samplerBufSize  = m_heap.setupSamplerHeap(shaderio::kHeapSmpSceneStart + shaderio::kMaxSamplers);
+    const VkDeviceSize resourceBufSize = m_heap.setupResourceHeap(kImageHeapSize, kBufferHeapSize);
 
-    // Creating the pipeline layout
-    const VkPushConstantRange pushConstant{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(shaderio::PushConstant)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_pipelineLayout,
-                                          {m_descriptorPack[0].getLayout(), m_descriptorPack[1].getLayout(),
-                                           m_hdrIbl.getDescriptorSetLayout()},  //
-                                          {pushConstant}));
-    NVVK_DBG_NAME(m_pipelineLayout);
+    // Both heaps are host-visible and persistently mapped (Method B): descriptors are written
+    // directly into the mapping, so no staging upload or command submission is needed.
+    constexpr VmaAllocationCreateFlags kMappedFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    NVVK_CHECK(m_allocator.createBuffer(m_samplerHeapBuffer, samplerBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                        kMappedFlags, m_heap.getSamplerHeapAlignment()));
+    NVVK_DBG_NAME(m_samplerHeapBuffer.buffer);
+    NVVK_CHECK(m_allocator.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                        kMappedFlags, m_heap.getResourceHeapAlignment()));
+    NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
+
+    // Default sampler (slot kHeapSmpDefault): linear, repeat wrapping. Used by the HDR/env map, the
+    // output image, and any glTF texture without an explicit sampler. Per-scene samplers are written
+    // at slots kHeapSmpSceneStart + i by updateSamplers() when a scene is loaded.
+    VkSamplerCreateInfo samplerCI{
+        .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter    = VK_FILTER_LINEAR,
+        .minFilter    = VK_FILTER_LINEAR,
+        .mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .maxLod       = VK_LOD_CLAMP_NONE,
+    };
+    NVVK_CHECK(m_heap.writeSamplerDescriptor(shaderio::kHeapSmpDefault, samplerCI, m_samplerHeapBuffer.mapping));
+
+    // Push only the region bases; the shader adds the shared slot constants (shaderio::kHeap*).
+    // The sampler heap is 0-based, so a sampler slot index is already its shader handle.
+    m_pushConst.imageHeapBase   = m_heap.imageShaderIndexBase();
+    m_pushConst.bufferHeapBase  = m_heap.bufferShaderIndexBase();
+    m_pushConst.samplerHeapBase = 0;
+
+    // The render-target image already exists (G-Buffer created in onAttach); write its slot.
+    writeOutputImageDescriptor();
+  }
+
+  // Write/refresh the path-trace output (storage image) descriptor in the resource heap.
+  void writeOutputImageDescriptor()
+  {
+    if(m_resourceHeapBuffer.mapping == nullptr)
+      return;
+    // Render target color image is created in onResize; skip until it exists.
+    if(m_renderTarget.getSize().width == 0 || m_renderTarget.getSize().height == 0)
+      return;
+    NVVK_CHECK(m_heap.writeStorageImageDescriptor(shaderio::kHeapImgOutput, m_renderTarget.getColorImage(eImgRendered),
+                                                  m_renderTarget.getColorFormat(eImgRendered), VK_IMAGE_LAYOUT_GENERAL,
+                                                  m_resourceHeapBuffer.mapping));
   }
 
   void compileShader()
   {
     nvutils::ScopedTimer st(__FUNCTION__);
 
-    VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant)};
-
-    std::array<VkDescriptorSetLayout, 3> descriptorSetLayouts{m_descriptorPack[0].getLayout(), m_descriptorPack[1].getLayout(),
-                                                              m_hdrIbl.getDescriptorSetLayout()};
-
-    VkShaderCreateInfoEXT shaderInfo{
-        .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
-        .stage                  = VK_SHADER_STAGE_COMPUTE_BIT,
-        .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-        .codeSize               = gltf_pathtrace_slang_sizeInBytes,
-        .pCode                  = gltf_pathtrace_slang,
-        .pName                  = "computeMain",
-        .setLayoutCount         = uint32_t(descriptorSetLayouts.size()),
-        .pSetLayouts            = descriptorSetLayouts.data(),
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges    = &pushConstant,
-    };
+    // Bindless: the shader sources its descriptors from the bound heap, so there are no descriptor
+    // set layouts and no push-constant range here (VUID-VkShaderCreateInfoEXT-flags-11290/11293).
+    // The push-constant layout is read directly from the SPIR-V.
+    VkShaderCreateInfoEXT shaderInfo = nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT, 0, gltf_pathtrace_slang,
+                                                                       "computeMain", VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT);
     if(m_slangCompiler.compileFile("gltf_pathtrace.slang"))
     {
       shaderInfo.codeSize = m_slangCompiler.getSpirvSize();
@@ -562,28 +597,33 @@ private:
     NVVK_DBG_NAME(m_shader);
   }
 
-
-  // Pushing the information to the shader: acceleration structure and output image
-  void pushDescriptorSet(VkCommandBuffer cmd)
-  {
-    nvvk::WriteSetContainer write{};
-    write.append(m_descriptorPack[1].makeWrite(B_tlas), m_sceneRtx.tlas());
-    write.append(m_descriptorPack[1].makeWrite(B_outImage), m_renderTarget.getColorAttachmentView(eImgRendered), VK_IMAGE_LAYOUT_GENERAL);
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 1, write.size(), write.data());
-  }
-
-  // Updating all textures in the descriptor set
+  // Write all scene textures into the resource heap (sampled images), starting at kHeapImgTexturesStart.
   void updateTextures()
   {
-    // Now do the textures
-    nvvk::WriteSetContainer write{};
-    VkWriteDescriptorSet    allTextures = m_descriptorPack[0].makeWrite(B_textures);
-    allTextures.dstSet                  = m_descriptorPack[0].getSet(0);
-    allTextures.descriptorCount         = m_sceneVk.nbTextures();
-    if(allTextures.descriptorCount == 0)
-      return;
-    write.append(allTextures, m_sceneVk.textures().data());
-    vkUpdateDescriptorSets(m_device, write.size(), write.data(), 0, nullptr);
+    const uint32_t numTextures = m_sceneVk.nbTextures();
+    assert(numTextures <= kMaxTextures && "Increase kMaxTextures to fit this scene");
+    for(uint32_t i = 0; i < numTextures; i++)
+    {
+      NVVK_CHECK(m_heap.writeSampledImageDescriptor(shaderio::kHeapImgTexturesStart + i, m_sceneVk.textures()[i],
+                                             m_resourceHeapBuffer.mapping));
+    }
+  }
+
+  // Write the scene's glTF samplers into the sampler heap, starting at kHeapSmpSceneStart. glTF
+  // sampler `i` lands at slot kHeapSmpSceneStart + i, so the shader maps a texture's samplerIndex
+  // straight to a heap slot (see getSceneSampler in gltf_pathtrace.slang). Textures with no explicit
+  // sampler (samplerIndex < 0) fall back to the default sampler at kHeapSmpDefault.
+  void updateSamplers()
+  {
+    const tinygltf::Model& model       = m_scene.getModel();
+    const uint32_t         numSamplers = static_cast<uint32_t>(model.samplers.size());
+    assert(numSamplers <= shaderio::kMaxSamplers && "Increase kMaxSamplers to fit this scene");
+    const uint32_t count = std::min(numSamplers, shaderio::kMaxSamplers);
+    for(uint32_t i = 0; i < count; i++)
+    {
+      VkSamplerCreateInfo samplerCI = nvvkgltf::getVkSamplerCreateInfo(model, static_cast<int>(i));
+      NVVK_CHECK(m_heap.writeSamplerDescriptor(shaderio::kHeapSmpSceneStart + i, samplerCI, m_samplerHeapBuffer.mapping));
+    }
   }
 
 
@@ -633,6 +673,12 @@ private:
     uploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
     uploader.deinit();
+
+    // Expose the HDR environment (sampled image) and its importance-sampling alias table (SSBO)
+    // through the descriptor heap.
+    NVVK_CHECK(m_heap.writeSampledImageDescriptor(shaderio::kHeapImgHdr, m_hdrIbl.getHdrImage(), m_resourceHeapBuffer.mapping));
+    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufEnvSampling, m_hdrIbl.getEnvAccel(),
+                                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, m_resourceHeapBuffer.mapping));
   }
 
 
@@ -641,11 +687,12 @@ private:
     m_allocator.destroyBuffer(m_bCameraInfo);
     m_allocator.destroyBuffer(m_bSkyParams);
 
-    vkDestroyPipeline(m_device, m_pipeline, nullptr);
-    vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    m_descriptorPack[0].deinit();
-    m_descriptorPack[1].deinit();
     vkDestroyShaderEXT(m_device, m_shader, nullptr);
+
+    // Descriptor heap teardown (m_heap.deinit() destroys all samplers written into the heap)
+    m_allocator.destroyBuffer(m_samplerHeapBuffer);
+    m_allocator.destroyBuffer(m_resourceHeapBuffer);
+    m_heap.deinit();
 
     m_tonemapper.deinit();
     m_viewportImage.deinit();
@@ -691,10 +738,10 @@ private:
   nvshaders::Tonemapper           m_tonemapper{};
   shaderio::TonemapperData        m_tonemapperData;
 
-  // Pipeline
-  nvvk::DescriptorPack m_descriptorPack[2]{};  // 0 = textures, 1 = push-only
-  VkPipeline           m_pipeline{};
-  VkPipelineLayout     m_pipelineLayout{};
+  // Bindless descriptor heap (replaces descriptor set layouts + push-constant ranges)
+  nvvk::DescriptorHeap m_heap{};
+  nvvk::Buffer         m_samplerHeapBuffer{};   // host-visible sampler heap (written directly)
+  nvvk::Buffer         m_resourceHeapBuffer{};  // host-visible resource heap (written directly)
 
   shaderio::PushConstant m_pushConst{};  // Information sent to the shader
   int                    m_frame{0};
@@ -707,6 +754,9 @@ private:
 ///
 auto main(int argc, char** argv) -> int
 {
+  // Flush every log line to the file so a crash doesn't lose the most recent (and most relevant) output.
+  nvutils::Logger::getInstance().setFileFlush(true);
+
   nvapp::ApplicationCreateInfo appInfo;
 
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
@@ -727,17 +777,22 @@ auto main(int argc, char** argv) -> int
   VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR computeDerivativesFeature{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR};
   VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  // Bindless descriptor heap (resources/samplers accessed via .Handle in the shader) and the
+  // untyped pointers it relies on. Push descriptors are no longer needed.
+  VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+  VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
 
   nvvk::ContextInitInfo vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
+      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},  // still used by the tonemapper compute pass
                              {VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME},
-                             {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME},
                              {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature},
                              {VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature},
                              {VK_KHR_RAY_QUERY_EXTENSION_NAME, &rayqueryFeature},
                              {VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, &computeDerivativesFeature},
-                             {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures}},
+                             {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures},
+                             {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, &heapFeatures},
+                             {VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME, &untypedPtrFeatures}},
 
       .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT},
   };

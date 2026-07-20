@@ -16,15 +16,15 @@ This sample demonstrates a minimalist Vulkan implementation utilizing a compute 
 
 ### Vulkan Extensions
 
-To streamline the implementation, two critical Vulkan extensions are employed:
+To streamline the implementation, two modern Vulkan extensions are employed:
 
-1. [VK_EXT_SHADER_OBJECT_EXTENSION_NAME](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_EXT_shader_object.html)
+1. [VK_EXT_shader_object](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_shader_object.html)
    - Purpose: Eliminates the need for explicit Vulkan Pipeline creation
    - Benefit: Reduces boilerplate code and simplifies shader management
 
-2. [VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_push_descriptor.html)
-   - Purpose: Simplifies descriptor set creation and usage
-   - Benefit: Enhances performance by reducing descriptor set allocation overhead
+2. [VK_EXT_descriptor_heap](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_descriptor_heap.html)
+   - Purpose: Replaces descriptor pools/sets with a GPU-visible heap buffer; the compute shader reaches its output image by heap slot
+   - Benefit: Bindless access with no descriptor set allocation — see the [`descriptor_heap`](../descriptor_heap/) sample for the concept in depth
 
 ### Rendering Process
 

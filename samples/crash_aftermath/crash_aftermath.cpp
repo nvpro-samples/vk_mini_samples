@@ -78,7 +78,7 @@ Note: if AFTERMATH_AVAILABLE is not defined, this means the path to NSight After
 #include <nvapp/imgui_texture.hpp>
 
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};

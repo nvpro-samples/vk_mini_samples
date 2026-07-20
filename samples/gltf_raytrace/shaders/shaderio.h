@@ -25,13 +25,25 @@
 #include "nvshaders/sky_io.h.slang"
 #include "nvshaders/gltf_scene_io.h.slang"
 
+
 NAMESPACE_SHADERIO_BEGIN()
 
 #define WORKGROUP_SIZE 32
 
-#define B_tlas 0
-#define B_outImage 1
-#define B_textures 2
+// Descriptor-heap slot layout, shared by the host (descriptor writes) and the shader (handle
+// construction). The resource heap is laid out images first, then buffers; the absolute heap index
+// is `regionBase + slot`, where the region bases are passed in the push constant.
+static const uint kHeapImgOutput        = 0;  // image region: path-trace output (storage image / RWTexture2D)
+static const uint kHeapImgHdr           = 1;  // image region: HDR environment (sampled image)
+static const uint kHeapImgTexturesStart = 2;  // image region: first glTF texture (sampled image)
+static const uint kHeapBufEnvSampling   = 0;  // buffer region: HDR importance-sampling alias table (SSBO)
+
+// Sampler-heap slot layout. Slot 0 is the default sampler (used for the HDR/env map, the output
+// image, and any texture whose glTF sampler is unspecified). glTF sampler `s` maps to slot
+// `kHeapSmpSceneStart + s`, giving the shader a trivial `samplerIndex -> slot` mapping.
+static const uint kHeapSmpDefault    = 0;   // default sampler (linear, repeat)
+static const uint kHeapSmpSceneStart = 1;   // first glTF scene sampler
+static const uint kMaxSamplers       = 16;  // reserved scene-sampler slots
 
 // Camera info
 struct CameraInfo
@@ -40,7 +52,7 @@ struct CameraInfo
   float4x4 viewInv;
 };
 
-// Push constant
+// All constants that are passed to the shader via push constants.
 struct PushConstant
 {
   int                    maxDepth              = 5;       // Maximum depth of the ray
@@ -49,9 +61,13 @@ struct PushConstant
   int                    maxSamples            = 1;       // Maximum samples
   float2                 mouseCoord            = {0, 0};  // Mouse coordinates (use for debug)
   int                    environmentType       = 0;       // Environment type; 0: sky, 1: environment map
+  uint                   imageHeapBase         = 0;       // Resource heap: base index of the image region
+  uint                   bufferHeapBase        = 0;       // Resource heap: base index of the buffer region
+  uint                   samplerHeapBase       = 0;       // Sampler heap: base index of the sampler region
+  uint64_t               tlasAddress           = 0;       // TLAS device address (converted to an AS in-shader)
   CameraInfo*            cameraInfo;                      // Camera info
   SkyPhysicalParameters* skyParams;                       // Sky physical parameters
-  GltfScene*             gltfScene;                       // GLTF sceneF
+  GltfScene*             gltfScene;                       // GLTF scene
 };
 
 

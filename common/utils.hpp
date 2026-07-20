@@ -61,4 +61,21 @@ inline static VkShaderModuleCreateInfo getShaderModuleCreateInfo(const std::span
   };
 }
 
+// Helper function to create a VkShaderCreateInfoEXT
+inline auto makeShaderCreateInfo(VkShaderStageFlagBits     stage,  // shader stage
+                                 VkShaderStageFlags        next,   // next shader stage, 0 means last stage
+                                 std::span<const uint32_t> code,   // shader code
+                                 const char*               name,   // shader entry point name
+                                 VkShaderCreateFlagsEXT flags)  // e.g. VK_SHADER_CREATE_LINK_STAGE_BIT_EXT | VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT
+{
+  return VkShaderCreateInfoEXT{.sType     = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
+                               .flags     = flags,
+                               .stage     = stage,
+                               .nextStage = next,
+                               .codeType  = VK_SHADER_CODE_TYPE_SPIRV_EXT,
+                               .codeSize  = code.size_bytes(),
+                               .pCode     = code.data(),
+                               .pName     = name};
+}
+
 }  // namespace nvsamples

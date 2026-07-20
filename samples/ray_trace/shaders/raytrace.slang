@@ -28,13 +28,21 @@
 #define MISS_DEPTH 1000
 #define INFINITE 1e32
 
-// Bindings
-// clang-format off
-[[vk::push_constant]]                       ConstantBuffer<RtGltfPushConstant> pushConst;
-[[vk::binding(BindingIndex::eTlas)]]        RaytracingAccelerationStructure topLevelAS;
-[[vk::binding(BindingIndex::eOutImage)]]    RWTexture2D<float4> outImage;
-[[vk::binding(BindingIndex::eSceneDesc)]]   ConstantBuffer<RtGltfSceneInfo> sceneInfo;
-// clang-format on
+[[vk::push_constant]]
+ConstantBuffer<RtGltfPushConstant> pushConst;
+
+RWTexture2D<float4> getOutImage()
+{
+  return RWTexture2D<float4>.Handle(uint2(pushConst.imageHeapBase + kHeapImgOutput, 0));
+}
+RaytracingAccelerationStructure getTLAS()
+{
+  return RaytracingAccelerationStructure(pushConst.tlasAddress);
+}
+RtGltfSceneInfo getSceneInfo()
+{
+  return *ConstantBuffer<RtGltfSceneInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufSceneInfo, 0));
+}
 
 // Raytracing Payload
 struct HitPayload
@@ -150,7 +158,7 @@ bool shadowRay(float3 P, float3 L)
   payload.color  = float3(0, 0, 0);
   payload.weight = 1;
 
-  TraceRay(topLevelAS, rayFlags, 0xFF, 0, 0, 0, ray, payload);
+  TraceRay(getTLAS(), rayFlags, 0xFF, 0, 0, 0, ray, payload);
   bool visible = (payload.depth == MISS_DEPTH);
 
   return visible;
@@ -159,9 +167,12 @@ bool shadowRay(float3 P, float3 L)
 //-----------------------------------------------------------------------
 // RAY GENERATION
 //-----------------------------------------------------------------------
+[require(spvDescriptorHeapEXT)]
 [shader("raygeneration")]
 void rgenMain()
 {
+  RtGltfSceneInfo sceneInfo = getSceneInfo();
+
   float2 launchID   = (float2)DispatchRaysIndex().xy;
   float2 launchSize = (float2)DispatchRaysDimensions().xy;
 
@@ -182,27 +193,26 @@ void rgenMain()
   payload.weight = 1;
   payload.depth  = 0;
 
-  TraceRay(topLevelAS, rayFlags, 0xff, 0, 0, 0, ray, payload);
+  TraceRay(getTLAS(), rayFlags, 0xff, 0, 0, 0, ray, payload);
   float3 color = payload.color;
 
   // -Wpayload-access-perf
   float weight = payload.weight;
   int   depth  = payload.depth;
 
-  // Tonemap
-  // if (sceneInfo.tonemapper.isActive == 1)
-  //     color = applyTonemap(sceneInfo.tonemapper, color, launchID / launchSize);
-
-  outImage[int2(launchID)] = float4(color, 1.0);
+  getOutImage() [int2(launchID)] = float4(color, 1.0);
 }
 
 
 //-----------------------------------------------------------------------
 // CLOSEST HIT
 //-----------------------------------------------------------------------
+[require(spvDescriptorHeapEXT)]
 [shader("closesthit")]
 void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
+  RtGltfSceneInfo sceneInfo = getSceneInfo();
+
   float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
 
   uint instanceID  = InstanceIndex();
@@ -257,17 +267,20 @@ void rchitMain(inout HitPayload payload, in BuiltInTriangleIntersectionAttribute
   ray.Direction = refl_dir;
   ray.TMin      = 0.001;
   ray.TMax      = INFINITE;
-  TraceRay(topLevelAS, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
+  TraceRay(getTLAS(), RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
 }
 
 
 //-----------------------------------------------------------------------
 // MISS
 //-----------------------------------------------------------------------
+[require(spvDescriptorHeapEXT)]
 [shader("miss")]
 void rmissMain(inout HitPayload payload)
 {
-  float3 skyColor = evalPhysicalSky(sceneInfo.skyParams, WorldRayDirection());
+  SkyPhysicalParameters skyP = {};
+  skyP                       = getSceneInfo().skyParams;
+  float3 skyColor            = evalPhysicalSky(skyP, WorldRayDirection());
 
   payload.color += skyColor * payload.weight;
   payload.depth = MISS_DEPTH;  // Stop

@@ -21,7 +21,7 @@
   This sample shows how a texture3d can be made on the CPU or the GPU.
 */
 
-#define USE_SLANG 1
+#define USE_SLANG true
 #define SHADER_LANGUAGE_STR (USE_SLANG ? "Slang" : "GLSL")
 
 #define VMA_IMPLEMENTATION
@@ -37,6 +37,7 @@
 
 #include "shaders/shaderio.h"  // Shared between host and device
 
+#include "common/utils.hpp"
 #include "_autogen/perlin.comp.glsl.h"
 #include "_autogen/perlin.slang.h"
 #include "_autogen/texture_3d.frag.glsl.h"
@@ -64,18 +65,15 @@
 #include <nvvk/context.hpp>                // Vulkan context creation
 #include <nvvk/debug_util.hpp>             // Debug names and more
 #include <nvvk/default_structs.hpp>        // Default Vulkan structure
-#include <nvvk/descriptors.hpp>            // Help creation descriptor sets
+#include <nvvk/descriptor_heap.hpp>        // Bindless descriptor heap (Method B)
 #include <nvvk/formats.hpp>                // Find format, etc.
 #include <nvvk/render_target.hpp>          // Rendering in a render target
-#include <nvvk/graphics_pipeline.hpp>      // Helper to create a graphic pipeline
+#include <nvvk/graphics_pipeline.hpp>      // Dynamic graphics state
 #include <nvvk/helpers.hpp>                // Find format
 #include <nvvk/resource_allocator.hpp>     // The GPU resource allocator
-#include <nvvk/sampler_pool.hpp>           // Texture sampler
 #include <nvvk/staging.hpp>                // Staging manager
 
 #include <nvapp/imgui_texture.hpp>
-
-#include "common/utils.hpp"
 
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManip{};
 
@@ -121,19 +119,15 @@ public:
 
     m_stagingUploader.init(&m_alloc, true);
 
-    // The texture sampler pool (used for the 3D texture, not the render target)
-    m_samplerPool.init(m_device);
-
     // Initialization of the render target we want to use
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     NVVK_CHECK(m_renderTarget.init(
         {.alloc = &m_alloc, .colorFormats = {VK_FORMAT_R8G8B8A8_UNORM}, .depthFormat = m_depthFormat, .debugName = "Texture3dSample"}));
 
-
-    createComputePipeline();
-    createTexture();
+    createDescriptorHeap();
+    createShaders();
     createVkBuffers();
-    createGraphicPipeline();
+    createTexture();
 
     // Setting the default camera
     g_cameraManip->setClipPlanes({0.01F, 100.0F});
@@ -143,18 +137,28 @@ public:
   void onDetach() override
   {
     vkDeviceWaitIdle(m_device);
-    vkDestroyPipeline(m_device, m_computePipeline, nullptr);
-    vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
 
-    vkDestroyPipelineLayout(m_device, m_computePipelineLayout, nullptr);
-    vkDestroyPipelineLayout(m_device, m_rasterPipelineLayout, nullptr);
+    vkDestroyShaderEXT(m_device, m_computeShader, nullptr);
+    vkDestroyShaderEXT(m_device, m_vertexShader, nullptr);
+    vkDestroyShaderEXT(m_device, m_fragmentShader, nullptr);
+    m_computeShader  = VK_NULL_HANDLE;
+    m_vertexShader   = VK_NULL_HANDLE;
+    m_fragmentShader = VK_NULL_HANDLE;
 
-    vkDestroyDescriptorSetLayout(m_device, m_computeDescriptorSetLayout, nullptr);
-    vkDestroyDescriptorSetLayout(m_device, m_rasterDescriptorSetLayout, nullptr);
+    if(m_hasVolumeSampler)
+    {
+      m_heap.releaseSamplerDescriptor(m_volumeSamplerIdx);
+      m_hasVolumeSampler = false;
+    }
+
+    m_alloc.destroyBuffer(m_samplerHeapBuffer);
+    m_alloc.destroyBuffer(m_resourceHeapBuffer);
+    m_samplerHeapBuffer  = {};
+    m_resourceHeapBuffer = {};
+    m_heap.deinit();
 
     m_viewportImage.deinit();
     m_renderTarget.deinit();
-    m_samplerPool.deinit();
 
     m_alloc.destroyBuffer(m_vertices);
     m_alloc.destroyBuffer(m_indices);
@@ -357,28 +361,29 @@ public:
     {
       const VkDeviceSize offsets{0};
 
-      nvvk::GraphicsPipelineState::cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+      writeVolumeSampledDescriptor();
 
-      nvvk::WriteSetContainer writes;
-      writes.append(m_rasterBind.getWriteSet(0), m_frameInfo);
-      writes.append(m_rasterBind.getWriteSet(1), m_image.descriptor);
-      vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_rasterPipelineLayout, 0,
-                                static_cast<uint32_t>(writes.size()), writes.data());
+      m_dynamicPipeline.cmdApplyAllStates(cmd);
+      m_dynamicPipeline.cmdSetViewportAndScissor(cmd, m_app->getViewportSize());
+      m_dynamicPipeline.cmdBindShaders(cmd, {.vertex = m_vertexShader, .fragment = m_fragmentShader});
+      m_heap.cmdBindHeaps(cmd, m_samplerHeapBuffer.address, m_resourceHeapBuffer.address);
 
-      // Push constant information
       shaderio::PushConstant pushConstant{};
-      pushConstant.threshold = m_settings.threshold;
-      pushConstant.steps     = m_settings.steps;
-      pushConstant.color     = m_settings.surfaceColor;
-      pushConstant.transfo   = glm::mat4(1);  // Identity
-      vkCmdPushConstants(cmd, m_rasterPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                         sizeof(shaderio::PushConstant), &pushConstant);
+      pushConstant.threshold      = m_settings.threshold;
+      pushConstant.steps          = m_settings.steps;
+      pushConstant.color          = m_settings.surfaceColor;
+      pushConstant.transfo        = glm::mat4(1);  // Identity
+      pushConstant.bufferHeapBase = m_heap.bufferShaderIndexBase();
+
+      VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                                 .offset = 0,
+                                 .data   = {.address = &pushConstant, .size = sizeof(shaderio::PushConstant)}};
+      vkCmdPushDataEXT(cmd, &pushInfo);
 
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertices.buffer, &offsets);
       vkCmdBindIndexBuffer(cmd, m_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-      int32_t num_indices = 36;
-      vkCmdDrawIndexed(cmd, num_indices, 1, 0, 0, 0);
+      int32_t numIndices = 36;
+      vkCmdDrawIndexed(cmd, numIndices, 1, 0, 0, 0);
     }
     vkCmdEndRendering(cmd);
 
@@ -402,6 +407,83 @@ public:
   }
 
 private:
+  void createDescriptorHeap()
+  {
+    NVVK_CHECK(m_heap.init(m_app->getPhysicalDevice(), m_device));
+
+    constexpr VkBufferUsageFlags2 heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    const VkDeviceSize            samplerBufSize  = m_heap.setupSamplerHeap(1);
+    const VkDeviceSize            resourceBufSize = m_heap.setupResourceHeap(1, 1);
+    NVVK_CHECK(m_alloc.createBuffer(m_samplerHeapBuffer, samplerBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO, {},
+                                    m_heap.getSamplerHeapAlignment()));
+    NVVK_CHECK(m_alloc.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
+                                    VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                                    m_heap.getResourceHeapAlignment()));
+    NVVK_DBG_NAME(m_samplerHeapBuffer.buffer);
+    NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
+  }
+
+  void createShaders()
+  {
+    m_dynamicPipeline.rasterizationState.cullMode = VK_CULL_MODE_NONE;
+    m_dynamicPipeline.vertexBindings              = {{.sType   = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT,
+                                                      .stride  = sizeof(nvutils::PrimitiveVertex),
+                                                      .divisor = 1}};
+    m_dynamicPipeline.vertexAttributes = {{.sType  = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
+                                           .format = VK_FORMAT_R32G32B32_SFLOAT,
+                                           .offset = offsetof(nvutils::PrimitiveVertex, pos)}};
+
+    const VkShaderCreateFlagsEXT rasterFlags = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT | VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT;
+
+#if USE_SLANG
+    const VkShaderCreateInfoEXT computeInfo =
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT, 0, perlin_slang, "computeMain",
+                                        VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT);
+#else
+    const VkShaderCreateInfoEXT computeInfo = nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT, 0, perlin_comp_glsl,
+                                                                              "main", VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT);
+#endif
+    NVVK_CHECK(vkCreateShadersEXT(m_device, 1, &computeInfo, nullptr, &m_computeShader));
+    NVVK_DBG_NAME(m_computeShader);
+
+#if USE_SLANG
+    const std::array<VkShaderCreateInfoEXT, 2> rasterInfos{
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, texture_3d_slang,
+                                        "vertexMain", rasterFlags),
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, 0, texture_3d_slang, "fragmentMain", rasterFlags),
+    };
+#else
+    const std::array<VkShaderCreateInfoEXT, 2> rasterInfos{
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, texture_3d_vert_glsl, "main", rasterFlags),
+        nvsamples::makeShaderCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, 0, texture_3d_frag_glsl, "main", rasterFlags),
+    };
+#endif
+
+    std::array<VkShaderEXT, 2> rasterShaders{};
+    NVVK_CHECK(vkCreateShadersEXT(m_device, static_cast<uint32_t>(rasterInfos.size()), rasterInfos.data(), nullptr,
+                                  rasterShaders.data()));
+    m_vertexShader   = rasterShaders[0];
+    m_fragmentShader = rasterShaders[1];
+    NVVK_DBG_NAME(m_vertexShader);
+    NVVK_DBG_NAME(m_fragmentShader);
+  }
+
+  void writeVolumeStorageDescriptor()
+  {
+    NVVK_CHECK(m_heap.writeStorageImageDescriptor(shaderio::kHeapImgVolume, m_image, m_resourceHeapBuffer.mapping, VK_IMAGE_VIEW_TYPE_3D));
+  }
+
+  void writeVolumeSampledDescriptor()
+  {
+    NVVK_CHECK(m_heap.writeSampledImageDescriptor(shaderio::kHeapImgVolume, m_image, m_resourceHeapBuffer.mapping, VK_IMAGE_VIEW_TYPE_3D));
+  }
+
+  void writeVolumeHeapDescriptors()
+  {
+    writeVolumeStorageDescriptor();
+    writeVolumeSampledDescriptor();
+  }
+
   void createTexture()
   {
     nvutils::ScopedTimer st(__FUNCTION__);
@@ -440,21 +522,9 @@ private:
     };
 
     NVVK_CHECK(m_alloc.createImage(m_image, create_info, view_info));
+    m_image.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     NVVK_DBG_NAME(m_image.image);
     NVVK_DBG_NAME(m_image.descriptor.imageView);
-
-    VkSamplerCreateInfo samplerInfo{
-        .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter    = m_settings.magFilter,
-        .addressModeU = m_settings.addressMode,
-        .addressModeV = m_settings.addressMode,
-        .addressModeW = m_settings.addressMode,
-    };
-
-    // Creating the sampler
-    NVVK_CHECK(m_samplerPool.acquireSampler(m_image.descriptor.sampler, samplerInfo));
-
-    m_image.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
     nvvk::cmdImageMemoryBarrier(cmd, {m_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
@@ -462,13 +532,32 @@ private:
     VkClearColorValue       clearColor = {{1.0f, 1.0f, 1.0f, 1.0f}};
     vkCmdClearColorImage(cmd, m_image.image, VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
 
+    if(m_hasVolumeSampler)
+    {
+      m_heap.releaseSamplerDescriptor(m_volumeSamplerIdx);
+      m_hasVolumeSampler = false;
+    }
+
+    void* smpMapping = nullptr;
+    NVVK_CHECK(m_stagingUploader.appendBufferMapping(m_samplerHeapBuffer, 0, m_heap.getSamplerHeapSize(), smpMapping));
+    VkSamplerCreateInfo samplerInfo{
+        .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter    = m_settings.magFilter,
+        .addressModeU = m_settings.addressMode,
+        .addressModeV = m_settings.addressMode,
+        .addressModeW = m_settings.addressMode,
+    };
+    m_volumeSamplerIdx = m_heap.acquireSamplerDescriptor(samplerInfo, smpMapping);
+    m_hasVolumeSampler = true;
+
+    writeVolumeHeapDescriptors();
+
     updateTextureData(cmd, false);
+    m_stagingUploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
     m_stagingUploader.releaseStaging();
 
-    // Debugging information
     NVVK_DBG_NAME(m_image.image);
-    NVVK_DBG_NAME(m_image.descriptor.sampler);
     NVVK_DBG_NAME(m_image.descriptor.imageView);
   }
 
@@ -553,59 +642,24 @@ private:
   }
 
 
-  void createComputePipeline()
-  {
-    m_computeBind.addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
-    NVVK_CHECK(m_computeBind.createDescriptorSetLayout(m_device, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT,
-                                                       &m_computeDescriptorSetLayout));
-    NVVK_DBG_NAME(m_computeDescriptorSetLayout);
-
-    const VkPushConstantRange pushConstantRange{
-        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(shaderio::PerlinSettings)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_computePipelineLayout, {m_computeDescriptorSetLayout}, {pushConstantRange}));
-    NVVK_DBG_NAME(m_computePipelineLayout);
-
-#if USE_SLANG
-    const VkShaderModuleCreateInfo  moduleInfo = nvsamples::getShaderModuleCreateInfo(perlin_slang);
-    VkPipelineShaderStageCreateInfo stageInfo{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .pNext = &moduleInfo,
-        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-        .pName = "computeMain",
-    };
-#else
-    const VkShaderModuleCreateInfo  moduleInfo = nvsamples::getShaderModuleCreateInfo(perlin_comp_glsl);
-    VkPipelineShaderStageCreateInfo stageInfo{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .pNext = &moduleInfo,
-        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-        .pName = "main",
-    };
-#endif
-
-    VkComputePipelineCreateInfo compInfo{
-        .sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .stage  = stageInfo,
-        .layout = m_computePipelineLayout,
-    };
-    vkCreateComputePipelines(m_device, {}, 1, &compInfo, nullptr, &m_computePipeline);
-    NVVK_DBG_NAME(m_computePipeline);
-  }
-
   void runCompute(VkCommandBuffer cmd, const VkExtent3D& size)
   {
     NVVK_DBG_SCOPE(cmd);
     uint32_t realSize = m_settings.getSize();
 
-    nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(m_computeBind.getWriteSet(0), m_image.descriptor);
+    const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
+    vkCmdBindShadersEXT(cmd, 1, stages, &m_computeShader);
+    m_heap.cmdBindHeaps(cmd, 0, m_resourceHeapBuffer.address);
+
+    writeVolumeStorageDescriptor();
 
     shaderio::PerlinSettings perlin = m_settings.perlin;
     perlin.frequency /= float(realSize);
-    vkCmdPushConstants(cmd, m_computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::PerlinSettings), &perlin);
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipelineLayout, 0,
-                              static_cast<uint32_t>(writeContainer.size()), writeContainer.data());
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
+    VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                               .offset = 0,
+                               .data   = {.address = &perlin, .size = sizeof(shaderio::PerlinSettings)}};
+    vkCmdPushDataEXT(cmd, &pushInfo);
+
     VkExtent2D group_counts = nvvk::getGroupCounts({size.width, size.height}, WORKGROUP_SIZE);
     vkCmdDispatch(cmd, group_counts.width, group_counts.height, size.depth);
   }
@@ -629,54 +683,13 @@ private:
     m_stagingUploader.releaseStaging();
 
     // Frame information: camera matrix
-    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo),
-                                    VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
-                                    VMA_MEMORY_USAGE_CPU_TO_GPU));
+    constexpr VkBufferUsageFlags2 kHeapBufUsage = VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT
+                                                  | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT;
+    NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), kHeapBufUsage, VMA_MEMORY_USAGE_CPU_TO_GPU));
     NVVK_DBG_NAME(m_frameInfo.buffer);
-  }
 
-  void createGraphicPipeline()
-  {
-    m_rasterBind.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-    m_rasterBind.addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
-    m_rasterBind.createDescriptorSetLayout(m_device, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
-                                           &m_rasterDescriptorSetLayout);
-    NVVK_DBG_NAME(m_rasterDescriptorSetLayout);
-
-    const VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                                .offset     = 0,
-                                                .size       = sizeof(shaderio::PushConstant)};
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_rasterPipelineLayout, {m_rasterDescriptorSetLayout}, {pushConstantRange}));
-    NVVK_DBG_NAME(m_rasterPipelineLayout);
-
-
-    nvvk::GraphicsPipelineState graphicState;
-
-    // Creating the Pipeline
-    graphicState.rasterizationState.cullMode = VK_CULL_MODE_NONE;
-    graphicState.vertexBindings              = {{.sType   = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT,
-                                                 .stride  = sizeof(nvutils::PrimitiveVertex),
-                                                 .divisor = 1}};
-    graphicState.vertexAttributes            = {{.sType  = VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT,
-                                                 .format = VK_FORMAT_R32G32B32_SFLOAT,
-                                                 .offset = offsetof(nvutils::PrimitiveVertex, pos)}};
-    // Helper to create the graphic pipeline
-    nvvk::GraphicsPipelineCreator creator;
-    creator.pipelineInfo.layout                  = m_rasterPipelineLayout;
-    creator.colorFormats                         = {m_colorFormat};
-    creator.renderingState.depthAttachmentFormat = m_depthFormat;
-
-    std::array<VkShaderModule, 2> shaderModules{};
-#if USE_SLANG
-    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "vertexMain", texture_3d_slang);
-    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "fragmentMain", texture_3d_slang);
-#else
-    creator.addShader(VK_SHADER_STAGE_VERTEX_BIT, "main", texture_3d_vert_glsl);
-    creator.addShader(VK_SHADER_STAGE_FRAGMENT_BIT, "main", texture_3d_frag_glsl);
-#endif
-
-    NVVK_CHECK(creator.createGraphicsPipeline(m_device, nullptr, graphicState, &m_graphicsPipeline));
-    NVVK_DBG_NAME(m_graphicsPipeline);
+    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufFrameInfo, m_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                            m_resourceHeapBuffer.mapping));
   }
 
   void onLastHeadlessFrame() override
@@ -693,17 +706,17 @@ private:
 
   nvvk::ResourceAllocator m_alloc;
   nvvk::StagingUploader   m_stagingUploader;
-  nvvk::SamplerPool       m_samplerPool;
 
-  // Pipelines: compute to generate the 3d, graphic to draw, ray-marching
-  nvvk::DescriptorBindings m_computeBind;
-  VkDescriptorSetLayout    m_computeDescriptorSetLayout{};
-  VkPipelineLayout         m_computePipelineLayout{};
-  VkPipeline               m_computePipeline = VK_NULL_HANDLE;
-  nvvk::DescriptorBindings m_rasterBind;
-  VkDescriptorSetLayout    m_rasterDescriptorSetLayout{};
-  VkPipelineLayout         m_rasterPipelineLayout{};
-  VkPipeline               m_graphicsPipeline = VK_NULL_HANDLE;
+  nvvk::DescriptorHeap m_heap{};
+  nvvk::Buffer         m_samplerHeapBuffer{};
+  nvvk::Buffer         m_resourceHeapBuffer{};
+  uint32_t             m_volumeSamplerIdx = 0;
+  bool                 m_hasVolumeSampler = false;
+
+  VkShaderEXT                 m_computeShader  = VK_NULL_HANDLE;
+  VkShaderEXT                 m_vertexShader   = VK_NULL_HANDLE;
+  VkShaderEXT                 m_fragmentShader = VK_NULL_HANDLE;
+  nvvk::GraphicsPipelineState m_dynamicPipeline;
 
   VkSemaphore m_timelineSemaphore{};
   uint64_t    m_timelineSemaphoreNextValue = 1;
@@ -741,10 +754,21 @@ int main(int argc, char** argv)
   cli.add(reg);
   cli.parse(argc, argv);
 
+  VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dStateFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
+  VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
+  VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+  VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPtrFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR};
+
   nvvk::ContextInitInfo vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
-      .deviceExtensions   = {{VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME}},
-      .queues             = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_TRANSFER_BIT},
+      .deviceExtensions =
+          {
+              {VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &dStateFeatures},
+              {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, &shaderObjectFeatures},
+              {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, &heapFeatures},
+              {VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME, &untypedPtrFeatures},
+          },
+      .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_TRANSFER_BIT},
   };
   if(!appInfo.headless)
   {
