@@ -447,10 +447,8 @@ private:
       NVVK_CHECK(m_allocator.createAcceleration(m_bottomAs[i], createInfo));
       NVVK_DBG_NAME(m_bottomAs[i].accel);
 
+      // cmdBuildAccelerationStructure inserts a barrier for scratch reuse between builds
       blasData[i].cmdBuildAccelerationStructure(cmd, m_bottomAs[i].accel, scratchBuffer.address);
-      // Because we will be reusing the scratch buffer, we need a barrier to ensure the BLAS is finished before next build
-      nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                                         VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
     }
     m_app->submitAndWaitTempCmdBuffer(cmd);
 
@@ -493,7 +491,9 @@ private:
     NVVK_DBG_NAME(instancesBuffer.buffer);
 
     uploader.cmdUploadAppended(cmd);
-    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+    // AS build reads instance data (SHADER_READ) and writes the TLAS.
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
     auto instGeo = tlasData.makeInstanceGeometry(instances.size(), instancesBuffer.address);
     tlasData.addGeometry(instGeo);
@@ -714,6 +714,8 @@ auto main(int argc, char** argv) -> int
 
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.add({"headless"}, &appInfo.headless, true);
   reg.add({"frames", "Number of frames to run in headless mode"}, &appInfo.headlessFrameCount);
   cli.add(reg);
@@ -744,6 +746,7 @@ auto main(int argc, char** argv) -> int
 
   // Create the Vulkan context
   nvvk::Context vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

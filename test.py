@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ARGS = ["--headless"]
 
+# Appended to every sample (including the overrides below) so failures print
+# detailed Vulkan context information to help diagnose errors.
+VERBOSE_ARGS = ["--verbose", "1"]
+
 SAMPLES = [
     "barycentric_wireframe",
     "compute_multi_threaded",
@@ -29,6 +33,7 @@ SAMPLES = [
     "ray_query",
     "ray_query_position_fetch",
     "ray_trace",
+    "ray_trace_clusters",
     "ray_trace_motion_blur",
     "ray_tracing_position_fetch",
     "realtime_analysis",
@@ -50,7 +55,7 @@ SAMPLE_ARGS_OVERRIDE = {
 
 
 def get_sample_args(name):
-    return SAMPLE_ARGS_OVERRIDE.get(name, DEFAULT_ARGS)
+    return SAMPLE_ARGS_OVERRIDE.get(name, DEFAULT_ARGS) + VERBOSE_ARGS
 
 
 class ReturnCode(Enum):
@@ -66,15 +71,46 @@ class TestResult:
     time: str
 
 
-def run_command(commands, timeout=None):
+def _append_captured_output(log_file, header, stdout=None, stderr=None):
+    """Append captured process output to the sample log file (best-effort)."""
+    try:
+        with log_file.open("a", encoding="utf-8", errors="replace") as f:
+            f.write(f"\n\n===== {header} =====\n")
+            if stdout and stdout.strip():
+                f.write("--- stdout ---\n")
+                f.write(stdout.rstrip())
+                f.write("\n")
+            if stderr and stderr.strip():
+                f.write("--- stderr ---\n")
+                f.write(stderr.rstrip())
+                f.write("\n")
+    except OSError as e:
+        logger.error(f"Could not append output to {log_file}: {e}")
+
+
+def run_command(commands, timeout=None, log_file=None):
     """Run a command and return the process return code."""
     logger.info(f"Running command: {' '.join(commands)}")
     try:
         result = subprocess.run(
             commands, text=True, capture_output=True, timeout=timeout
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         logger.error(f"Command timed out after {timeout}s: {' '.join(commands)}")
+        stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode(
+            "utf-8", errors="replace"
+        )
+        stderr = e.stderr if isinstance(e.stderr, str) else (e.stderr or b"").decode(
+            "utf-8", errors="replace"
+        )
+        if stdout and stdout.strip():
+            logger.error(f"stdout (partial):\n{stdout.rstrip()}")
+        if stderr and stderr.strip():
+            logger.error(f"stderr (partial):\n{stderr.rstrip()}")
+        if log_file is not None:
+            _append_captured_output(
+                log_file, f"TIMEOUT after {timeout}s", stdout, stderr
+            )
         return -1
 
     if result.returncode != 0:
@@ -85,6 +121,13 @@ def run_command(commands, timeout=None):
             logger.error(f"stdout:\n{result.stdout.rstrip()}")
         if result.stderr and result.stderr.strip():
             logger.error(f"stderr:\n{result.stderr.rstrip()}")
+        if log_file is not None:
+            _append_captured_output(
+                log_file,
+                f"FAILED exit code {result.returncode}",
+                result.stdout,
+                result.stderr,
+            )
     else:
         logger.debug(f"Command output:\n{result.stdout}\n{result.stderr}")
     return result.returncode
@@ -159,8 +202,10 @@ def test_executable(test_dir, executable, args, timeout=None):
         return TestResult(executable, ReturnCode.ENVIRONMENT_ERROR, "N/A")
 
     try:
-        return_code = run_command([str(executable_path)] + args, timeout=timeout)
         log_file = test_dir / f"log_{executable}.txt"
+        return_code = run_command(
+            [str(executable_path)] + args, timeout=timeout, log_file=log_file
+        )
         testing_time = extract_testing_time(log_file)
         status = ReturnCode.SUCCESS if return_code == 0 else ReturnCode.TEST_ERROR
         return TestResult(executable, status, testing_time)

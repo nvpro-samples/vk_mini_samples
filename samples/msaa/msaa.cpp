@@ -526,6 +526,8 @@ int main(int argc, char** argv)
   std::string                projectName = nvutils::getExecutablePath().stem().string();
   nvutils::ParameterParser   cli(projectName);
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
   cli.add(reg);
   cli.parse(argc, argv);
@@ -544,6 +546,7 @@ int main(int argc, char** argv)
 
   // Vulkan context creation
   nvvk::Context vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

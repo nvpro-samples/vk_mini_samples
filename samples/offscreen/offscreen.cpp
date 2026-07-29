@@ -257,6 +257,8 @@ int main(int argc, char** argv)
   std::string                projectName = nvutils::getExecutablePath().stem().string();
   nvutils::ParameterParser   cli(projectName);
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.add({"time", "Run in headless mode", "t"}, &animTime, true);
   reg.addVector({"size", "Render size width", "s"}, &renderSize);
   reg.add({"output", "Output filename (must end with .jpg)", "o"}, &outputFile);
@@ -267,6 +269,7 @@ int main(int argc, char** argv)
   // Creating the Vulkan instance and device, with only defaults, no extension
   nvvk::ContextInitInfo vkSetup{.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME}};
   nvvk::Context         vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

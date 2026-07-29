@@ -279,6 +279,7 @@ public:
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_rtPipeline);
       m_heap.cmdBindHeaps(cmd, 0, m_resourceHeapBuffer.address);
       m_pushConst.tlasAddress = m_tlas.address;
+      m_pushConst.sceneInfo   = (shaderio::RtGltfSceneInfo*)m_bSceneInfo.address;
       VkPushDataInfoEXT pushInfo{.sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
                                  .offset = 0,
                                  .data   = {.address = &m_pushConst, .size = sizeof(shaderio::RtGltfPushConstant)}};
@@ -361,9 +362,9 @@ public:
     m_allocator.destroyBuffer(m_bInstInfo);
     m_allocator.destroyBuffer(m_bMeshInfo);
 
-    // Create a buffer (UBO) to store the scene information
+    // Create a buffer to store the scene information (updated each frame; read via device address)
     NVVK_CHECK(m_allocator.createBuffer(m_bSceneInfo, sizeof(shaderio::RtGltfSceneInfo),
-                                        VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
+                                        VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
                                         VMA_MEMORY_USAGE_AUTO));
     NVVK_DBG_NAME(m_bSceneInfo.buffer);
 
@@ -572,7 +573,9 @@ public:
     NVVK_CHECK(m_stagingUploader.appendBuffer(instancesBuffer, 0, std::span<VkAccelerationStructureInstanceKHR>(tlasInstances)));
     NVVK_DBG_NAME(instancesBuffer.buffer);
     m_stagingUploader.cmdUploadAppended(cmd);
-    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+    // AS build reads instance data (SHADER_READ) and writes the TLAS.
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
 
     nvvk::AccelerationStructureBuildData    tlasBuildData{VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR};
@@ -607,16 +610,15 @@ public:
   {
     NVVK_CHECK(m_heap.init(m_app->getPhysicalDevice(), m_app->getDevice()));
 
-    constexpr VkBufferUsageFlags2 heapUsage       = nvvk::DescriptorHeap::getRequiredBufferUsage();
-    const VkDeviceSize            resourceBufSize = m_heap.setupResourceHeap(1, 1);
+    constexpr VkBufferUsageFlags2 heapUsage = nvvk::DescriptorHeap::getRequiredBufferUsage();
+    const VkDeviceSize resourceBufSize = m_heap.setupResourceHeap(1, 0);  // image only; sceneInfo via device address
 
     constexpr VmaAllocationCreateFlags kMappedFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
     NVVK_CHECK(m_allocator.createBuffer(m_resourceHeapBuffer, resourceBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
                                         kMappedFlags, m_heap.getResourceHeapAlignment()));
     NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
 
-    m_pushConst.imageHeapBase  = m_heap.imageShaderIndexBase();
-    m_pushConst.bufferHeapBase = m_heap.bufferShaderIndexBase();
+    m_pushConst.imageHeapBase = m_heap.imageShaderIndexBase();
 
     writeHeapDescriptors();
   }
@@ -631,8 +633,6 @@ public:
     NVVK_CHECK(m_heap.writeStorageImageDescriptor(shaderio::kHeapImgOutput, m_renderTarget.getColorImage(0),
                                                   m_renderTarget.getColorFormat(0), VK_IMAGE_LAYOUT_GENERAL,
                                                   m_resourceHeapBuffer.mapping));
-    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufSceneInfo, m_bSceneInfo,
-                                            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, m_resourceHeapBuffer.mapping));
   }
 
   //--------------------------------------------------------------------------------------------------
@@ -997,7 +997,6 @@ int main(int argc, char** argv)
   reg.add({"validation", "Enable validation layers", "v"}, &vkSetup.enableValidationLayers);
 
   cli.add(reg);
-  cli.parse(argc, argv);
 
   //--------------------------------------------------------------------------------------------------
   // Vulkan setup
@@ -1022,6 +1021,12 @@ int main(int argc, char** argv)
       .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_TRANSFER_BIT},
   };
 
+  // Parsing the command line arguments.
+  // Must be done AFTER `vkSetup` is assigned above, otherwise the assignment would overwrite the
+  // values the parser writes into it (e.g. `verbose`, `enableValidationLayers`). It must also be
+  // done BEFORE the parsed values are consumed below (e.g. `appInfo.headless`).
+  cli.parse(argc, argv);
+
   if(!appInfo.headless)
   {
     nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
@@ -1031,6 +1036,7 @@ int main(int argc, char** argv)
   // Validation layers settings
   nvvk::ValidationSettings vvlInfo{};
   vkSetup.instanceCreateInfoExt = vvlInfo.buildPNextChain();
+
 
   // Create the Vulkan context
   if(vkContext.init(vkSetup) != VK_SUCCESS)

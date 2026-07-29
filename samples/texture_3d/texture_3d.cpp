@@ -750,7 +750,9 @@ int main(int argc, char** argv)
 
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
   reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   cli.add(reg);
   cli.parse(argc, argv);
 
@@ -777,6 +779,7 @@ int main(int argc, char** argv)
   }
 
   // Vulkan context creation
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

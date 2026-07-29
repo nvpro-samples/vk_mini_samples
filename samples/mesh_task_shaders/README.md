@@ -22,7 +22,6 @@ Pipeline: `Task Shader → Mesh Shader → Fragment Shader`
 ```mermaid
 ---
 config:
-  layout: dagre
   theme: neutral
 ---
 flowchart LR
@@ -34,7 +33,6 @@ flowchart LR
     F1 --> G["Fragment Shader"]
     F2 --> G
     F3 --> G
-    E@{ shape: rect}
     style B fill:#e1f5ff
     style D fill:#fff4e1
     style E fill:#ffe1f5

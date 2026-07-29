@@ -8,8 +8,7 @@
 NAMESPACE_SHADERIO_BEGIN()
 
 // Descriptor-heap slot layout (local indices within each region).
-static const uint kHeapImgOutput    = 0;  // image region: ray-trace output (storage image)
-static const uint kHeapBufSceneInfo = 0;  // buffer region: scene description UBO
+static const uint kHeapImgOutput = 0;  // image region: ray-trace output (storage image)
 
 // GLTF
 struct BufferView
@@ -62,8 +61,10 @@ struct RtGltfPushConstant
   float    roughness = 0.5f;
   uint32_t maxDepth  = 3;
   uint     imageHeapBase;
-  uint     bufferHeapBase;
   uint64_t tlasAddress;
+  // Device address of RtGltfSceneInfo (scalar/C++ layout). Do not fetch via
+  // ConstantBuffer.Handle — that uses std140 and misaligns after SkyPhysicalParameters.
+  RtGltfSceneInfo* sceneInfo;
 };
 
 NAMESPACE_SHADERIO_END()

@@ -65,6 +65,7 @@ Start with these foundational samples to understand the framework:
 | [ray_query](samples/ray_query) | Inline raytracing in compute shaders | ![](samples/ray_query/docs/ray_query_th.jpg) | ✅ | ✅ |
 | [ray_query_position_fetch](samples/ray_query_position_fetch) | Using VK_KHR_ray_tracing_position_fetch in ray query | ![](samples/ray_query_position_fetch/docs/ray_query_pos_fetch_th.jpg) | ✅ | ✅ |
 | [ray_trace](samples/ray_trace) | Basic ray tracer; `VK_EXT_descriptor_heap` on a ray-tracing pipeline | ![](samples/ray_trace/docs/raytrace_th.jpg) | ❌ | ✅ |
+| [ray_trace_clusters](samples/ray_trace_clusters) | Cluster acceleration structures (`VK_NV_cluster_acceleration_structure`) with per-cluster coloring and LOD | ![Sphere colored by cluster ID](samples/ray_trace_clusters/docs/ray_trace_clusters_th.jpg) | ✅ | ✅ |
 
 More raytracing examples can be found in the  **[vk_raytracing_tutorial_KHR](https://github.com/nvpro-samples/vk_raytracing_tutorial_KHR/tree/v2?tab=readme-ov-file#complete-tutorial-series)**.
 
@@ -118,10 +119,6 @@ Samples are implemented as `Elements` and attached to the `Application` instance
 The following diagram illustrates the complete application lifecycle, from initialization through the main rendering loop:
 
 ```mermaid
----
-config:
-  layout: dagre
----
 flowchart LR
     subgraph s1["Application Element"]
         O["onAttach: Initialize"]
@@ -136,7 +133,7 @@ flowchart LR
     A["Constructor"] --> B["init: Setup Window, Vulkan, ImGui"]
     B --> C["run: Main Loop"]
     C --> D["Frame Setup: Events, ImGui, Viewport"]
-    D --> E["prepareFrameResources"]
+    D --> E{"prepareFrameResources"}
     E -- Success --> F["beginCommandRecording"]
     E -- Fail --> C
     F --> I["drawFrame: Element Processing"]
@@ -156,7 +153,6 @@ flowchart LR
     C -->|Exit Event| V["shutdown()"]
     V -. onDetach .-> U
     
-    E@{ shape: decision}
     style O fill:#f1f8e9
     style P fill:#f1f8e9
     style Q fill:#f1f8e9

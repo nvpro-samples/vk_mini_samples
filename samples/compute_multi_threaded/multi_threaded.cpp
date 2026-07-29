@@ -117,7 +117,10 @@ public:
 
   void onDetach() override
   {
-    stopRenderThread();
+    if(m_isRunning.load())
+    {
+      stopRenderThread();
+    }
 
     NVVK_CHECK(vkDeviceWaitIdle(m_app->getDevice()));
     vkDestroyShaderEXT(m_app->getDevice(), m_shader, NULL);
@@ -165,6 +168,13 @@ public:
                               std::min(m_renderTarget.getSize().height, m_compRenderTarget.getSize().height), 1};
     vkCmdCopyImage(cmd, m_compRenderTarget.getColorImage(), VK_IMAGE_LAYOUT_GENERAL, m_renderTarget.getColorImage(),
                    VK_IMAGE_LAYOUT_GENERAL, 1, &imgCopy);
+
+    // Headless ends with vkDeviceWaitIdle. Stop the worker first so it cannot keep
+    // submitting compute work that would make that wait hang forever (CI timeout).
+    if(m_app->isHeadless() && m_isRunning.load())
+    {
+      stopRenderThread();
+    }
   }
 
   // Utility to start and stop the render thread
@@ -184,7 +194,6 @@ public:
   {
     if(!m_isRunning.load())
     {
-      std::cerr << "Thread is not running.\n";
       return;
     }
 
@@ -377,6 +386,8 @@ int main(int argc, char** argv)
   // Command parser
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
   reg.add({"frames", "Number of frames to render in headless mode"}, &appInfo.headlessFrameCount, true);
   cli.add(reg);
@@ -415,6 +426,7 @@ int main(int argc, char** argv)
 
   // Create the Vulkan context
   nvvk::Context vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

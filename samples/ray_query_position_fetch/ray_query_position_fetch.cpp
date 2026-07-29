@@ -363,8 +363,9 @@ private:
     // Upload the instance buffer to the GPU
     uploader.cmdUploadAppended(cmd);
 
-    // Ensure buffer is ready for acceleration structure operations
-    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+    // AS build reads instance data (SHADER_READ) and writes the TLAS.
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
     // Prepare for TLAS building
     auto geo = m_tlasBuildData.makeInstanceGeometry(m_tlasInstances.size(), m_instancesBuffer.address);
@@ -412,8 +413,9 @@ private:
     m_uploader.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances));
     m_uploader.cmdUploadAppended(cmd);
 
-    // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
-    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+    // AS build reads instance data (SHADER_READ) and writes the TLAS.
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
     // Updating the buffer address in the instance
     m_tlasBuildData.asGeometry[0].geometry.instances.data.deviceAddress = m_instancesBuffer.address;
@@ -577,6 +579,8 @@ auto main(int argc, char** argv) -> int
 
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.add({"headless"}, &appInfo.headless, true);
   cli.add(reg);
   cli.parse(argc, argv);
@@ -609,6 +613,7 @@ auto main(int argc, char** argv) -> int
 
   // Create the Vulkan context
   nvvk::Context vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

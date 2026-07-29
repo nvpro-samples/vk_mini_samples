@@ -233,7 +233,7 @@ public:
     // vkWriteResourceDescriptorsEXT writes land directly in device-visible memory;
     // no staging upload needed at all.
     NVVK_CHECK(m_heap.writeSampledImageDescriptor(0, m_texture->getImage(), m_texture->getFormat(),
-                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_resourceHeapBuffer.mapping));
+                                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_resourceHeapBuffer.mapping));
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
     m_stagingUploader.releaseStaging();
@@ -609,6 +609,8 @@ int main(int argc, char** argv)
   // Parsing the command line
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.add({"headless", "Run in headless mode"}, &appInfo.headless, true);
   reg.add({"zoom", "Zoom in image"}, &g_imageViewerSettings.zoom);
   reg.addVector({"pan", "Pan in image"}, &g_imageViewerSettings.pan);
@@ -638,6 +640,7 @@ int main(int argc, char** argv)
   }
 
   // Creation of the Vulkan context
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

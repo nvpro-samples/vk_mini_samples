@@ -41,7 +41,7 @@ RaytracingAccelerationStructure getTLAS()
 }
 RtGltfSceneInfo getSceneInfo()
 {
-  return *ConstantBuffer<RtGltfSceneInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufSceneInfo, 0));
+  return *pushConst.sceneInfo;
 }
 
 // Raytracing Payload

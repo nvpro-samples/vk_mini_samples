@@ -567,7 +567,9 @@ private:
     NVVK_CHECK(uploader.appendBuffer(instanceBuffer, 0, std::span(tlasInstances)));
     NVVK_DBG_NAME(instanceBuffer.buffer);
     uploader.cmdUploadAppended(cmd);
-    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+    // AS build reads instance data (SHADER_READ) and writes the TLAS.
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
     auto geo = tlasBuildData.makeInstanceGeometry(tlasInstances.size(), instanceBuffer.address);
     tlasBuildData.addGeometry(geo);
@@ -903,6 +905,8 @@ auto main(int argc, char** argv) -> int
   // Parse the command line to get the application information
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
 
   reg.add({"headless"}, &appInfo.headless, true);
   reg.add({"frames", "Number of frames to run in headless mode"}, &appInfo.headlessFrameCount);
@@ -945,6 +949,7 @@ auto main(int argc, char** argv) -> int
   vkSetup.instanceCreateInfoExt = vvlInfo.buildPNextChain();
 
   // Create the Vulkan context
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

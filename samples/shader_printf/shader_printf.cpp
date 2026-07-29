@@ -333,6 +333,8 @@ int main(int argc, char** argv)
 
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
   reg.addVector({"size", "Size of the window to be created", "s"}, &appInfo.windowSize);
   reg.add({"headless"}, &appInfo.headless, true);
   cli.add(reg);
@@ -375,6 +377,7 @@ int main(int argc, char** argv)
 
   // Create the Vulkan context
   nvvk::Context vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");

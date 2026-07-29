@@ -605,7 +605,7 @@ private:
     for(uint32_t i = 0; i < numTextures; i++)
     {
       NVVK_CHECK(m_heap.writeSampledImageDescriptor(shaderio::kHeapImgTexturesStart + i, m_sceneVk.textures()[i],
-                                             m_resourceHeapBuffer.mapping));
+                                                    m_resourceHeapBuffer.mapping));
     }
   }
 
@@ -761,6 +761,8 @@ auto main(int argc, char** argv) -> int
 
   nvutils::ParameterParser   cli(nvutils::getExecutablePath().stem().string());
   nvutils::ParameterRegistry reg;
+  bool                       verbose = false;
+  reg.add({"verbose", "Verbose output of the Vulkan context"}, &verbose);
 
   reg.add({"modelfile", "Input filename"}, {".gltf"}, &g_sceneFilename);
   reg.addVector({"size", "Size of the window to be created", "s"}, &appInfo.windowSize);
@@ -817,6 +819,7 @@ auto main(int argc, char** argv) -> int
 
   // Create the Vulkan context
   nvvk::Context vkContext;
+  vkSetup.verbose |= verbose;
   if(vkContext.init(vkSetup) != VK_SUCCESS)
   {
     LOGE("Error in Vulkan context creation\n");
