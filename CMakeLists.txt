@@ -8,6 +8,14 @@ project(vk_mini_samples VERSION 2.0 LANGUAGES C CXX)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(NvproCore2 REQUIRED)
 
+find_package(Vulkan COMPONENTS glslangValidator)
+if(Vulkan_VERSION VERSION_LESS "1.4.357")
+  message(FATAL_ERROR
+    "Found Vulkan SDK ${Vulkan_VERSION}, but mini samples requires Vulkan SDK "
+    "1.4.357 or newer. Install a newer Vulkan SDK and rerun CMake."
+  )
+endif()
+
 set(COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common")
 
 # Add common library first as other samples might depend on it

@@ -29,7 +29,9 @@ class MicromapProcess
 {
 
 public:
-  MicromapProcess(nvvk::ResourceAllocator* allocator);
+  // useKHR: use VK_KHR_opacity_micromap build path (VkAccelerationStructureKHR),
+  //         otherwise use VK_EXT_opacity_micromap (VkMicromapEXT).
+  MicromapProcess(nvvk::ResourceAllocator* allocator, bool useKHR = false);
   ~MicromapProcess();
 
   bool createMicromapData(VkCommandBuffer               cmd,
@@ -40,18 +42,12 @@ public:
                           uint16_t                      micromapFormat);
   void cleanBuildData();
 
-  const VkMicromapEXT&                   micromap() { return m_micromap; }
-  const std::vector<VkMicromapUsageEXT>& usages() { return m_usages; }
-  const nvvk::Buffer&                    indexBuffer() { return m_indexBuffer; }
+  bool                             useKHR() const { return m_useKHR; }
+  const VkMicromapEXT&             micromap() const { return m_micromap; }
+  const VkAccelerationStructureKHR micromapAS() const { return m_micromapAS; }
+  const nvvk::Buffer&              indexBuffer() const { return m_indexBuffer; }
 
 private:
-  struct MicromapData
-  {
-    std::vector<uint8_t>               values;
-    std::vector<VkMicromapTriangleEXT> triangles;
-    std::vector<VkMicromapUsageEXT>    usages;
-  };
-
   // Raw values per triangles
   struct RawTriangle
   {
@@ -65,12 +61,14 @@ private:
   };
 
 
-  bool                buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT type);
-  static void         barrier(VkCommandBuffer cmd);
+  bool                buildMicromapEXT(VkCommandBuffer cmd, VkMicromapTypeEXT type);
+  bool                buildMicromapKHR(VkCommandBuffer cmd);
+  void                barrier(VkCommandBuffer cmd);
   static MicroOpacity createOpacity(const nvutils::PrimitiveMesh& mesh, uint16_t subdivLevel, float radius);
 
   VkDevice                 m_device;
   nvvk::ResourceAllocator* m_alloc;
+  bool                     m_useKHR{false};
 
   nvvk::Buffer m_inputData;
   nvvk::Buffer m_microData;
@@ -78,8 +76,13 @@ private:
   nvvk::Buffer m_scratchBuffer;
   nvvk::Buffer m_indexBuffer;
 
-
+  // EXT path
   VkMicromapEXT                   m_micromap{VK_NULL_HANDLE};
   std::vector<VkMicromapUsageEXT> m_usages;
-  VkPhysicalDeviceOpacityMicromapPropertiesEXT m_oppacityProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_EXT};
+
+  // KHR path
+  VkAccelerationStructureKHR      m_micromapAS{VK_NULL_HANDLE};
+  std::vector<VkMicromapUsageKHR> m_usagesKHR;
+
+  VkPhysicalDeviceOpacityMicromapPropertiesKHR m_oppacityProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_KHR};
 };

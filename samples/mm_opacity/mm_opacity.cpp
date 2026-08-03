@@ -110,12 +110,15 @@ class MicomapOpacity : public nvapp::IAppElement
     bool     showWireframe{true};
     float    radius{0.5F};
     bool     useAnyHit{true};
-    uint16_t micromapFormat{VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT};
+    uint16_t micromapFormat{VK_OPACITY_MICROMAP_FORMAT_4_STATE_KHR};
   } m_settings;
 
 
 public:
-  MicomapOpacity()           = default;
+  MicomapOpacity(bool useKHR = false)
+      : m_useKHR(useKHR)
+  {
+  }
   ~MicomapOpacity() override = default;
 
   void onAttach(nvapp::Application* app) override
@@ -130,7 +133,7 @@ public:
         .instance       = app->getInstance(),
     });  // Allocator
 
-    m_micromap = std::make_unique<MicromapProcess>(&m_alloc);
+    m_micromap = std::make_unique<MicromapProcess>(&m_alloc, m_useKHR);
 
     m_depthFormat = nvvk::findDepthFormat(app->getPhysicalDevice());
     NVVK_CHECK(m_renderTarget.init({
@@ -143,9 +146,10 @@ public:
 
     // Requesting ray tracing properties
     VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-    m_mmProperties.pNext = &m_asProperties;
-    m_rtProperties.pNext = &m_mmProperties;
-    prop2.pNext          = &m_rtProperties;
+    m_mmPropertiesKHR.pNext = &m_asProperties;
+    m_mmPropertiesEXT.pNext = &m_mmPropertiesKHR;
+    m_rtProperties.pNext    = &m_mmPropertiesEXT;
+    prop2.pNext             = &m_rtProperties;
     vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
     // Create utilities to create BLAS/TLAS and the Shader Binding Table (SBT)
@@ -206,17 +210,18 @@ public:
         writeRtDesc();
       }
 
-      bool subdiv_changed{false};
-      subdiv_changed |= PropertyEditor::SliderInt("Subdivision Level", &m_settings.subdivlevel, 0,
-                                                  m_mmProperties.maxOpacity4StateSubdivisionLevel);
+      bool           subdiv_changed{false};
+      const uint32_t maxSubdiv = m_useKHR ? m_mmPropertiesKHR.maxOpacity4StateSubdivisionLevel :
+                                            m_mmPropertiesEXT.maxOpacity4StateSubdivisionLevel;
+      subdiv_changed |= PropertyEditor::SliderInt("Subdivision Level", &m_settings.subdivlevel, 0, maxSubdiv);
 
       subdiv_changed |= PropertyEditor::SliderFloat("Radius", &m_settings.radius, 0.0F, 1.0F);
 
       subdiv_changed |= PropertyEditor::entry("Micro-map format", [&] {
-        return ImGui::RadioButton("2-States", (int*)&m_settings.micromapFormat, VK_OPACITY_MICROMAP_FORMAT_2_STATE_EXT);
+        return ImGui::RadioButton("2-States", (int*)&m_settings.micromapFormat, VK_OPACITY_MICROMAP_FORMAT_2_STATE_KHR);
       });
       subdiv_changed |= PropertyEditor::entry("", [&] {
-        return ImGui::RadioButton("4-States", (int*)&m_settings.micromapFormat, VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT);
+        return ImGui::RadioButton("4-States", (int*)&m_settings.micromapFormat, VK_OPACITY_MICROMAP_FORMAT_4_STATE_KHR);
       });
 
       PropertyEditor::Checkbox("Show Wireframe", &m_settings.showWireframe);
@@ -445,8 +450,11 @@ private:
 
     // #MICROMAP
     assert(m_meshes.size() == 1);  // The micromap is created for only one mesh
-    std::vector<VkAccelerationStructureTrianglesOpacityMicromapEXT> geometry_opacity;  // hold data until BLAS is created
-    geometry_opacity.reserve(m_meshes.size());
+    // Hold attachment structs alive until BLAS is built (two separate vectors for the two struct types)
+    std::vector<VkAccelerationStructureTrianglesOpacityMicromapEXT> geometry_opacity_ext;
+    std::vector<VkAccelerationStructureTrianglesOpacityMicromapKHR> geometry_opacity_khr;
+    geometry_opacity_ext.reserve(m_meshes.size());
+    geometry_opacity_khr.reserve(m_meshes.size());
 
     for(uint32_t p_idx = 0; p_idx < m_meshes.size(); p_idx++)
     {
@@ -457,23 +465,35 @@ private:
 
       nvvk::AccelerationStructureGeometryInfo geo = primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address);
 
-      // #MICROMAP
-      VkAccelerationStructureTrianglesOpacityMicromapEXT opacity_geometry_micromap = {
-          VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT};
-
+      // #MICROMAP: attach the micromap to the BLAS geometry
       if(m_settings.enableOpacity)
       {
         const VkDeviceAddress indexT_address = m_micromap->indexBuffer().address;
 
-        opacity_geometry_micromap.indexType                 = VK_INDEX_TYPE_UINT32;
-        opacity_geometry_micromap.indexBuffer.deviceAddress = indexT_address;
-        opacity_geometry_micromap.indexStride               = sizeof(int32_t);
-        opacity_geometry_micromap.baseTriangle              = 0;
-        opacity_geometry_micromap.micromap                  = m_micromap->micromap();
-
-        // Adding micromap
-        geometry_opacity.emplace_back(opacity_geometry_micromap);
-        geo.geometry.geometry.triangles.pNext = &geometry_opacity.back();
+        if(m_useKHR)
+        {
+          // KHR path: micromap is a VkAccelerationStructureKHR, index buffer is a plain VkDeviceAddress
+          VkAccelerationStructureTrianglesOpacityMicromapKHR om{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_KHR};
+          om.indexType    = VK_INDEX_TYPE_UINT32;
+          om.indexBuffer  = indexT_address;
+          om.indexStride  = sizeof(int32_t);
+          om.baseTriangle = 0;
+          om.micromap     = m_micromap->micromapAS();
+          geometry_opacity_khr.emplace_back(om);
+          geo.geometry.geometry.triangles.pNext = &geometry_opacity_khr.back();
+        }
+        else
+        {
+          // EXT path: micromap is a VkMicromapEXT, index buffer is a VkDeviceOrHostAddressConstKHR union
+          VkAccelerationStructureTrianglesOpacityMicromapEXT om{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT};
+          om.indexType                 = VK_INDEX_TYPE_UINT32;
+          om.indexBuffer.deviceAddress = indexT_address;
+          om.indexStride               = sizeof(int32_t);
+          om.baseTriangle              = 0;
+          om.micromap                  = m_micromap->micromap();
+          geometry_opacity_ext.emplace_back(om);
+          geo.geometry.geometry.triangles.pNext = &geometry_opacity_ext.back();
+        }
       }
 
       buildData.addGeometry(geo);
@@ -513,7 +533,7 @@ private:
     // #MICROMAP
     const VkBuildAccelerationStructureFlagsKHR buildFlags =
         VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
-        | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_OPACITY_MICROMAP_UPDATE_EXT;
+        | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_OPACITY_MICROMAP_UPDATE_BIT_KHR;
 
     nvvk::AccelerationStructureBuildData            tlasBuildData{VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR};
     std::vector<VkAccelerationStructureInstanceKHR> tlasInstances;
@@ -521,7 +541,6 @@ private:
     for(const nvutils::Node& node : m_nodes)
     {
       const VkGeometryInstanceFlagsKHR flags{VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV};
-      //flags |= VK_GEOMETRY_INSTANCE_FORCE_OPACITY_MICROMAP_2_STATE_EXT; // #MICROMAP
 
       VkAccelerationStructureInstanceKHR ray_inst{};
       ray_inst.transform           = nvvk::toTransformMatrixKHR(node.localMatrix());  // Position of the instance
@@ -684,7 +703,7 @@ private:
 
     // Assemble the shader stages and recursion depth info into the ray tracing pipeline
     VkRayTracingPipelineCreateInfoKHR ray_pipeline_info{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
-    ray_pipeline_info.flags      = VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT;  // #MICROMAP
+    ray_pipeline_info.flags      = VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_KHR;  // #MICROMAP
     ray_pipeline_info.stageCount = static_cast<uint32_t>(stages.size());                     // Stages are shaders
     ray_pipeline_info.pStages    = stages.data();
     ray_pipeline_info.groupCount = static_cast<uint32_t>(shader_groups.size());
@@ -795,6 +814,7 @@ private:
   nvvk::RenderTarget               m_renderTarget;   // Offscreen color + depth
   nvapp::ImTexture                 m_viewportImage;  // ImGui texture displaying the rendered image
   std::unique_ptr<MicromapProcess> m_micromap;
+  bool m_useKHR{false};  // true when VK_KHR_opacity_micromap is available (preferred over EXT)
 
 
   VkFormat m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       // Color format of the image
@@ -832,7 +852,8 @@ private:
 
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  VkPhysicalDeviceOpacityMicromapPropertiesEXT m_mmProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_EXT};
+  VkPhysicalDeviceOpacityMicromapPropertiesKHR m_mmPropertiesKHR{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_KHR};
+  VkPhysicalDeviceOpacityMicromapPropertiesEXT m_mmPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_EXT};
   VkPhysicalDeviceAccelerationStructurePropertiesKHR m_asProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
 
   nvvk::SBTGenerator m_sbt;  // Shader binding table wrapper
@@ -862,7 +883,11 @@ int main(int argc, char** argv)
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
   // #MICROMAP
-  VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
+  VkPhysicalDeviceOpacityMicromapFeaturesKHR mm_opacity_features_KHR{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_KHR};
+  VkPhysicalDeviceOpacityMicromapFeaturesEXT mm_opacity_features_EXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT};
+  VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR device_address_features{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR};
+
 
   // Setting how we want Vulkan context to be created
   nvvk::ContextInitInfo    vkSetup;
@@ -879,8 +904,10 @@ int main(int argc, char** argv)
   vkSetup.deviceExtensions.push_back({VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rt_pipeline_feature});  // To use vkCmdTraceRaysKHR
   vkSetup.deviceExtensions.push_back({VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});  // Required by ray tracing pipeline
   vkSetup.deviceExtensions.push_back({VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME});
-  vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features});
-
+  // KHR is the promoted standard; EXT is optional (required only for the EXT build path on NV drivers).
+  vkSetup.deviceExtensions.push_back({VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME, &device_address_features, false});  // required by VK_KHR_opacity_micromap
+  vkSetup.deviceExtensions.push_back({VK_KHR_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features_KHR, false});
+  vkSetup.deviceExtensions.push_back({VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, &mm_opacity_features_EXT, false});  // optional
 
 #if (VK_HEADER_VERSION >= 283)
   // To enable ray tracing validation, set the NV_ALLOW_RAYTRACING_VALIDATION=1 environment variable
@@ -914,11 +941,14 @@ int main(int argc, char** argv)
   app.init(appInfo);
 
   // #MICROMAP
-  if(mm_opacity_features.micromap == VK_FALSE)
+  if(mm_opacity_features_KHR.micromap == VK_FALSE && mm_opacity_features_EXT.micromap == VK_FALSE)
   {
     LOGE("ERROR: Micro-Mesh not supported");
     exit(1);
   }
+  // Prefer the KHR build path when available; fall back to EXT.
+  const bool useKHR = mm_opacity_features_KHR.micromap;
+  LOGI("Using %s for opacity micromap\n", useKHR ? "VK_KHR_opacity_micromap" : "VK_EXT_opacity_micromap");
 
 
   // Camera manipulator (global)
@@ -931,7 +961,7 @@ int main(int argc, char** argv)
   app.addElement(elemCamera);
   app.addElement(std::make_shared<nvapp::ElementDefaultMenu>());  // Menu / Quit
   app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>("", fmt::format("({})", SHADER_LANGUAGE_STR)));  // Window title info
-  app.addElement(std::make_shared<MicomapOpacity>());
+  app.addElement(std::make_shared<MicomapOpacity>(useKHR));
 
 
   app.run();

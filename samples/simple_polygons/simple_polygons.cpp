@@ -181,7 +181,7 @@ public:
   {
     NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-    // Update Frame buffer uniform buffer
+    // Update Frame buffer
     shaderio::FrameInfo finfo{};
     finfo.view   = g_cameraManip->getViewMatrix();
     finfo.proj   = g_cameraManip->getPerspectiveMatrix();
@@ -370,7 +370,8 @@ private:
 
     // The heap descriptor references the buffer by device address, so it needs SHADER_DEVICE_ADDRESS.
     NVVK_CHECK(m_allocator->createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo),
-                                         VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
+                                         VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                             | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
                                          VMA_MEMORY_USAGE_AUTO_PREFER_HOST));
     NVVK_DBG_NAME(m_frameInfo.buffer);
 
@@ -393,7 +394,7 @@ private:
                                          m_heap.getResourceHeapAlignment()));
     NVVK_DBG_NAME(m_resourceHeapBuffer.buffer);
 
-    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufFrameInfo, m_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufFrameInfo, m_frameInfo, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                             m_resourceHeapBuffer.mapping));
   }
 

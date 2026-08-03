@@ -337,7 +337,7 @@ public:
     }
 
 
-    // Update Frame buffer uniform buffer
+    // Update Frame buffer
     shaderio::FrameInfo finfo{};
     finfo.view      = g_cameraManip->getViewMatrix();
     finfo.proj      = g_cameraManip->getPerspectiveMatrix();
@@ -683,12 +683,12 @@ private:
     m_stagingUploader.releaseStaging();
 
     // Frame information: camera matrix
-    constexpr VkBufferUsageFlags2 kHeapBufUsage = VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT
+    constexpr VkBufferUsageFlags2 kHeapBufUsage = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT
                                                   | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT;
     NVVK_CHECK(m_alloc.createBuffer(m_frameInfo, sizeof(shaderio::FrameInfo), kHeapBufUsage, VMA_MEMORY_USAGE_CPU_TO_GPU));
     NVVK_DBG_NAME(m_frameInfo.buffer);
 
-    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufFrameInfo, m_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    NVVK_CHECK(m_heap.writeBufferDescriptor(shaderio::kHeapBufFrameInfo, m_frameInfo, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                             m_resourceHeapBuffer.mapping));
   }
 

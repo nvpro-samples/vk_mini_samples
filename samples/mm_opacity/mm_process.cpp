@@ -36,8 +36,9 @@
 #include "nvutils/parallel_work.hpp"
 
 
-MicromapProcess::MicromapProcess(nvvk::ResourceAllocator* allocator)
+MicromapProcess::MicromapProcess(nvvk::ResourceAllocator* allocator, bool useKHR)
     : m_alloc(allocator)
+    , m_useKHR(useKHR)
 {
   m_device = allocator->getDevice();
 
@@ -49,12 +50,16 @@ MicromapProcess::MicromapProcess(nvvk::ResourceAllocator* allocator)
 
 MicromapProcess::~MicromapProcess()
 {
+  // Destroy the micromap/AS object before releasing the buffer it is backed by
+  if(m_useKHR)
+    vkDestroyAccelerationStructureKHR(m_device, m_micromapAS, nullptr);
+  else
+    vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
   m_alloc->destroyBuffer(m_inputData);
   m_alloc->destroyBuffer(m_microData);
   m_alloc->destroyBuffer(m_trianglesBuffer);
   m_alloc->destroyBuffer(m_scratchBuffer);
   m_alloc->destroyBuffer(m_indexBuffer);
-  vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -62,7 +67,7 @@ MicromapProcess::~MicromapProcess()
 // - Get a vector of displacement values per triangle
 // - Pack the data to 11 bit (64_TRIANGLES_64_BYTES format)
 // - Get the usage
-// - Create the vector of VkMicromapTriangleEXT
+// - Create the vector of VkMicromapTriangleKHR
 bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
                                          nvvk::StagingUploader&        uploader,
                                          const nvutils::PrimitiveMesh& mesh,
@@ -72,7 +77,10 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
 {
   nvutils::ScopedTimer stimer("Create Micromap Data");
 
-  vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
+  if(m_useKHR)
+    vkDestroyAccelerationStructureKHR(m_device, m_micromapAS, nullptr);
+  else
+    vkDestroyMicromapEXT(m_device, m_micromap, nullptr);
   m_alloc->destroyBuffer(m_scratchBuffer);
   m_alloc->destroyBuffer(m_inputData);
   m_alloc->destroyBuffer(m_microData);
@@ -95,11 +103,16 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
     m_usages[0].count            = num_tri;
     m_usages[0].format           = micromapFormat;
     m_usages[0].subdivisionLevel = subdivLevel;
+
+    m_usagesKHR.resize(1);
+    m_usagesKHR[0].count            = num_tri;
+    m_usagesKHR[0].format           = static_cast<VkOpacityMicromapFormatKHR>(micromapFormat);
+    m_usagesKHR[0].subdivisionLevel = subdivLevel;
   }
 
-  // Can store 8 triangle info per byte for VK_OPACITY_MICROMAP_FORMAT_2_STATE_EXT
+  // Can store 8 triangle info per byte for VK_OPACITY_MICROMAP_FORMAT_2_STATE_KHR
   uint32_t storage_byte = (num_micro_tri + 7) / 8;
-  if(micromapFormat == VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT)
+  if(micromapFormat == VK_OPACITY_MICROMAP_FORMAT_4_STATE_KHR)
   {
     storage_byte *= 2;  // Need twice as much for the 4 state
   }
@@ -126,9 +139,9 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
       // Loop for all block of 64 triangles
       for(const auto& value : values)
       {
-        if(micromapFormat == VK_OPACITY_MICROMAP_FORMAT_2_STATE_EXT)
+        if(micromapFormat == VK_OPACITY_MICROMAP_FORMAT_2_STATE_KHR)
         {
-          if(value == VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_EXT)
+          if(value == VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_KHR)
           {
             packer.push(0, 1);
           }
@@ -139,11 +152,11 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
         }
         else
         {
-          if(value == VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_EXT)
+          if(value == VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_KHR)
           {
             packer.push(0, 2);
           }
-          else if(value == VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_OPAQUE_EXT)
+          else if(value == VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_OPAQUE_KHR)
           {
             packer.push(1, 2);
           }
@@ -157,8 +170,8 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
 
 
     NVVK_CHECK(m_alloc->createBuffer(m_inputData, std::span(packed_data).size_bytes(),
-                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
-                                         | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                         | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
                                      VMA_MEMORY_USAGE_AUTO));
     NVVK_CHECK(uploader.appendBuffer(m_inputData, 0, std::span(packed_data)));
     NVVK_DBG_NAME(m_inputData.buffer);
@@ -166,7 +179,7 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
 
   // Micromap Triangle
   {
-    std::vector<VkMicromapTriangleEXT> micromap_triangles;
+    std::vector<VkMicromapTriangleKHR> micromap_triangles;
     micromap_triangles.reserve(num_tri);
     for(uint32_t tri_index = 0; tri_index < num_tri; tri_index++)
     {
@@ -174,8 +187,8 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
       micromap_triangles.push_back({offset, subdivLevel, micromapFormat});
     }
     NVVK_CHECK(m_alloc->createBuffer(m_trianglesBuffer, std::span(micromap_triangles).size_bytes(),
-                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
-                                         | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                         | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
                                      VMA_MEMORY_USAGE_AUTO));
     NVVK_CHECK(uploader.appendBuffer(m_trianglesBuffer, 0, std::span(micromap_triangles)));
     NVVK_DBG_NAME(m_trianglesBuffer.buffer);
@@ -191,7 +204,7 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
     }
 
     NVVK_CHECK(m_alloc->createBuffer(m_indexBuffer, std::span(index).size_bytes(),
-                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT
+                                     VK_BUFFER_USAGE_2_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
                                          | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(uploader.appendBuffer(m_indexBuffer, 0, std::span(index)));
     NVVK_DBG_NAME(m_indexBuffer.buffer);
@@ -204,17 +217,21 @@ bool MicromapProcess::createMicromapData(VkCommandBuffer               cmd,
   barrier(cmd);
 
   // Build the micromap
-  buildMicromap(cmd, VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT);
+  if(m_useKHR)
+    buildMicromapKHR(cmd);
+  else
+    buildMicromapEXT(cmd, VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT);
 
   return true;
 }
 
 //--------------------------------------------------------------------------------------------------
 // Building the micromap using: triangle data, input data (values), usage
+// EXT path: uses VkMicromapEXT + vkCmdBuildMicromapsEXT
 //
-bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micromapType)
+bool MicromapProcess::buildMicromapEXT(VkCommandBuffer cmd, VkMicromapTypeEXT micromapType)
 {
-  nvutils::ScopedTimer stimer("Build Micromap");
+  nvutils::ScopedTimer stimer("Build Micromap (EXT)");
 
   // Find the size required
   VkMicromapBuildSizesInfoEXT size_info{VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT};
@@ -251,9 +268,73 @@ bool MicromapProcess::buildMicromap(VkCommandBuffer cmd, VkMicromapTypeEXT micro
     build_info.scratchData.deviceAddress   = m_scratchBuffer.address;
     build_info.data.deviceAddress          = m_inputData.address;
     build_info.triangleArray.deviceAddress = m_trianglesBuffer.address;
-    build_info.triangleArrayStride         = sizeof(VkMicromapTriangleEXT);
+    build_info.triangleArrayStride         = sizeof(VkMicromapTriangleKHR);
     vkCmdBuildMicromapsEXT(cmd, 1, &build_info);
   }
+  barrier(cmd);
+
+  return true;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Building the micromap using: triangle data, input data (values), usage
+// KHR path: uses VkAccelerationStructureKHR + vkCmdBuildAccelerationStructuresKHR
+//
+bool MicromapProcess::buildMicromapKHR(VkCommandBuffer cmd)
+{
+  nvutils::ScopedTimer stimer("Build Micromap (KHR)");
+
+  // The micromap geometry data is provided via pNext of VkAccelerationStructureGeometryKHR
+  VkAccelerationStructureGeometryMicromapDataKHR micromap_data{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MICROMAP_DATA_KHR};
+  micromap_data.usageCountsCount    = static_cast<uint32_t>(m_usagesKHR.size());
+  micromap_data.pUsageCounts        = m_usagesKHR.data();
+  micromap_data.data                = m_inputData.address;
+  micromap_data.triangleArray       = m_trianglesBuffer.address;
+  micromap_data.triangleArrayStride = sizeof(VkMicromapTriangleKHR);
+
+  VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+  geometry.pNext        = &micromap_data;
+  geometry.geometryType = VK_GEOMETRY_TYPE_MICROMAP_KHR;
+
+  VkAccelerationStructureBuildGeometryInfoKHR build_info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+  build_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_KHR;
+  build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  build_info.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  build_info.geometryCount = 1;
+  build_info.pGeometries   = &geometry;
+
+  // Query the required sizes
+  VkAccelerationStructureBuildSizesInfoKHR size_info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+  vkGetAccelerationStructureBuildSizesKHR(m_device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build_info, nullptr, &size_info);
+  assert(size_info.accelerationStructureSize && "accelerationStructureSize was zero");
+
+  // Backing storage for the micromap acceleration structure
+  NVVK_CHECK(m_alloc->createBuffer(m_microData, size_info.accelerationStructureSize,
+                                   VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+  NVVK_DBG_NAME(m_microData.buffer);
+
+  uint64_t scratch_size = std::max(size_info.buildScratchSize, static_cast<VkDeviceSize>(4));
+  NVVK_CHECK(m_alloc->createBuffer(m_scratchBuffer, scratch_size,
+                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+  NVVK_DBG_NAME(m_scratchBuffer.buffer);
+
+  // vkCreateAccelerationStructure2KHR is required for VK_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_KHR;
+  // it takes a device address range instead of a VkBuffer handle.
+  VkAccelerationStructureCreateInfo2KHR create_info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_2_KHR};
+  create_info.addressRange = {m_microData.address, size_info.accelerationStructureSize};
+  create_info.addressFlags = 0;
+  create_info.type         = VK_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_KHR;
+  NVVK_CHECK(vkCreateAccelerationStructure2KHR(m_device, &create_info, nullptr, &m_micromapAS));
+
+  // Issue the build command
+  build_info.dstAccelerationStructure  = m_micromapAS;
+  build_info.scratchData.deviceAddress = m_scratchBuffer.address;
+
+  // ppBuildRangeInfos must be a valid array, but ppBuildRangeInfos[i] must be NULL for MICROMAP_KHR geometry
+  const VkAccelerationStructureBuildRangeInfoKHR* nullRange = nullptr;
+  vkCmdBuildAccelerationStructuresKHR(cmd, 1, &build_info, &nullRange);
+
   barrier(cmd);
 
   return true;
@@ -271,13 +352,24 @@ void MicromapProcess::cleanBuildData()
 
 
 //--------------------------------------------------------------------------------------------------
-// Make sure all the data are ready before building the micromap
+// Memory barrier after upload (pre-build) and after build (pre-BLAS attachment).
 void MicromapProcess::barrier(VkCommandBuffer cmd)
 {
-  // barrier for upload finish
-  VkMemoryBarrier2 mem_barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,         nullptr,
-                               VK_PIPELINE_STAGE_2_TRANSFER_BIT,           VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                               VK_PIPELINE_STAGE_2_MICROMAP_BUILD_BIT_EXT, VK_ACCESS_2_MICROMAP_READ_BIT_EXT};
+  VkPipelineStageFlags2 dstStage;
+  VkAccessFlags2        dstAccess;
+  if(m_useKHR)
+  {
+    dstStage  = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    dstAccess = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+  }
+  else
+  {
+    dstStage  = VK_PIPELINE_STAGE_2_MICROMAP_BUILD_BIT_EXT;
+    dstAccess = VK_ACCESS_2_MICROMAP_READ_BIT_EXT;
+  }
+
+  VkMemoryBarrier2 mem_barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr,  VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                               VK_ACCESS_2_TRANSFER_WRITE_BIT,     dstStage, dstAccess};
   VkDependencyInfo dep_info{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
   dep_info.memoryBarrierCount = 1;
   dep_info.pMemoryBarriers    = &mem_barrier;
@@ -388,13 +480,13 @@ MicromapProcess::MicroOpacity MicromapProcess::createOpacity(const nvutils::Prim
           switch(hit)
           {
             case 2:
-              triangle.values[index] = VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_OPAQUE_EXT;
+              triangle.values[index] = VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_OPAQUE_KHR;
               break;
             case 0:
-              triangle.values[index] = VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_EXT;
+              triangle.values[index] = VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_KHR;
               break;
             default:
-              triangle.values[index] = VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_UNKNOWN_TRANSPARENT_EXT;
+              triangle.values[index] = VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_UNKNOWN_TRANSPARENT_KHR;
               break;
           }
         }

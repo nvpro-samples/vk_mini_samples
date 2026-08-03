@@ -30,8 +30,8 @@ layout(location = 1) in vec3 inFragNrm;
 
 layout(location = 0) out vec4 outColor;
 
-// Bindless: descriptor-heap UBO accessed by local buffer index (heap slot 0 = FrameInfo).
-layout(descriptor_heap, scalar) uniform FrameInfo_
+// Bindless: descriptor-heap storage buffer accessed by local buffer index (heap slot 0 = FrameInfo).
+layout(descriptor_heap, scalar) readonly buffer FrameInfo_
 {
   FrameInfo info;
 }

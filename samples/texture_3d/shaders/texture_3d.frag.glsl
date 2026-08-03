@@ -29,7 +29,7 @@
 layout(location = 0) in vec3 inFragPos;
 layout(location = 0) out vec4 outColor;
 
-layout(descriptor_heap, scalar) uniform FrameInfo_
+layout(descriptor_heap, scalar) readonly buffer FrameInfo_
 {
   FrameInfo frameInfo;
 }

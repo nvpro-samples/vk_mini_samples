@@ -15,6 +15,15 @@ DEFAULT_ARGS = ["--headless"]
 # detailed Vulkan context information to help diagnose errors.
 VERBOSE_ARGS = ["--verbose", "1"]
 
+# Strings that identify Vulkan validation layer output in stdout/stderr.
+# A sample that exits 0 but emits any of these is still treated as a failure.
+VALIDATION_PATTERNS = ["Validation Error", "Validation Warning", "VUID-"]
+
+
+def find_validation_issues(text):
+    """Return lines from text that contain Vulkan validation layer output."""
+    return [line for line in text.splitlines() if any(p in line for p in VALIDATION_PATTERNS)]
+
 SAMPLES = [
     "barycentric_wireframe",
     "compute_multi_threaded",
@@ -89,7 +98,7 @@ def _append_captured_output(log_file, header, stdout=None, stderr=None):
 
 
 def run_command(commands, timeout=None, log_file=None):
-    """Run a command and return the process return code."""
+    """Run a command and return (exit_code, validation_issue_lines)."""
     logger.info(f"Running command: {' '.join(commands)}")
     try:
         result = subprocess.run(
@@ -111,7 +120,9 @@ def run_command(commands, timeout=None, log_file=None):
             _append_captured_output(
                 log_file, f"TIMEOUT after {timeout}s", stdout, stderr
             )
-        return -1
+        return -1, []
+
+    validation_issues = find_validation_issues(result.stdout + result.stderr)
 
     if result.returncode != 0:
         logger.error(
@@ -130,7 +141,15 @@ def run_command(commands, timeout=None, log_file=None):
             )
     else:
         logger.debug(f"Command output:\n{result.stdout}\n{result.stderr}")
-    return result.returncode
+
+    if validation_issues:
+        logger.error(f"Vulkan validation issues detected ({len(validation_issues)} line(s)):")
+        for line in validation_issues:
+            logger.error(f"  {line}")
+        if log_file is not None:
+            _append_captured_output(log_file, "VALIDATION ISSUES", "\n".join(validation_issues))
+
+    return result.returncode, validation_issues
 
 
 def extract_testing_time(log_file):
@@ -203,11 +222,11 @@ def test_executable(test_dir, executable, args, timeout=None):
 
     try:
         log_file = test_dir / f"log_{executable}.txt"
-        return_code = run_command(
-            [str(executable_path)] + args, timeout=timeout, log_file=log_file
+        return_code, validation_issues = run_command(
+            [str(executable_path), *args], timeout=timeout, log_file=log_file
         )
         testing_time = extract_testing_time(log_file)
-        status = ReturnCode.SUCCESS if return_code == 0 else ReturnCode.TEST_ERROR
+        status = ReturnCode.SUCCESS if (return_code == 0 and not validation_issues) else ReturnCode.TEST_ERROR
         return TestResult(executable, status, testing_time)
     except Exception as e:
         logger.error(f"Error testing {executable}: {e}")

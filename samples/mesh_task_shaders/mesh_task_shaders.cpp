@@ -124,6 +124,8 @@ public:
     m_slangCompiler.defaultOptions();
     m_slangCompiler.addOption({slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, 1}});
     m_slangCompiler.addOption({slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, 0}});
+    m_slangCompiler.addCapability("spvGroupNonUniform");
+    m_slangCompiler.addCapability("spvGroupNonUniformBallot");
 
     m_profilerTimeline = g_profilerManager.createTimeline({.name = "Primary Timeline"});
     m_profilerGpuTimer.init(m_profilerTimeline, m_app->getDevice(), m_app->getPhysicalDevice(), m_app->getQueue(0).familyIndex, false);

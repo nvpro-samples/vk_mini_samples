@@ -50,6 +50,11 @@ struct PSout
 [[vk::push_constant]]
 ConstantBuffer<PushConstant> pushConst;
 
+FrameInfo getFrameInfo()
+{
+  return StructuredBuffer<FrameInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufFrameInfo, 0))[0];
+}
+
 // Ray structure
 struct Ray
 {
@@ -134,7 +139,7 @@ bool rayMarching(Texture3D volume, SamplerState volumeSampler, const float3 p1, 
 [shader("vertex")]
 VSout vertexMain(VSin input)
 {
-  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufFrameInfo, 0));
+  FrameInfo frameInfo = getFrameInfo();
 
   float4 pos = mul(float4(input.position.xyz, 1.0), pushConst.transfo);
 
@@ -150,7 +155,7 @@ VSout vertexMain(VSin input)
 [shader("pixel")]
 PSout fragmentMain(PSin stage, bool isFrontFacing: SV_IsFrontFace)
 {
-  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(pushConst.bufferHeapBase + kHeapBufFrameInfo, 0));
+  FrameInfo frameInfo = getFrameInfo();
 
   Texture3D    volume        = Texture3D.Handle(uint2(kHeapImgVolume, 0));
   SamplerState volumeSampler = SamplerState.Handle(uint2(kHeapSmpVolume, 0));

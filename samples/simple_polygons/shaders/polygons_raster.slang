@@ -52,13 +52,17 @@ struct PSout
 [[vk::push_constant]]
 ConstantBuffer<PushConstant> pushConst;
 
+FrameInfo getFrameInfo()
+{
+  return StructuredBuffer<FrameInfo>.Handle(uint2(kHeapBufFrameInfo, 0))[0];
+}
 
 // Vertex  Shader
 [require(spvDescriptorHeapEXT)]
 [shader("vertex")]
 VSout vertexMain(VSin input)
 {
-  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(kHeapBufFrameInfo, 0));
+  FrameInfo frameInfo = getFrameInfo();
 
   float4 pos = mul(float4(input.position.xyz, 1.0), pushConst.transfo);
 
@@ -76,7 +80,7 @@ VSout vertexMain(VSin input)
 [shader("pixel")]
 PSout fragmentMain(PSin stage)
 {
-  FrameInfo frameInfo = *ConstantBuffer<FrameInfo>.Handle(uint2(kHeapBufFrameInfo, 0));
+  FrameInfo frameInfo = getFrameInfo();
 
   float3 V     = normalize(frameInfo.camPos - stage.position);
   float3 color = simpleShading(V, V, stage.normal, pushConst.color.xyz, 16.0);
