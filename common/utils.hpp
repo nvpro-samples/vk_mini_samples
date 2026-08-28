@@ -34,7 +34,7 @@ inline static std::vector<std::filesystem::path> getResourcesDirs()
 {
   std::filesystem::path exePath = nvutils::getExecutablePath().parent_path();
   return {
-      std::filesystem::absolute(exePath / TARGET_EXE_TO_ROOT_DIRECTORY / "resources"),
+      std::filesystem::absolute(exePath / TARGET_EXE_TO_SOURCE_DIRECTORY / "../../resources"),
       std::filesystem::absolute(exePath / "resources")  //
   };
 }
@@ -45,9 +45,9 @@ inline static std::vector<std::filesystem::path> getShaderDirs()
   return {
       std::filesystem::absolute(exePath / TARGET_EXE_TO_SOURCE_DIRECTORY / "shaders"),
       std::filesystem::absolute(exePath / TARGET_EXE_TO_NVSHADERS_DIRECTORY),
-      std::filesystem::absolute(exePath / TARGET_EXE_TO_ROOT_DIRECTORY / "common"),
+      std::filesystem::absolute(exePath / TARGET_EXE_TO_SOURCE_DIRECTORY / "../../common"),
       std::filesystem::absolute(NVSHADERS_DIR),
-      std::filesystem::absolute(exePath / TARGET_NAME "_files" / "shaders"),
+      std::filesystem::absolute(exePath / TARGET_NAME "_files/shaders"),
       std::filesystem::absolute(exePath),
   };
 }

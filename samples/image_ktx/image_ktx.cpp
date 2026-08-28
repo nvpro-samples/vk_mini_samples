@@ -20,7 +20,7 @@
 //////////////////////////////////////////////////////////////////////////
 /*
 
- This sample loads a KTX image with the `nv_ktx::KTXImage`
+ This sample loads a KTX image with the `nv_ktx::Image`
  
  - The library requires to also link with libzstd_static, zlibstatic and basisu
    This can be found in the CMakeLists.txt
@@ -113,7 +113,7 @@ struct TextureKtx
 
   void create(VkCommandBuffer cmd, nvvk::StagingUploader& uploader, const std::filesystem::path& filename)
   {
-    nv_ktx::KTXImage           ktx_image;
+    nv_ktx::Image              ktx_image;
     const nv_ktx::ReadSettings ktx_read_settings;
     std::ifstream              ktx_file(filename, std::ios::binary);
     nv_ktx::ErrorWithText      maybe_error = ktx_image.readFromStream(ktx_file, ktx_read_settings);
@@ -134,14 +134,14 @@ struct TextureKtx
 
 
   // Create the image, the sampler and the image view + generate the mipmap level for all
-  void create(VkCommandBuffer cmd, nvvk::StagingUploader& uploader, nv_ktx::KTXImage& ktximage)
+  void create(VkCommandBuffer cmd, nvvk::StagingUploader& uploader, nv_ktx::Image& ktximage)
   {
     m_format = ktximage.format;
 
 
-    auto              img_size   = VkExtent2D{ktximage.mip_0_width, ktximage.mip_0_height};
+    auto              img_size   = VkExtent2D{ktximage.mip0Width, ktximage.mip0Height};
     VkImageCreateInfo createInfo = DEFAULT_VkImageCreateInfo;
-    createInfo.mipLevels         = ktximage.num_mips;
+    createInfo.mipLevels         = ktximage.numMips;
     createInfo.extent            = {img_size.width, img_size.height, 1};
     createInfo.format            = ktximage.format;
     createInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -154,10 +154,10 @@ struct TextureKtx
     NVVK_CHECK(m_alloc->createImage(m_image, createInfo, DEFAULT_VkImageViewCreateInfo));
     NVVK_CHECK(uploader.appendImage(m_image, std::span(data), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
 
-    for(uint32_t mip = 1; mip < ktximage.num_mips; mip++)
+    for(uint32_t mip = 1; mip < ktximage.numMips; mip++)
     {
-      createInfo.extent.width  = std::max(1U, ktximage.mip_0_width >> mip);
-      createInfo.extent.height = std::max(1U, ktximage.mip_0_height >> mip);
+      createInfo.extent.width  = std::max(1U, ktximage.mip0Width >> mip);
+      createInfo.extent.height = std::max(1U, ktximage.mip0Height >> mip);
 
       subresource.mipLevel = mip;
 
